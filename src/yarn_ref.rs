@@ -20,7 +20,7 @@ use crate::Utf8Chunks;
 /// In general, prefer to use [`Yarn`] except when you absolutely need the type
 /// to be [`Copy`]. [`YarnRef`] is very similar to [`Yarn`], although it can't
 /// provide full functionality because it can't own a heap allocation.
-/// 
+///
 /// See the [crate documentation](crate) for general information.
 #[repr(transparent)]
 pub struct YarnRef<'a, Buf: crate::Buf + ?Sized = [u8]> {
@@ -195,7 +195,7 @@ impl<'a, Buf: crate::Buf + ?Sized> YarnRef<'a, Buf> {
 
   /// Extends the lifetime of this yarn if this yarn is dynamically known to
   /// point to immortal memory.
-  /// 
+  ///
   /// If it doesn't, this function returns `None`.
   ///
   /// ```
@@ -204,7 +204,7 @@ impl<'a, Buf: crate::Buf + ?Sized> YarnRef<'a, Buf> {
   ///
   /// let immortal: YarnRef<'static, [u8]> = yarn.immortalize().unwrap();
   /// assert_eq!(immortal, b"crunchcrunchcrunch");
-  /// 
+  ///
   /// let borrowed = YarnRef::<[u8]>::from(&immortal);
   /// assert!(borrowed.immortalize().is_none());
   /// ```
@@ -219,7 +219,6 @@ impl<'a, Buf: crate::Buf + ?Sized> YarnRef<'a, Buf> {
       Some(YarnRef::<'static, Buf>::from_raw(self.raw))
     }
   }
-
 
   /// Tries to inline this yarn, if it's small enough.
   ///

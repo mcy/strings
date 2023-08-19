@@ -303,7 +303,7 @@ where
 
   /// Extends the lifetime of this yarn if this yarn is dynamically known to
   /// point to immortal memory.
-  /// 
+  ///
   /// If it doesn't, the contents are copied into a fresh heap allocation.
   ///
   /// ```

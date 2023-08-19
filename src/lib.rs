@@ -9,12 +9,12 @@
 //! * Can be either an owned buffer or a borrowed buffer (like [`Cow<str>`]).
 //! * Can be upcast to `'static` lifetime if it was constructed from a
 //!   known-static string.
-//! 
+//!
 //! The main caveat is that [`Yarn`]s cannot be easily appended to, since they
 //! do not track an internal capacity, and the slice returned by
 //! [`Yarn::as_slice()`] does not have the same pointer stability properties as
 //! [`String`] (these are rarely needed, though).
-//! 
+//!
 //! ---
 //!
 //! Yarns are useful for situations in which a copy-on-write string is necessary
@@ -24,7 +24,7 @@
 //!
 //! The easiest way to create a yarn is with the [`yarn!()`] and [`byarn!()`]
 //! macros, which are similar to [`format!()`].
-//! 
+//!
 //! ```
 //! # use byteyarn::*;
 //! // Create a new yarn via `fmt`ing.
@@ -44,11 +44,11 @@
 //! and can be inter-converted with each other. The [`Yarn::utf8_chunks()`]
 //! function can be used to iterate over definitely-valid-UTF-8 chunks within
 //! a string.
-//! 
+//!
 //! Both kinds of yarns can be `Debug`ed and `Display`ed, and will print out as
 //! strings would. In particular, invalid UTF-8 is converted into either `\xNN`
 //! escapes or replacement characters (for `Debug` and `Display` respectively).
-//! 
+//!
 //! ```
 //! # use byteyarn::*;
 //! let invalid = Yarn::from_byte(0xff);
