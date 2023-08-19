@@ -1,4 +1,4 @@
-# `byteyarn` - Space-efficient byte strings.
+# `byteyarn` - Space-efficient byte strings 🧶🐈‍⬛
 
 A `Yarn` is a highly optimized string type that provides a number of
 useful properties over `String`:
