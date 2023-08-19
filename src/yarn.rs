@@ -468,7 +468,7 @@ impl<'a> Yarn<'a, [u8]> {
   /// assert_eq!(yarn, "🐈‍⬛".as_bytes());
   /// ```
   pub fn from_box(bytes: Box<[u8]>) -> Self {
-    let raw = RawYarn::from_box(bytes.into());
+    let raw = RawYarn::from_box(bytes);
     unsafe { Self::from_raw(raw) }
   }
 
@@ -551,6 +551,7 @@ impl<'a> Yarn<'a, [u8]> {
   /// yarn.as_mut()[17] = b'_';
   /// assert_eq!(yarn, b"const but very lo_g");
   /// ```
+  #[allow(clippy::should_implement_trait)]
   pub fn as_mut(&mut self) -> &mut [u8] {
     self.inline_in_place();
     if !self.raw.on_heap() && !self.raw.is_small() {

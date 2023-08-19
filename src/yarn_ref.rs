@@ -309,6 +309,10 @@ impl<'a> YarnRef<'a, str> {
   }
 
   /// Converts this yarn into a string by copying it.
+  // This does the same thing as to_string, but more efficiently. :)
+  // The clippy diagnostic also seems wrong, because it says something about
+  // this method taking &self? Very odd.
+  #[allow(clippy::inherent_to_string_shadow_display)]
   pub fn to_string(self) -> String {
     self.as_owned().into_string()
   }
@@ -400,7 +404,7 @@ impl<Buf: crate::Buf + ?Sized> Hash for YarnRef<'_, Buf> {
 
 impl<Buf: crate::Buf + ?Sized> Default for YarnRef<'_, Buf> {
   fn default() -> Self {
-    <&Self>::default().clone()
+    *<&Self>::default()
   }
 }
 
