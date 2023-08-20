@@ -1,4 +1,6 @@
-# `byteyarn` - Space-efficient byte strings 🧶🐈‍⬛
+# byteyarn
+
+`byteyarn` - Space-efficient byte strings 🧶🐈‍⬛
 
 A `Yarn` is a highly optimized string type that provides a number of
 useful properties over `String`:
@@ -30,10 +32,10 @@ macros, which are similar to `format!()`.
 let yarn = yarn!("Answer: {}", 42);
 
 // Convert that yarn into a reference.
-let ry = yarn.as_ref();
+let ry: YarnRef<str> = yarn.as_ref();
 
 // Try up-casting the yarn into an "immortal yarn" without copying.
-let copy: YarnRef<'static, _> = ry.immortalize().unwrap();
+let copy: YarnRef<'static, str> = ry.immortalize().unwrap();
 
 assert_eq!(yarn, copy);
 ```
@@ -49,7 +51,7 @@ strings would. In particular, invalid UTF-8 is converted into either `\xNN`
 escapes or replacement characters (for `Debug` and `Display` respectively).
 
 ```rust
-let invalid = Yarn::from_byte(0xff);
+let invalid = ByteYarn::from_byte(0xff);
 assert_eq!(format!("{invalid:?}"), r#""\xFF""#);
 assert_eq!(format!("{invalid}"), "�");
 ```

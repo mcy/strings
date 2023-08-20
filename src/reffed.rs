@@ -80,24 +80,10 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let foo = YarnRef::<str>::new("Byzantium");
+  /// let foo = YarnRef::new("Byzantium");
   /// assert_eq!(foo.len(), 9);
   /// ```
-  ///
-  /// This function is not `const`, but the similar function
-  /// [`YarnRef::from_buf()`] is.
-  pub fn new<Slice: AsRef<Buf> + ?Sized>(slice: &'a Slice) -> Self {
-    Self::from_buf(slice.as_ref())
-  }
-
-  /// Returns a yarn pointing to the given slice, without copying.
-  ///
-  /// ```
-  /// # use byteyarn::*;
-  /// const FOO: YarnRef<str> = YarnRef::from_buf("Byzantium");
-  /// assert_eq!(FOO.len(), 9);
-  /// ```
-  pub const fn from_buf(buf: &'a Buf) -> Self {
+  pub const fn new(buf: &'a Buf) -> Self {
     unsafe {
       // SAFETY: We copy the lifetime from buf into self, so this alias slice
       // must go away before buf can.
@@ -117,13 +103,13 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let smol = YarnRef::from_buf_inlined("smol");
+  /// let smol = YarnRef::inlined("smol");
   /// assert_eq!(smol.unwrap(), "smol");
   ///
-  /// let big = YarnRef::from_buf_inlined("biiiiiiiiiiiiiiig");
+  /// let big = YarnRef::inlined("biiiiiiiiiiiiiiig");
   /// assert!(big.is_none());
   /// ```
-  pub const fn from_buf_inlined(buf: &Buf) -> Option<Self> {
+  pub const fn inlined(buf: &Buf) -> Option<Self> {
     // This is a const fn, hence no ?.
     let Some(raw) = RawYarn::from_slice_inlined(Self::buf2raw(buf)) else {
       return None;
@@ -209,12 +195,12 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let yarn = YarnRef::<[u8]>::from_static_buf(b"crunchcrunchcrunch");
+  /// let yarn = YarnRef::<[u8]>::from_static(b"crunchcrunchcrunch");
   ///
   /// let immortal: YarnRef<'static, [u8]> = yarn.immortalize().unwrap();
   /// assert_eq!(immortal, b"crunchcrunchcrunch");
   ///
-  /// let borrowed = YarnRef::<[u8]>::from(&immortal);
+  /// let borrowed = YarnRef::new(&*immortal);
   /// assert!(borrowed.immortalize().is_none());
   /// ```
   pub fn immortalize(self) -> Option<YarnRef<'static, Buf>> {
@@ -235,7 +221,7 @@ where
   /// to provide a way to relieve memory pressure. In general, you should not
   /// have to call this function directly.
   pub fn inline_in_place(&mut self) {
-    if let Some(inlined) = Self::from_buf_inlined(self.as_slice()) {
+    if let Some(inlined) = Self::inlined(self.as_slice()) {
       *self = inlined;
     }
   }
@@ -247,7 +233,7 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let yarn = byarn!(b"abc\xFF\xFE\xFF\xF0\x9F\x90\x88\xE2\x80\x8D\xE2\xAC\x9B!");
+  /// let yarn = ByteYarn::new(b"abc\xFF\xFE\xFF\xF0\x9F\x90\x88\xE2\x80\x8D\xE2\xAC\x9B!");
   /// let yr = yarn.as_ref();
   /// let chunks = yr.utf8_chunks().collect::<Vec<_>>();
   /// assert_eq!(chunks, [
@@ -276,7 +262,7 @@ where
   /// `'static` lifetime.
   ///
   /// This function will *not* be found by `From` impls.
-  pub const fn from_static_buf(buf: &'static Buf) -> Self {
+  pub const fn from_static(buf: &'static Buf) -> Self {
     let raw = RawYarn::new(Self::buf2raw(buf));
     unsafe { Self::from_raw(raw) }
   }
@@ -295,10 +281,10 @@ impl<'a> YarnRef<'a, [u8]> {
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let yarn = byarn!(&[0xf0, 0x9f, 0x90, 0x88, 0xe2, 0x80, 0x8d, 0xe2, 0xac, 0x9b]);
+  /// let yarn = ByteYarn::new(&[0xf0, 0x9f, 0x90, 0x88, 0xe2, 0x80, 0x8d, 0xe2, 0xac, 0x9b]);
   /// assert_eq!(yarn.as_ref().to_utf8().unwrap(), "🐈‍⬛");
   ///
-  /// assert!(byarn!(b"\xFF").as_ref().to_utf8().is_err());
+  /// assert!(ByteYarn::from_byte(0xff).as_ref().to_utf8().is_err());
   /// ```
   pub fn to_utf8(self) -> Result<YarnRef<'a, str>, Utf8Error> {
     str::from_utf8(self.as_bytes())?;

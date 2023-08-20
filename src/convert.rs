@@ -83,22 +83,20 @@ where
   }
 }
 
-impl<'a, Slice, Buf> From<&'a Slice> for YarnBox<'a, Buf>
+impl<'a, Buf> From<&'a Buf> for YarnBox<'a, Buf>
 where
   Buf: crate::Buf + ?Sized,
-  Slice: AsRef<Buf> + ?Sized,
 {
-  fn from(s: &'a Slice) -> Self {
+  fn from(s: &'a Buf) -> Self {
     Self::new(s)
   }
 }
 
-impl<'a, Slice, Buf> From<&'a Slice> for YarnRef<'a, Buf>
+impl<'a, Buf> From<&'a Buf> for YarnRef<'a, Buf>
 where
   Buf: crate::Buf + ?Sized,
-  Slice: AsRef<Buf> + ?Sized,
 {
-  fn from(s: &'a Slice) -> Self {
+  fn from(s: &'a Buf) -> Self {
     Self::new(s)
   }
 }

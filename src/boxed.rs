@@ -63,22 +63,8 @@ where
   /// let foo = Yarn::new("Byzantium");
   /// assert_eq!(foo.len(), 9);
   /// ```
-  ///
-  /// This function is not `const`, but the similar function
-  /// [`Yarn::from_buf()`] is.
-  pub fn new<Slice: AsRef<Buf> + ?Sized>(slice: &'a Slice) -> Self {
-    Self::from_buf(slice.as_ref())
-  }
-
-  /// Returns a yarn pointing to the given slice, without copying.
-  ///
-  /// ```
-  /// # use byteyarn::*;
-  /// const FOO: Yarn = Yarn::from_buf("Byzantium");
-  /// assert_eq!(FOO.len(), 9);
-  /// ```
-  pub const fn from_buf(buf: &'a Buf) -> Self {
-    YarnRef::from_buf(buf).to_box()
+  pub const fn new(buf: &'a Buf) -> Self {
+    YarnRef::new(buf).to_box()
   }
 
   /// Returns a new yarn containing the contents of the given slice.
@@ -89,14 +75,14 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let smol = Yarn::from_buf_inlined("smol");
+  /// let smol = Yarn::inlined("smol");
   /// assert_eq!(smol.unwrap(), "smol");
   ///
-  /// let big = Yarn::from_buf_inlined("biiiiiiiiiiiiiiig");
+  /// let big = Yarn::inlined("biiiiiiiiiiiiiiig");
   /// assert!(big.is_none());
   /// ```
-  pub const fn from_buf_inlined(buf: &Buf) -> Option<Self> {
-    match YarnRef::from_buf_inlined(buf) {
+  pub const fn inlined(buf: &Buf) -> Option<Self> {
+    match YarnRef::inlined(buf) {
       Some(y) => Some(y.to_box()),
       None => None,
     }
@@ -163,9 +149,9 @@ where
   /// assert_eq!(yarn!("猫").len(), 3);
   /// assert_eq!(yarn!("🐈‍⬛").len(), 10);
   ///
-  /// assert_eq!(byarn!(b"").len(), 0);
-  /// assert_eq!(byarn!(b"xyz").len(), 3);
-  /// assert_eq!(byarn!(&[1, 2, 3]).len(), 3);
+  /// assert_eq!(ByteYarn::new(b"").len(), 0);
+  /// assert_eq!(ByteYarn::new(b"xyz").len(), 3);
+  /// assert_eq!(ByteYarn::new(&[1, 2, 3]).len(), 3);
   /// ```
   pub const fn len(&self) -> usize {
     self.as_ref().len()
@@ -179,7 +165,7 @@ where
   /// let s: &str = yarn.as_slice();
   /// assert_eq!(s, "jellybeans");
   ///
-  /// let yarn = byarn!(b"jellybeans");
+  /// let yarn = ByteYarn::new(b"jellybeans");
   /// let s: &[u8] = yarn.as_slice();
   /// assert_eq!(s, b"jellybeans");
   /// ```
@@ -200,7 +186,7 @@ where
   /// assert_eq!(ry, "jellybeans");
   /// ```
   pub const fn as_ref(&self) -> YarnRef<Buf> {
-    if let Some(inl) = YarnRef::from_buf_inlined(self.as_slice()) {
+    if let Some(inl) = YarnRef::inlined(self.as_slice()) {
       return inl;
     }
 
@@ -254,8 +240,8 @@ where
   /// assert_eq!(yarn!("").as_bytes(), b"");
   /// assert_eq!(yarn!("猫").as_bytes(), b"\xE7\x8C\xAB");
   ///
-  /// assert_eq!(byarn!(b"xyz").as_bytes(), b"xyz");
-  /// assert_eq!(byarn!(&[1, 2, 3]).as_bytes(), [1, 2, 3]);
+  /// assert_eq!(ByteYarn::new(b"xyz").as_bytes(), b"xyz");
+  /// assert_eq!(ByteYarn::new(&[1, 2, 3]).as_bytes(), [1, 2, 3]);
   /// ```
   pub const fn as_bytes(&self) -> &[u8] {
     self.raw.as_slice()
@@ -286,7 +272,7 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let mut vec = byarn!(b"jellybeans").into_vec();
+  /// let mut vec = ByteYarn::new(b"jellybeans").into_vec();
   /// vec.extend_from_slice(b" & KNUCKLES");
   /// let yarn = ByteYarn::from_vec(vec);
   ///
@@ -313,7 +299,7 @@ where
   /// ```
   /// # use byteyarn::*;
   /// let bytes = Vec::from(*b"crunchcrunchcrunch");
-  /// let yarn = YarnBox::<[u8]>::from(&bytes);
+  /// let yarn = YarnBox::new(&*bytes);
   ///
   /// let immortal: ByteYarn = yarn.immortalize();
   /// drop(bytes);  // Show that yarn continues to exist despite `bytes` going
@@ -364,7 +350,7 @@ where
   /// to provide a way to relieve memory pressure. In general, you should not
   /// have to call this function directly.
   pub fn inline_in_place(&mut self) {
-    if let Some(inlined) = Self::from_buf_inlined(self.as_slice()) {
+    if let Some(inlined) = Self::inlined(self.as_slice()) {
       *self = inlined;
     }
   }
@@ -397,7 +383,7 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let yarn = byarn!(b"abc\xFF\xFE\xFF\xF0\x9F\x90\x88\xE2\x80\x8D\xE2\xAC\x9B!");
+  /// let yarn = ByteYarn::new(b"abc\xFF\xFE\xFF\xF0\x9F\x90\x88\xE2\x80\x8D\xE2\xAC\x9B!");
   /// let chunks = yarn.utf8_chunks().collect::<Vec<_>>();
   /// assert_eq!(chunks, [
   ///   Ok("abc"),
@@ -446,8 +432,8 @@ where
   /// `'static` lifetime.
   ///
   /// This function will *not* be found by `From` impls.
-  pub const fn from_static_buf(buf: &'static Buf) -> Self {
-    YarnRef::from_static_buf(buf).to_box()
+  pub const fn from_static(buf: &'static Buf) -> Self {
+    YarnRef::from_static(buf).to_box()
   }
 }
 
@@ -492,10 +478,10 @@ impl<'a> YarnBox<'a, [u8]> {
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let yarn = byarn!(&[0xf0, 0x9f, 0x90, 0x88, 0xe2, 0x80, 0x8d, 0xe2, 0xac, 0x9b]);
+  /// let yarn = ByteYarn::new(&[0xf0, 0x9f, 0x90, 0x88, 0xe2, 0x80, 0x8d, 0xe2, 0xac, 0x9b]);
   /// assert_eq!(yarn.to_utf8().unwrap(), "🐈‍⬛");
   ///
-  /// assert!(byarn!(b"\xFF").to_utf8().is_err());
+  /// assert!(ByteYarn::from_byte(0xff).to_utf8().is_err());
   /// ```
   pub fn to_utf8(self) -> Result<YarnBox<'a, str>, Utf8Error> {
     self.to_utf8_or_bytes().map_err(|(_, e)| e)
@@ -507,7 +493,7 @@ impl<'a> YarnBox<'a, [u8]> {
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let blob = byarn!(&[0xff; 5]);
+  /// let blob = ByteYarn::new(&[0xff; 5]);
   /// let (bad, _) = blob.to_utf8_or_bytes().unwrap_err();
   ///
   /// assert_eq!(bad, &[0xff; 5]);
@@ -527,10 +513,10 @@ impl<'a> YarnBox<'a, [u8]> {
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let mut yarn = byarn!(b"const but very long");
+  /// let mut yarn = ByteYarn::new(b"const but very long");
   /// assert!(yarn.try_mut().is_none());
   ///
-  /// let mut smol = byarn!(b"smol const");
+  /// let mut smol = ByteYarn::new(b"smol const");
   /// smol.try_mut().unwrap()[3] = b'g';
   /// assert_eq!(smol, b"smog const");
   /// ```
@@ -551,7 +537,7 @@ impl<'a> YarnBox<'a, [u8]> {
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let mut yarn = byarn!(b"const but very long");
+  /// let mut yarn = ByteYarn::new(b"const but very long");
   /// yarn.as_mut()[17] = b'_';
   /// assert_eq!(yarn, b"const but very lo_g");
   /// ```

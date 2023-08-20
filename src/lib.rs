@@ -77,6 +77,12 @@ mod z {
   pub trait Sealed {}
 }
 
+// Macro stuff.
+#[doc(hidden)]
+pub mod m {
+  pub extern crate std;
+}
+
 /// A trait for abstracting over `str` and `[u8]`.
 pub trait Buf: z::Sealed + Eq + Ord + Hash {}
 
@@ -98,31 +104,10 @@ pub type ByteYarn = YarnBox<'static, [u8]>;
 
 /// Similar to [`format!()`], but returns a [`Yarn`], instead.
 ///
-/// This macro calls out to [`Yarn::from_fmt()`] internally, although when
-/// passed a single string (e.g. `yarn!("foo")`), it will be `const`-evaluable.
+/// This macro calls out to [`Yarn::from_fmt()`] internally.
 #[macro_export]
 macro_rules! yarn {
-  ($str:literal) => {
-    $crate::Yarn::from_static_buf($str)
-  };
-
   ($($args:tt)*) => {
-    $crate::Yarn::from_fmt(core::format_args!($($args)*))
-  };
-}
-
-/// Similar to [`format!()`], but returns a [`ByteYarn`], instead.
-///
-/// This macro calls out to [`Yarn::from_fmt()`] internally, although when
-/// passed a single string (e.g. `yarn!(b"foo")`), it will be `const`-evaluable.
-#[macro_export]
-macro_rules! byarn {
-  ($str:expr) => {
-    $crate::ByteYarn::from_static_buf($str)
-  };
-
-  ($($args:tt)*) => {
-    $crate::Yarn::from_fmt(core::format_args!($($args)*))
-      .into_bytes()
+    $crate::Yarn::from_fmt($crate::m::std::format_args!($($args)*))
   };
 }
