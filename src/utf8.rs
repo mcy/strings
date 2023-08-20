@@ -2,8 +2,15 @@
 
 use std::str;
 
-/// Returns an iterator over UTF-8 chunks in `self`. Any time non-UTF-8 bytes
-/// are encountered, they are returned as `Err` variants from the iterator.
+#[cfg(doc)]
+use crate::*;
+
+/// An iterator over UTF-8 chunks in a byte buffer.
+///
+/// Any time non-UTF-8 bytes are encountered, they are returned as `Err`s
+/// from the iterator.
+///
+/// See [`Yarn::utf8_chunks()`].
 #[derive(Copy, Clone)]
 pub struct Utf8Chunks<'a> {
   buf: &'a [u8],

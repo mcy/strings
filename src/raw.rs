@@ -1,5 +1,3 @@
-//!
-
 use std::alloc;
 use std::fmt;
 use std::fmt::Write;
@@ -258,7 +256,7 @@ impl RawYarn {
   pub fn copy_slice(s: &[u8]) -> Self {
     match Self::from_slice_inlined(s) {
       Some(inl) => inl,
-      None => Self::from_box(s.into()),
+      None => Self::from_heap(s.into()),
     }
   }
 
@@ -353,7 +351,7 @@ impl RawYarn {
         buf.extend_from_slice(b);
       }
 
-      return Self::from_box(buf.into());
+      return Self::from_heap(buf.into());
     }
 
     let mut cursor = 0;
@@ -367,7 +365,7 @@ impl RawYarn {
   }
 
   /// Returns a `RawYarn` by taking ownership of the given allocation.
-  pub fn from_box(s: Box<[u8]>) -> Self {
+  pub fn from_heap(s: Box<[u8]>) -> Self {
     let len = s.len();
     let ptr = Box::into_raw(s) as *mut u8;
     unsafe {
@@ -414,7 +412,7 @@ impl RawYarn {
     let _ = w.write_fmt(args);
     match w {
       Buf::Sso(len, bytes) => Self::from_slice_inlined(&bytes[..len]).unwrap(),
-      Buf::Vec(vec) => Self::from_box(vec.into()),
+      Buf::Vec(vec) => Self::from_heap(vec.into()),
     }
   }
 }

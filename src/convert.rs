@@ -1,10 +1,8 @@
-//! Conversion trait impls.
-
 use std::borrow::Borrow;
 use std::fmt;
 use std::str::Utf8Error;
 
-use crate::Yarn;
+use crate::YarnBox;
 use crate::YarnRef;
 
 #[derive(Clone, Debug)]
@@ -16,21 +14,21 @@ impl fmt::Display for NonCopy {
   }
 }
 
-impl<'a, Buf> TryFrom<Yarn<'a, Buf>> for YarnRef<'a, Buf>
+impl<'a, Buf> TryFrom<YarnBox<'a, Buf>> for YarnRef<'a, Buf>
 where
   Buf: crate::Buf + ?Sized,
 {
   type Error = NonCopy;
 
-  fn try_from(y: Yarn<'a, Buf>) -> Result<Self, NonCopy> {
+  fn try_from(y: YarnBox<'a, Buf>) -> Result<Self, NonCopy> {
     y.to_ref().ok_or(NonCopy(()))
   }
 }
 
-impl<'a> TryFrom<Yarn<'a, [u8]>> for Yarn<'a, str> {
+impl<'a> TryFrom<YarnBox<'a, [u8]>> for YarnBox<'a, str> {
   type Error = Utf8Error;
 
-  fn try_from(y: Yarn<'a, [u8]>) -> Result<Self, Utf8Error> {
+  fn try_from(y: YarnBox<'a, [u8]>) -> Result<Self, Utf8Error> {
     y.to_utf8()
   }
 }
@@ -43,8 +41,8 @@ impl<'a> TryFrom<YarnRef<'a, [u8]>> for YarnRef<'a, str> {
   }
 }
 
-impl<'a> From<Yarn<'a, str>> for Yarn<'a, [u8]> {
-  fn from(y: Yarn<'a, str>) -> Self {
+impl<'a> From<YarnBox<'a, str>> for YarnBox<'a, [u8]> {
+  fn from(y: YarnBox<'a, str>) -> Self {
     y.into_bytes()
   }
 }
@@ -55,7 +53,7 @@ impl<'a> From<YarnRef<'a, str>> for YarnRef<'a, [u8]> {
   }
 }
 
-impl From<u8> for Yarn<'_, [u8]> {
+impl From<u8> for YarnBox<'_, [u8]> {
   fn from(c: u8) -> Self {
     Self::from_byte(c)
   }
@@ -67,7 +65,7 @@ impl From<u8> for YarnRef<'_, [u8]> {
   }
 }
 
-impl<Buf> From<char> for Yarn<'_, Buf>
+impl<Buf> From<char> for YarnBox<'_, Buf>
 where
   Buf: crate::Buf + ?Sized,
 {
@@ -85,7 +83,7 @@ where
   }
 }
 
-impl<'a, Slice, Buf> From<&'a Slice> for Yarn<'a, Buf>
+impl<'a, Slice, Buf> From<&'a Slice> for YarnBox<'a, Buf>
 where
   Buf: crate::Buf + ?Sized,
   Slice: AsRef<Buf> + ?Sized,
@@ -105,28 +103,28 @@ where
   }
 }
 
-impl From<Box<[u8]>> for Yarn<'_, [u8]> {
+impl From<Box<[u8]>> for YarnBox<'_, [u8]> {
   fn from(s: Box<[u8]>) -> Self {
-    Self::from_box(s)
+    Self::from_boxed_bytes(s)
   }
 }
 
-impl From<Vec<u8>> for Yarn<'_, [u8]> {
+impl From<Vec<u8>> for YarnBox<'_, [u8]> {
   fn from(s: Vec<u8>) -> Self {
     Self::from_vec(s)
   }
 }
 
-impl<Buf> From<Box<str>> for Yarn<'_, Buf>
+impl<Buf> From<Box<str>> for YarnBox<'_, Buf>
 where
   Buf: crate::Buf + ?Sized,
 {
   fn from(s: Box<str>) -> Self {
-    Self::from_str_box(s)
+    Self::from_boxed_str(s)
   }
 }
 
-impl<Buf> From<String> for Yarn<'_, Buf>
+impl<Buf> From<String> for YarnBox<'_, Buf>
 where
   Buf: crate::Buf + ?Sized,
 {
@@ -135,12 +133,12 @@ where
   }
 }
 
-impl<Buf> From<Yarn<'_, Buf>> for Box<[u8]>
+impl<Buf> From<YarnBox<'_, Buf>> for Box<[u8]>
 where
   Buf: crate::Buf + ?Sized,
 {
-  fn from(y: Yarn<Buf>) -> Self {
-    y.into_box()
+  fn from(y: YarnBox<Buf>) -> Self {
+    y.into_boxed_bytes()
   }
 }
 
@@ -149,15 +147,15 @@ where
   Buf: crate::Buf + ?Sized,
 {
   fn from(y: YarnRef<Buf>) -> Self {
-    y.to_box()
+    y.to_boxed_bytes()
   }
 }
 
-impl<Buf> From<Yarn<'_, Buf>> for Vec<u8>
+impl<Buf> From<YarnBox<'_, Buf>> for Vec<u8>
 where
   Buf: crate::Buf + ?Sized,
 {
-  fn from(y: Yarn<Buf>) -> Self {
+  fn from(y: YarnBox<Buf>) -> Self {
     y.into_vec()
   }
 }
@@ -171,20 +169,20 @@ where
   }
 }
 
-impl From<Yarn<'_, str>> for Box<str> {
-  fn from(y: Yarn<str>) -> Self {
-    y.into_str_box()
+impl From<YarnBox<'_, str>> for Box<str> {
+  fn from(y: YarnBox<str>) -> Self {
+    y.into_boxed_str()
   }
 }
 
 impl From<YarnRef<'_, str>> for Box<str> {
   fn from(y: YarnRef<str>) -> Self {
-    y.to_str_box()
+    y.to_boxed_str()
   }
 }
 
-impl From<Yarn<'_, str>> for String {
-  fn from(y: Yarn<str>) -> Self {
+impl From<YarnBox<'_, str>> for String {
+  fn from(y: YarnBox<str>) -> Self {
     y.into_string()
   }
 }
@@ -197,7 +195,7 @@ impl From<YarnRef<'_, str>> for String {
 
 // AsRef / Borrow
 
-impl<Buf> AsRef<Buf> for Yarn<'_, Buf>
+impl<Buf> AsRef<Buf> for YarnBox<'_, Buf>
 where
   Buf: crate::Buf + ?Sized,
 {
@@ -215,7 +213,7 @@ where
   }
 }
 
-impl<Buf> Borrow<Buf> for Yarn<'_, Buf>
+impl<Buf> Borrow<Buf> for YarnBox<'_, Buf>
 where
   Buf: crate::Buf + ?Sized,
 {

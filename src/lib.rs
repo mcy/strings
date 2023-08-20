@@ -31,10 +31,10 @@
 //! let yarn = yarn!("Answer: {}", 42);
 //!
 //! // Convert that yarn into a reference.
-//! let ry = yarn.as_ref();
+//! let ry: YarnRef<str> = yarn.as_ref();
 //!
 //! // Try up-casting the yarn into an "immortal yarn" without copying.
-//! let copy: YarnRef<'static, _> = ry.immortalize().unwrap();
+//! let copy: YarnRef<'static, str> = ry.immortalize().unwrap();
 //!
 //! assert_eq!(yarn, copy);
 //! ```
@@ -51,25 +51,27 @@
 //!
 //! ```
 //! # use byteyarn::*;
-//! let invalid = Yarn::from_byte(0xff);
+//! let invalid = ByteYarn::from_byte(0xff);
 //! assert_eq!(format!("{invalid:?}"), r#""\xFF""#);
 //! assert_eq!(format!("{invalid}"), "�");
 //! ```
+
+#![deny(missing_docs)]
 
 use std::hash::Hash;
 
 #[cfg(doc)]
 use std::borrow::Cow;
 
+mod boxed;
 mod convert;
 mod raw;
+mod reffed;
 mod utf8;
-mod yarn;
-mod yarn_ref;
 
+pub use boxed::YarnBox;
+pub use reffed::YarnRef;
 pub use utf8::Utf8Chunks;
-pub use yarn::Yarn;
-pub use yarn_ref::YarnRef;
 
 mod z {
   pub trait Sealed {}
@@ -77,36 +79,50 @@ mod z {
 
 /// A trait for abstracting over `str` and `[u8]`.
 pub trait Buf: z::Sealed + Eq + Ord + Hash {}
+
 impl z::Sealed for [u8] {}
 impl z::Sealed for str {}
+
 impl Buf for [u8] {}
 impl Buf for str {}
 
-/// Similar to [`format!()`], but returns a [`Yarn<'static, str>`], instead.
+/// An optimized Unicode string.
+///
+/// See [`YarnBox`] for full type documentation.
+pub type Yarn = YarnBox<'static, str>;
+
+/// An optimized raw byte string.
+///
+/// See [`YarnBox`] for full type documentation.
+pub type ByteYarn = YarnBox<'static, [u8]>;
+
+/// Similar to [`format!()`], but returns a [`Yarn`], instead.
 ///
 /// This macro calls out to [`Yarn::from_fmt()`] internally, although when
 /// passed a single string (e.g. `yarn!("foo")`), it will be `const`-evaluable.
 #[macro_export]
 macro_rules! yarn {
   ($str:literal) => {
-    $crate::Yarn::<'static, str>::from_static_buf($str)
+    $crate::Yarn::from_static_buf($str)
   };
+
   ($($args:tt)*) => {
-    $crate::Yarn::<'static, str>::from_fmt(core::format_args!($($args)*))
+    $crate::Yarn::from_fmt(core::format_args!($($args)*))
   };
 }
 
-/// Similar to [`format!()`], but returns a [`Yarn<'static, [u8]>`], instead.
+/// Similar to [`format!()`], but returns a [`ByteYarn`], instead.
 ///
 /// This macro calls out to [`Yarn::from_fmt()`] internally, although when
 /// passed a single string (e.g. `yarn!(b"foo")`), it will be `const`-evaluable.
 #[macro_export]
 macro_rules! byarn {
   ($str:expr) => {
-    $crate::Yarn::<'static, [u8]>::from_static_buf($str)
+    $crate::ByteYarn::from_static_buf($str)
   };
+
   ($($args:tt)*) => {
-    $crate::Yarn::<'static, str>::from_fmt(core::format_args!($($args)*))
-    .into_bytes()
+    $crate::Yarn::from_fmt(core::format_args!($($args)*))
+      .into_bytes()
   };
 }

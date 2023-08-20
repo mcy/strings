@@ -1,5 +1,3 @@
-//!
-
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::Hash;
@@ -11,17 +9,24 @@ use std::str;
 use std::str::Utf8Error;
 
 use crate::raw::RawYarn;
-use crate::yarn_ref::YarnRef;
 use crate::Utf8Chunks;
+use crate::YarnRef;
 
 #[cfg(doc)]
-use crate::yarn;
+use crate::*;
 
-/// A yarn is an immutable, optimized string type.
+/// An optimized, possibly heap-allocated string type.
+///
+/// This is the core data structure of `byteyarn`. It is a string that can be
+/// borrowed, boxed, or inlined. Generally, you'll want to use the [`Yarn`]
+/// or [`ByteYarn`] type aliases directly, instead.
+///
+/// The lifetime `'a` is the shortest lifetime this yarn can borrow for; often,
+/// this will be `'static`.
 ///
 /// See the [crate documentation](crate) for general information.
 #[repr(transparent)]
-pub struct Yarn<'a, Buf = [u8]>
+pub struct YarnBox<'a, Buf = [u8]>
 where
   Buf: crate::Buf + ?Sized,
 {
@@ -29,7 +34,7 @@ where
   _ph: PhantomData<&'a Buf>,
 }
 
-impl<'a, Buf> Yarn<'a, Buf>
+impl<'a, Buf> YarnBox<'a, Buf>
 where
   Buf: crate::Buf + ?Sized,
 {
@@ -41,11 +46,11 @@ where
   /// assert_eq!(empty, "");
   /// ```
   ///
-  /// This will also be found by the `Default` impl for `&Yarn`.
+  /// This will also be found by the `Default` impl for `&YarnBox`.
   pub fn empty<'b>() -> &'b Self {
     unsafe {
-      // SAFETY: Yarn is a transparent wrapper over RawYarn; even though
-      // Yarn has a destructor, this is fine, because this lifetime is 'static
+      // SAFETY: YarnBox is a transparent wrapper over RawYarn; even though
+      // YarnBox has a destructor, this is fine, because this lifetime is 'static
       // and will thus never run a destructor.
       mem::transmute::<&'b RawYarn, &'b Self>(RawYarn::empty())
     }
@@ -55,7 +60,7 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let foo = Yarn::new(b"Byzantium");
+  /// let foo = Yarn::new("Byzantium");
   /// assert_eq!(foo.len(), 9);
   /// ```
   ///
@@ -69,11 +74,11 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// const FOO: Yarn = Yarn::from_buf(b"Byzantium");
+  /// const FOO: Yarn = Yarn::from_buf("Byzantium");
   /// assert_eq!(FOO.len(), 9);
   /// ```
   pub const fn from_buf(buf: &'a Buf) -> Self {
-    YarnRef::from_buf(buf).as_owned()
+    YarnRef::from_buf(buf).to_box()
   }
 
   /// Returns a new yarn containing the contents of the given slice.
@@ -92,7 +97,7 @@ where
   /// ```
   pub const fn from_buf_inlined(buf: &Buf) -> Option<Self> {
     match YarnRef::from_buf_inlined(buf) {
-      Some(y) => Some(y.as_owned()),
+      Some(y) => Some(y.to_box()),
       None => None,
     }
   }
@@ -102,11 +107,11 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let a = Yarn::<str>::from_char('a');
+  /// let a = Yarn::from_char('a');
   /// assert_eq!(a, "a");
   /// ```
   pub const fn from_char(c: char) -> Self {
-    YarnRef::<Buf>::from_char(c).as_owned()
+    YarnRef::<Buf>::from_char(c).to_box()
   }
 
   /// Returns a yarn by taking ownership of an allocation.
@@ -114,14 +119,14 @@ where
   /// ```
   /// # use byteyarn::*;
   /// let str = String::from("big string box").into_boxed_str();
-  /// let yarn = Yarn::<str>::from_str_box(str);
+  /// let yarn = Yarn::from_boxed_str(str);
   /// assert_eq!(yarn, "big string box");
   /// ```
-  pub fn from_str_box(string: Box<str>) -> Self {
-    let raw = RawYarn::from_box(string.into());
+  pub fn from_boxed_str(string: Box<str>) -> Self {
+    let raw = RawYarn::from_heap(string.into());
     unsafe {
       // SAFETY: both [u8] and str can be safely constructed from a str. We have
-      // unique ownership of raw's allocation because from_box guarantees it.
+      // unique ownership of raw's allocation because from_heap guarantees it.
       Self::from_raw(raw)
     }
   }
@@ -131,11 +136,11 @@ where
   /// ```
   /// # use byteyarn::*;
   /// let str = String::from("big string box");
-  /// let yarn = Yarn::<str>::from_string(str);
+  /// let yarn = Yarn::from_string(str);
   /// assert_eq!(yarn, "big string box");
   /// ```
   pub fn from_string(string: String) -> Self {
-    Self::from_str_box(string.into())
+    Self::from_boxed_str(string.into())
   }
 
   /// Checks whether this yarn is empty.
@@ -225,10 +230,9 @@ where
   /// ```
   /// # use byteyarn::*;
   /// let yarn = yarn!("jellybeans");
-  /// let ry: YarnRef<'static, str> = yarn.to_ref().unwrap();
-  /// assert_eq!(ry, "jellybeans");
+  /// assert_eq!(yarn.to_ref().unwrap(), "jellybeans");
   ///
-  /// let boxed = Yarn::<str>::from_string(String::from("jellybeans"));
+  /// let boxed = Yarn::from_string(String::from("jellybeans"));
   /// assert!(boxed.to_ref().is_none());
   /// ```
   pub const fn to_ref(&self) -> Option<YarnRef<'a, Buf>> {
@@ -261,10 +265,10 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let boxed = yarn!("jellybeans").into_box();
+  /// let boxed = yarn!("jellybeans").into_boxed_bytes();
   /// assert_eq!(&boxed[..], b"jellybeans");
   /// ```
-  pub fn into_box(self) -> Box<[u8]> {
+  pub fn into_boxed_bytes(self) -> Box<[u8]> {
     let mut raw = self.into_raw();
     if !raw.on_heap() {
       return raw.as_slice().into();
@@ -284,20 +288,20 @@ where
   /// # use byteyarn::*;
   /// let mut vec = byarn!(b"jellybeans").into_vec();
   /// vec.extend_from_slice(b" & KNUCKLES");
-  /// let yarn = Yarn::from_vec(vec);
+  /// let yarn = ByteYarn::from_vec(vec);
   ///
   /// assert_eq!(yarn, b"jellybeans & KNUCKLES");
   /// ```
   pub fn into_vec(self) -> Vec<u8> {
-    self.into_box().into()
+    self.into_boxed_bytes().into()
   }
 
   /// Converts this yarn into a byte yarn.
-  pub const fn into_bytes(self) -> Yarn<'a, [u8]> {
+  pub const fn into_bytes(self) -> YarnBox<'a, [u8]> {
     unsafe {
       // SAFETY: The lifetimes are the same, and [u8] is constructible from
       // either a [u8] or str, so this is just weakening the user-facing type.
-      Yarn::from_raw(self.into_raw())
+      YarnBox::from_raw(self.into_raw())
     }
   }
 
@@ -309,21 +313,21 @@ where
   /// ```
   /// # use byteyarn::*;
   /// let bytes = Vec::from(*b"crunchcrunchcrunch");
-  /// let yarn = Yarn::<[u8]>::from(&bytes);
+  /// let yarn = YarnBox::<[u8]>::from(&bytes);
   ///
-  /// let immortal: Yarn<'static, [u8]> = yarn.immortalize();
-  /// drop(bytes);  // Show that Yarn continues to exist despite `bytes` going
+  /// let immortal: ByteYarn = yarn.immortalize();
+  /// drop(bytes);  // Show that yarn continues to exist despite `bytes` going
   ///               // away.
   ///
   /// assert_eq!(immortal, b"crunchcrunchcrunch");
   /// ```
-  pub fn immortalize(self) -> Yarn<'static, Buf> {
+  pub fn immortalize(self) -> YarnBox<'static, Buf> {
     if self.raw.is_immortal() {
       unsafe {
         // SAFETY: We just validated that this raw is in fact suitable for use
         // with 'static lifetime, and all this cast is doing is extending the
         // lifetime on self.
-        return Yarn::from_raw(self.into_raw());
+        return YarnBox::from_raw(self.into_raw());
       }
     }
 
@@ -331,7 +335,7 @@ where
     unsafe {
       // SAFETY: RawYarn::copy_slice always returns an immortal, uniquely-owned
       // value.
-      Yarn::from_raw(raw)
+      YarnBox::from_raw(raw)
     }
   }
 
@@ -341,7 +345,7 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let yarn = Yarn::<str>::concat(&["foo", "bar", "baz"]);
+  /// let yarn = Yarn::concat(&["foo", "bar", "baz"]);
   /// assert_eq!(yarn, "foobarbaz");
   /// ```
   pub fn concat(bufs: &[impl AsRef<Buf>]) -> Self {
@@ -432,7 +436,7 @@ where
   }
 }
 
-impl<Buf> Yarn<'static, Buf>
+impl<Buf> YarnBox<'static, Buf>
 where
   Buf: crate::Buf + ?Sized,
 {
@@ -443,20 +447,20 @@ where
   ///
   /// This function will *not* be found by `From` impls.
   pub const fn from_static_buf(buf: &'static Buf) -> Self {
-    YarnRef::from_static_buf(buf).as_owned()
+    YarnRef::from_static_buf(buf).to_box()
   }
 }
 
-impl<'a> Yarn<'a, [u8]> {
+impl<'a> YarnBox<'a, [u8]> {
   /// Returns a yarn containing a single byte, without allocating.
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let a = Yarn::from_byte(0x20);
+  /// let a = ByteYarn::from_byte(0x20);
   /// assert_eq!(a, b" ");
   /// ```
   pub const fn from_byte(c: u8) -> Self {
-    YarnRef::from_byte(c).as_owned()
+    YarnRef::from_byte(c).to_box()
   }
 
   /// Returns a yarn by taking ownership of the given allocation.
@@ -464,11 +468,11 @@ impl<'a> Yarn<'a, [u8]> {
   /// ```
   /// # use byteyarn::*;
   /// let str = Box::new([0xf0, 0x9f, 0x90, 0x88, 0xe2, 0x80, 0x8d, 0xe2, 0xac, 0x9b]);
-  /// let yarn = Yarn::from_box(str);
+  /// let yarn = ByteYarn::from_boxed_bytes(str);
   /// assert_eq!(yarn, "🐈‍⬛".as_bytes());
   /// ```
-  pub fn from_box(bytes: Box<[u8]>) -> Self {
-    let raw = RawYarn::from_box(bytes);
+  pub fn from_boxed_bytes(bytes: Box<[u8]>) -> Self {
+    let raw = RawYarn::from_heap(bytes);
     unsafe { Self::from_raw(raw) }
   }
 
@@ -477,11 +481,11 @@ impl<'a> Yarn<'a, [u8]> {
   /// ```
   /// # use byteyarn::*;
   /// let str = vec![0xf0, 0x9f, 0x90, 0x88, 0xe2, 0x80, 0x8d, 0xe2, 0xac, 0x9b];
-  /// let yarn = Yarn::from_vec(str);
+  /// let yarn = ByteYarn::from_vec(str);
   /// assert_eq!(yarn, "🐈‍⬛".as_bytes());
   /// ```
   pub fn from_vec(bytes: Vec<u8>) -> Self {
-    Self::from_box(bytes.into_boxed_slice())
+    Self::from_boxed_bytes(bytes.into_boxed_slice())
   }
 
   /// Tries to convert this yarn into a UTF-8 yarn via [`str::from_utf8()`].
@@ -493,7 +497,7 @@ impl<'a> Yarn<'a, [u8]> {
   ///
   /// assert!(byarn!(b"\xFF").to_utf8().is_err());
   /// ```
-  pub fn to_utf8(self) -> Result<Yarn<'a, str>, Utf8Error> {
+  pub fn to_utf8(self) -> Result<YarnBox<'a, str>, Utf8Error> {
     self.to_utf8_or_bytes().map_err(|(_, e)| e)
   }
 
@@ -508,11 +512,11 @@ impl<'a> Yarn<'a, [u8]> {
   ///
   /// assert_eq!(bad, &[0xff; 5]);
   /// ```
-  pub fn to_utf8_or_bytes(self) -> Result<Yarn<'a, str>, (Self, Utf8Error)> {
+  pub fn to_utf8_or_bytes(self) -> Result<YarnBox<'a, str>, (Self, Utf8Error)> {
     if let Err(e) = str::from_utf8(self.as_bytes()) {
       return Err((self, e));
     }
-    unsafe { Ok(Yarn::from_raw(self.into_raw())) }
+    unsafe { Ok(YarnBox::from_raw(self.into_raw())) }
   }
 
   /// Returns a mutable reference into this yarn's internal buffer.
@@ -555,20 +559,20 @@ impl<'a> Yarn<'a, [u8]> {
   pub fn as_mut(&mut self) -> &mut [u8] {
     self.inline_in_place();
     if !self.raw.on_heap() && !self.raw.is_small() {
-      *self = Self::from_box(mem::take(self).into_box());
+      *self = Self::from_boxed_bytes(mem::take(self).into_boxed_bytes());
     }
 
     unsafe { self.raw.as_mut_slice() }
   }
 }
 
-impl Yarn<'_, str> {
+impl YarnBox<'_, str> {
   /// Builds a new yarn from the given formatting arguments
   /// (see [`format_args!()`]), allocating only when absolutely necessary.
   ///
   /// In general, you'll want to use the [`yarn!()`] macro, instead.
   pub fn from_fmt(args: fmt::Arguments) -> Self {
-    unsafe { Yarn::from_raw(RawYarn::from_fmt_args(args)) }
+    unsafe { YarnBox::from_raw(RawYarn::from_fmt_args(args)) }
   }
 
   /// Converts this yarn into a string slice.
@@ -577,7 +581,7 @@ impl Yarn<'_, str> {
   }
 
   /// Converts this yarn into a boxed slice, potentially by copying it.
-  pub fn into_str_box(self) -> Box<str> {
+  pub fn into_boxed_str(self) -> Box<str> {
     self.into_string().into()
   }
 
@@ -587,7 +591,7 @@ impl Yarn<'_, str> {
   }
 }
 
-impl<Buf> Deref for Yarn<'_, Buf>
+impl<Buf> Deref for YarnBox<'_, Buf>
 where
   Buf: crate::Buf + ?Sized,
 {
@@ -597,7 +601,7 @@ where
   }
 }
 
-impl<Buf> Drop for Yarn<'_, Buf>
+impl<Buf> Drop for YarnBox<'_, Buf>
 where
   Buf: crate::Buf + ?Sized,
 {
@@ -606,13 +610,13 @@ where
   }
 }
 
-impl<Buf> Clone for Yarn<'_, Buf>
+impl<Buf> Clone for YarnBox<'_, Buf>
 where
   Buf: crate::Buf + ?Sized,
 {
   fn clone(&self) -> Self {
     if let Some(yr) = self.to_ref() {
-      return yr.as_owned();
+      return yr.to_box();
     }
 
     let copy = RawYarn::copy_slice(self.as_bytes());
@@ -620,19 +624,19 @@ where
   }
 }
 
-impl<Buf: crate::Buf + ?Sized> fmt::Debug for Yarn<'_, Buf> {
+impl<Buf: crate::Buf + ?Sized> fmt::Debug for YarnBox<'_, Buf> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     fmt::Debug::fmt(&self.as_ref(), f)
   }
 }
 
-impl<Buf: crate::Buf + ?Sized> fmt::Display for Yarn<'_, Buf> {
+impl<Buf: crate::Buf + ?Sized> fmt::Display for YarnBox<'_, Buf> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     fmt::Display::fmt(&self.as_ref(), f)
   }
 }
 
-impl<Slice, Buf> PartialEq<Slice> for Yarn<'_, Buf>
+impl<Slice, Buf> PartialEq<Slice> for YarnBox<'_, Buf>
 where
   Buf: crate::Buf + ?Sized,
   Slice: AsRef<Buf> + ?Sized,
@@ -642,9 +646,9 @@ where
   }
 }
 
-impl<Buf: crate::Buf + Eq + ?Sized> Eq for Yarn<'_, Buf> {}
+impl<Buf: crate::Buf + Eq + ?Sized> Eq for YarnBox<'_, Buf> {}
 
-impl<Slice, Buf> PartialOrd<Slice> for Yarn<'_, Buf>
+impl<Slice, Buf> PartialOrd<Slice> for YarnBox<'_, Buf>
 where
   Buf: crate::Buf + ?Sized,
   Slice: AsRef<Buf> + ?Sized,
@@ -654,26 +658,26 @@ where
   }
 }
 
-impl<Buf: crate::Buf + ?Sized> Ord for Yarn<'_, Buf> {
+impl<Buf: crate::Buf + ?Sized> Ord for YarnBox<'_, Buf> {
   fn cmp(&self, that: &Self) -> Ordering {
     self.as_slice().cmp(that.as_slice())
   }
 }
 
-impl<Buf: crate::Buf + ?Sized> Hash for Yarn<'_, Buf> {
+impl<Buf: crate::Buf + ?Sized> Hash for YarnBox<'_, Buf> {
   fn hash<H: Hasher>(&self, state: &mut H) {
     self.as_slice().hash(state)
   }
 }
 
-impl<Buf: crate::Buf + ?Sized> Default for Yarn<'_, Buf> {
+impl<Buf: crate::Buf + ?Sized> Default for YarnBox<'_, Buf> {
   fn default() -> Self {
     <&Self>::default().clone()
   }
 }
 
-impl<Buf: crate::Buf + ?Sized> Default for &Yarn<'_, Buf> {
+impl<Buf: crate::Buf + ?Sized> Default for &YarnBox<'_, Buf> {
   fn default() -> Self {
-    Yarn::empty()
+    YarnBox::empty()
   }
 }

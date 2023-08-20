@@ -1,5 +1,3 @@
-//!
-
 use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::Write;
@@ -12,9 +10,14 @@ use std::str;
 use std::str::Utf8Error;
 
 use crate::raw::RawYarn;
-use crate::yarn::Yarn;
 use crate::Utf8Chunks;
+use crate::YarnBox;
 
+#[cfg(doc)]
+use crate::*;
+
+/// An optimized, freely copyable string type.
+///
 /// Like a [`Yarn`], but [`Copy`].
 ///
 /// In general, prefer to use [`Yarn`] except when you absolutely need the type
@@ -23,12 +26,18 @@ use crate::Utf8Chunks;
 ///
 /// See the [crate documentation](crate) for general information.
 #[repr(transparent)]
-pub struct YarnRef<'a, Buf: crate::Buf + ?Sized = [u8]> {
+pub struct YarnRef<'a, Buf>
+where
+  Buf: crate::Buf + ?Sized,
+{
   raw: RawYarn,
   _ph: PhantomData<&'a Buf>,
 }
 
-impl<'a, Buf: crate::Buf + ?Sized> YarnRef<'a, Buf> {
+impl<'a, Buf> YarnRef<'a, Buf>
+where
+  Buf: crate::Buf + ?Sized,
+{
   pub(crate) const fn buf2raw(buf: &Buf) -> &[u8] {
     let ptr = &buf as *const &Buf as *const &[u8];
     unsafe {
@@ -54,7 +63,7 @@ impl<'a, Buf: crate::Buf + ?Sized> YarnRef<'a, Buf> {
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let empty: &YarnRef = YarnRef::empty();
+  /// let empty: &YarnRef<str> = YarnRef::empty();
   /// assert_eq!(empty, "");
   /// ```
   ///
@@ -71,7 +80,7 @@ impl<'a, Buf: crate::Buf + ?Sized> YarnRef<'a, Buf> {
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let foo = YarnRef::new(b"Byzantium");
+  /// let foo = YarnRef::<str>::new("Byzantium");
   /// assert_eq!(foo.len(), 9);
   /// ```
   ///
@@ -85,7 +94,7 @@ impl<'a, Buf: crate::Buf + ?Sized> YarnRef<'a, Buf> {
   ///
   /// ```
   /// # use byteyarn::*;
-  /// const FOO: YarnRef = YarnRef::from_buf(b"Byzantium");
+  /// const FOO: YarnRef<str> = YarnRef::from_buf("Byzantium");
   /// assert_eq!(FOO.len(), 9);
   /// ```
   pub const fn from_buf(buf: &'a Buf) -> Self {
@@ -165,23 +174,23 @@ impl<'a, Buf: crate::Buf + ?Sized> YarnRef<'a, Buf> {
   /// Converts this reference yarn into a owning yarn of the same lifetime.
   ///
   /// This function does not make copies or allocations.
-  pub const fn as_owned(self) -> Yarn<'a, Buf> {
+  pub const fn to_box(self) -> YarnBox<'a, Buf> {
     unsafe {
       // SAFETY: self is never HEAP, and the output lifetime is the same as the
       // input so if self is ALIASED it will not become invalid before the
       // returned yarn goes out of scope.
-      Yarn::from_raw(self.raw)
+      YarnBox::from_raw(self.raw)
     }
   }
 
   /// Converts this yarn into a boxed slice by copying it.
-  pub fn to_box(self) -> Box<[u8]> {
-    self.as_owned().into_box()
+  pub fn to_boxed_bytes(self) -> Box<[u8]> {
+    self.to_box().into_boxed_bytes()
   }
 
   /// Converts this yarn into a vector by copying it.
   pub fn to_vec(self) -> Vec<u8> {
-    self.as_owned().into_vec()
+    self.to_box().into_vec()
   }
 
   /// Converts this yarn into a byte yarn.
@@ -304,8 +313,8 @@ impl<'a> YarnRef<'a, str> {
   }
 
   /// Converts this yarn into a boxed slice by copying it.
-  pub fn to_str_box(self) -> Box<str> {
-    self.as_owned().into_str_box()
+  pub fn to_boxed_str(self) -> Box<str> {
+    self.to_box().into_boxed_str()
   }
 
   /// Converts this yarn into a string by copying it.
@@ -314,7 +323,7 @@ impl<'a> YarnRef<'a, str> {
   // this method taking &self? Very odd.
   #[allow(clippy::inherent_to_string_shadow_display)]
   pub fn to_string(self) -> String {
-    self.as_owned().into_string()
+    self.to_box().into_string()
   }
 }
 

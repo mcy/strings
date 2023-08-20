@@ -1,10 +1,10 @@
 [package]
 name = "byteyarn"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 
 authors = ["Miguel Young de la Sota <mcyoung@mit.edu>"]
-description = "`byteyarn`, hyper-compact strings."
+description = "hyper-compact strings"
 homepage = "https://github.com/mcy/byteyarn"
 repository = "https://github.com/mcy/byteyarn"
 keywords = ["string", "text", "binary"]
