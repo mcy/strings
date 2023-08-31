@@ -282,7 +282,7 @@ impl RawYarn {
     ptr: *const u8,
     len: usize,
   ) -> Self {
-    debug_assert!(len < Self::SSO_LEN);
+    debug_assert!(len <= Self::SSO_LEN);
 
     let mut small = Small {
       len: (len as u8) << 2 | Self::SMALL,
