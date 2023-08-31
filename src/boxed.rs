@@ -393,7 +393,7 @@ where
   ///   Ok("🐈‍⬛!"),
   /// ]);
   ///
-  /// assert_eq!(format!("{yarn:?}"), r#""abc\xFF\xFE\xFF🐈‍⬛!""#);
+  /// assert_eq!(format!("{yarn:?}"), r#""abc\xFF\xFE\xFF🐈\u{200d}⬛!""#);
   /// assert_eq!(format!("{yarn}"), "abc���🐈‍⬛!");
   /// ```
   pub fn utf8_chunks(&self) -> Utf8Chunks {

@@ -244,7 +244,7 @@ where
   ///   Ok("🐈‍⬛!"),
   /// ]);
   ///
-  /// assert_eq!(format!("{yarn:?}"), r#""abc\xFF\xFE\xFF🐈‍⬛!""#);
+  /// assert_eq!(format!("{yarn:?}"), r#""abc\xFF\xFE\xFF🐈\u{200d}⬛!""#);
   /// assert_eq!(format!("{yarn}"), "abc���🐈‍⬛!");
   /// ```
   pub fn utf8_chunks(&self) -> Utf8Chunks {
@@ -338,7 +338,7 @@ impl<Buf: crate::Buf + ?Sized> fmt::Debug for YarnRef<'_, Buf> {
     write!(f, "\"")?;
     for chunk in self.utf8_chunks() {
       match chunk {
-        Ok(utf8) => f.write_str(utf8)?,
+        Ok(utf8) => write!(f, "{}", utf8.escape_debug())?,
         Err(bytes) => {
           for b in bytes {
             write!(f, "\\x{:02X}", b)?;
