@@ -240,11 +240,12 @@ impl RawYarn {
   /// This function must be called at most once, when the raw yarn is being
   /// disposed of.
   #[inline(always)]
-  pub unsafe fn destroy(&self) {
+  pub unsafe fn destroy(self) {
     if !self.on_heap() {
       return;
     }
 
+    debug_assert!(self.len() > 0);
     let layout = alloc::Layout::for_value(self.as_slice());
     alloc::dealloc(self.ptr.ptr as *mut u8, layout)
   }
@@ -412,6 +413,10 @@ impl RawYarn {
   /// Returns a `RawYarn` by taking ownership of the given allocation.
   #[inline]
   pub fn from_heap(s: Box<[u8]>) -> Self {
+    if let Some(inline) = Self::from_slice_inlined(&s) {
+      return inline;
+    }
+
     let len = s.len();
     let ptr = Box::into_raw(s) as *mut u8;
     unsafe {

@@ -260,10 +260,10 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let yarn = yarn!("jellybeans");
-  /// assert_eq!(yarn.to_ref().unwrap(), "jellybeans");
+  /// let yarn = yarn!("lots and lots of jellybeans");
+  /// assert_eq!(yarn.to_ref().unwrap(), "lots and lots of jellybeans");
   ///
-  /// let boxed = Yarn::from_string(String::from("jellybeans"));
+  /// let boxed = Yarn::from_string(String::from("lots and lots of jellybeans"));
   /// assert!(boxed.to_ref().is_none());
   /// ```
   pub const fn to_ref(&self) -> Option<YarnRef<'a, Buf>> {
