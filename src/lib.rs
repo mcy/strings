@@ -22,8 +22,8 @@
 //! not [`Copy`], there is a separate [`YarnRef`] type that is. These types
 //! have equivalent representations, and can be cheaply cast between each other.
 //!
-//! The easiest way to create a yarn is with the [`yarn!()`] and [`byarn!()`]
-//! macros, which are similar to [`format!()`].
+//! The easiest way to create a yarn is with the [`yarn!()`]
+//! macro, which is similar to [`format!()`].
 //!
 //! ```
 //! # use byteyarn::*;

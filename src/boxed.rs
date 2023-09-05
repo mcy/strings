@@ -88,6 +88,51 @@ where
     }
   }
 
+  /// Returns a new yarn that aliases the contents of this yarn.
+  ///
+  /// In effect, this is like `Copy`ing out of `*self`, by shortening the
+  /// lifetime of the yarn.
+  ///
+  /// ```
+  /// # use byteyarn::*;
+  /// /// Joins two yarns with "and", but re-uses the buffer if one of them is
+  /// /// `None`.
+  /// fn and<'a>(a: Option<&'a YarnBox<str>>, b: Option<&'a YarnBox<str>>) -> YarnBox<'a, str> {
+  ///   match (a, b) {
+  ///     (Some(a), Some(b)) => yarn!("{a} and {b}"),
+  ///     (Some(a), None) => a.aliased(),
+  ///     (None, Some(b)) => b.aliased(),
+  ///     (None, None) => Yarn::default(),
+  ///   }
+  /// }
+  ///
+  /// assert_eq!(and(Some(&yarn!("apples")), Some(&yarn!("oranges"))), "apples and oranges");
+  /// assert_eq!(and(Some(&yarn!("apples")), None), "apples");
+  /// assert_eq!(and(None, None), "");
+  /// ```
+  ///
+  /// This function will be found by `From` impls from `&YarnBox`.
+  ///
+  /// Note also that unlike `YarnBox::new(y.as_ref())`, this will ensure the
+  /// yarn remembers that it's a static string.
+  ///
+  /// ```
+  /// # use byteyarn::*;
+  /// use std::ptr;
+  ///
+  /// let lit = Yarn::from_static("nice long static string constant");
+  ///
+  /// // Immortalizing the aliased yarn does not require a new heap allocation.
+  /// assert!(ptr::eq(lit.aliased().immortalize().as_slice(), lit.as_slice()));
+  ///
+  /// // We forgot this yarn was static, so immortalization requires a copy.
+  /// assert!(!ptr::eq(YarnBox::<str>::new(&lit).immortalize().as_slice(), lit.as_slice()));
+  /// ```
+  pub const fn aliased(&self) -> YarnBox<Buf> {
+    // NOTE: going through YarnRef will ensure we preserve static-ness.
+    self.as_ref().to_box()
+  }
+
   /// Returns a yarn containing a single UTF-8-encoded Unicode scalar.
   /// This function does not allocate: every `char` fits in an inlined yarn.
   ///

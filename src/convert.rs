@@ -92,6 +92,24 @@ where
   }
 }
 
+impl<'a, Buf> From<&'a YarnBox<'_, Buf>> for YarnBox<'a, Buf>
+where
+  Buf: crate::Buf + ?Sized,
+{
+  fn from(s: &'a YarnBox<'a, Buf>) -> Self {
+    s.aliased()
+  }
+}
+
+impl<'a, Buf> From<&'a YarnBox<'_, Buf>> for YarnRef<'a, Buf>
+where
+  Buf: crate::Buf + ?Sized,
+{
+  fn from(s: &'a YarnBox<'a, Buf>) -> Self {
+    s.as_ref()
+  }
+}
+
 impl<'a, Buf> From<&'a Buf> for YarnRef<'a, Buf>
 where
   Buf: crate::Buf + ?Sized,
