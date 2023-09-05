@@ -3,6 +3,7 @@ use std::fmt;
 use std::fmt::Write;
 use std::mem;
 use std::mem::MaybeUninit;
+use std::num::NonZeroUsize;
 use std::slice;
 
 /// The core implementation of yarns.
@@ -11,25 +12,30 @@ use std::slice;
 /// wrapper is shared between both owning and non-owning yarns.
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub union RawYarn {
-  // These are differentiated by the low two bits of the first word. 0b00 is
-  // small, 0b01 is static, and 0b10 is heap. 0b11 is unused.
-  small: Small,
-  slice: Slice,
+pub struct RawYarn {
+  ptr: PtrOrBytes,
+  len: NonZeroUsize,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+union PtrOrBytes {
+  bytes: [u8; mem::size_of::<*const u8>()],
+  ptr: *const u8,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct Small {
+  data: [u8; mem::size_of::<RawYarn>() - 1],
   len: u8,
-  data: [MaybeUninit<u8>; RawYarn::SSO_LEN],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct Slice {
-  len: usize,
   ptr: *const u8,
+  len: usize,
 }
 
 enum Layout<'a> {
@@ -45,6 +51,11 @@ enum LayoutMut<'a> {
 // RawYarn does not expose &mut through &self.
 unsafe impl Send for RawYarn {}
 unsafe impl Sync for RawYarn {}
+
+#[test]
+fn has_niche() {
+  assert_eq!(mem::size_of::<RawYarn>(), mem::size_of::<Option<RawYarn>>());
+}
 
 impl RawYarn {
   /// The number of bytes beyond the length byte that are usable for data.
@@ -68,7 +79,7 @@ impl RawYarn {
   };
 
   /// The tag for an SSO yarn.
-  pub const SMALL: u8 = 0b00;
+  pub const SMALL: u8 = 0b11;
   /// The tag for a yarn that came from an immortal string slice.
   pub const STATIC: u8 = 0b01;
   /// The tag for a yarn that points to a dynamic string slice, on the heap,
@@ -76,21 +87,35 @@ impl RawYarn {
   pub const HEAP: u8 = 0b10;
   /// The tag for a yarn that points to a dynamic string slice we don't
   /// uniquely own.
-  pub const ALIASED: u8 = 0b11;
+  ///
+  /// Because the first word can never be zero, aliased yarns can never have
+  /// zero length.
+  pub const ALIASED: u8 = 0b00;
 
   /// Mask for extracting the tag out of the lowest byte of the yarn.
-  const MASK: u8 = 0b11;
+  const SHIFT8: u32 = u8::BITS - 2;
+  const SHIFT: u32 = usize::BITS - 2;
+
+  const MASK8: usize = !0 << Self::SHIFT8;
+  const MASK: usize = !0 << Self::SHIFT;
 
   /// Returns the kind of yarn this is (one of the constants above).
   #[inline(always)]
   pub const fn kind(&self) -> u8 {
-    let ptr = self as *const Self as *const u8;
-    let low_byte = unsafe {
-      // SAFETY: ptr is valid by construction; regardless of which union member
-      // is engaged, the lowest byte is always initialized.
-      *ptr
-    };
-    low_byte & Self::MASK
+    // This used to be
+    //
+    // let ptr = self as *const Self as *const u8;
+    // let hi_byte = unsafe {
+    //  // SAFETY: ptr is valid by construction; regardless of which union member
+    //  // is engaged, the lowest byte is always initialized.
+    //  *ptr.add(std::mem::size_of::<Self>() - 1)
+    // };
+    // hi_byte >> Self::SHIFT8
+    //
+    // But LLVM apparently upgrades this to a word-aligned load (i.e. the code
+    // below) regardless. :D
+
+    (self.len.get() >> Self::SHIFT) as u8
   }
 
   /// Creates a new, non-`SMALL` yarn with the given pointer, length, and tag.
@@ -112,13 +137,15 @@ impl RawYarn {
       len < usize::MAX / 4,
       "yarns cannot be larger than a quarter of the address space"
     );
+    debug_assert!(
+      tag != 0 || len != 0,
+      "zero-length and zero tag are not permitted simultaneously."
+    );
     debug_assert!(tag != Self::SMALL);
 
     Self {
-      slice: Slice {
-        len: (len << 2) | (tag as usize),
-        ptr,
-      },
+      ptr: PtrOrBytes { ptr },
+      len: NonZeroUsize::new_unchecked(len | (tag as usize) << Self::SHIFT),
     }
   }
 
@@ -128,11 +155,11 @@ impl RawYarn {
     match self.is_small() {
       true => unsafe {
         // SAFETY: When self.is_small, the small variant is always active.
-        Layout::Small(&self.small)
+        Layout::Small(mem::transmute::<&RawYarn, &Small>(self))
       },
       false => unsafe {
         // SAFETY: Otherwise, the slice variant is always active.
-        Layout::Slice(&self.slice)
+        Layout::Slice(mem::transmute::<&RawYarn, &Slice>(self))
       },
     }
   }
@@ -143,16 +170,17 @@ impl RawYarn {
     match self.is_small() {
       true => unsafe {
         // SAFETY: When self.is_small, the small variant is always active.
-        LayoutMut::Small(&mut self.small)
+        LayoutMut::Small(mem::transmute::<&mut RawYarn, &mut Small>(self))
       },
       false => unsafe {
         // SAFETY: Otherwise, the slice variant is always active.
-        LayoutMut::Slice(&mut self.slice)
+        LayoutMut::Slice(mem::transmute::<&mut RawYarn, &mut Slice>(self))
       },
     }
   }
 
   /// Returns a reference to an empty `RawYarn` of any lifetime.
+  #[inline]
   pub fn empty<'a>() -> &'a RawYarn {
     static STORAGE: MaybeUninit<RawYarn> = MaybeUninit::new(RawYarn::new(b""));
     unsafe {
@@ -162,6 +190,7 @@ impl RawYarn {
   }
 
   /// Returns a `RawYarn` pointing to the given static string, without copying.
+  #[inline]
   pub const fn new(s: &'static [u8]) -> Self {
     if s.len() < Self::SSO_LEN {
       unsafe {
@@ -177,25 +206,29 @@ impl RawYarn {
   }
 
   /// Returns an empty `RawYarn`.
+  #[inline(always)]
   pub const fn len(self) -> usize {
     match self.layout() {
-      Layout::Small(s) => s.len as usize >> 2,
-      Layout::Slice(s) => s.len >> 2,
+      Layout::Small(s) => s.len as usize & !Self::MASK8,
+      Layout::Slice(s) => s.len & !Self::MASK,
     }
   }
 
   /// Returns whether this `RawYarn` needs to be dropped (i.e., if it is holding
   /// onto memory resources).
+  #[inline(always)]
   pub const fn on_heap(self) -> bool {
     self.kind() == Self::HEAP
   }
 
   /// Returns whether this `RawYarn` is SSO.
+  #[inline(always)]
   pub const fn is_small(self) -> bool {
     self.kind() == Self::SMALL
   }
 
   /// Returns whether this `RawYarn` is SSO.
+  #[inline(always)]
   pub const fn is_immortal(self) -> bool {
     self.kind() != Self::ALIASED
   }
@@ -206,16 +239,18 @@ impl RawYarn {
   ///
   /// This function must be called at most once, when the raw yarn is being
   /// disposed of.
+  #[inline(always)]
   pub unsafe fn destroy(&self) {
     if !self.on_heap() {
       return;
     }
 
     let layout = alloc::Layout::for_value(self.as_slice());
-    alloc::dealloc(self.slice.ptr as *mut u8, layout)
+    alloc::dealloc(self.ptr.ptr as *mut u8, layout)
   }
 
   /// Returns a pointer into the data for this raw yarn.
+  #[inline(always)]
   pub const fn as_ptr(&self) -> *const u8 {
     match self.layout() {
       Layout::Small(s) => s.data.as_ptr().cast(),
@@ -224,6 +259,7 @@ impl RawYarn {
   }
 
   /// Returns a pointer into the data for this raw yarn.
+  #[inline(always)]
   pub fn as_mut_ptr(&mut self) -> *mut u8 {
     match self.layout_mut() {
       LayoutMut::Small(s) => s.data.as_mut_ptr().cast(),
@@ -232,6 +268,7 @@ impl RawYarn {
   }
 
   /// Converts this RawYarn into a byte slice.
+  #[inline(always)]
   pub const fn as_slice(&self) -> &[u8] {
     unsafe {
       // SAFETY: the output lifetime ensures that `self` cannot move away.
@@ -244,6 +281,7 @@ impl RawYarn {
   /// # Safety
   ///
   /// This must only be called on `SMALL` or `HEAP` yarns.
+  #[inline(always)]
   pub unsafe fn as_mut_slice(&mut self) -> &mut [u8] {
     debug_assert!(self.is_small() || self.on_heap());
     unsafe {
@@ -253,6 +291,7 @@ impl RawYarn {
   }
 
   /// Returns a `RawYarn` by making a copy of the given slice.
+  #[inline(always)]
   pub fn copy_slice(s: &[u8]) -> Self {
     match Self::from_slice_inlined(s) {
       Some(inl) => inl,
@@ -265,6 +304,7 @@ impl RawYarn {
   /// # Safety
   ///
   /// `s` must outlive all uses of the returned yarn.
+  #[inline(always)]
   pub const unsafe fn alias_slice(s: &[u8]) -> Self {
     if let Some(inlined) = Self::from_slice_inlined(s) {
       return inlined;
@@ -278,6 +318,7 @@ impl RawYarn {
   /// # Safety
   ///
   /// `len < Self::SSO`, and `ptr` must be valid for reading `len` bytes.
+  #[inline]
   pub const unsafe fn from_slice_inlined_unchecked(
     ptr: *const u8,
     len: usize,
@@ -285,8 +326,8 @@ impl RawYarn {
     debug_assert!(len <= Self::SSO_LEN);
 
     let mut small = Small {
-      len: (len as u8) << 2 | Self::SMALL,
-      data: [MaybeUninit::uninit(); Self::SSO_LEN],
+      data: [0; Self::SSO_LEN],
+      len: (len as u8) | Self::SMALL << Self::SHIFT8,
     };
 
     // There's no way to get an *mut to `small.data`, so we do an iteration,
@@ -294,16 +335,18 @@ impl RawYarn {
     // optimizer.
     let mut i = 0;
     while i < len {
-      small.data[i] = MaybeUninit::new(*ptr.add(i));
+      small.data[i] = *ptr.add(i);
       i += 1;
     }
 
-    Self { small }
+    // Small and RawYarn are both POD.
+    mem::transmute::<Small, RawYarn>(small)
   }
 
   /// Returns a new `RawYarn` containing the contents of the given slice.
   ///
   /// This function will always return an inlined string.
+  #[inline]
   pub const fn from_slice_inlined(s: &[u8]) -> Option<Self> {
     if s.len() > Self::SSO_LEN {
       return None;
@@ -318,6 +361,7 @@ impl RawYarn {
   /// Returns a `RawYarn` containing a single UTF-8-encoded Unicode scalar.
   ///
   /// This function does not allocate: every `char` fits in an inlined `RawYarn`.
+  #[inline(always)]
   pub const fn from_char(c: char) -> Self {
     let (data, len) = crate::utf8::encode_utf8(c);
     unsafe {
@@ -327,6 +371,7 @@ impl RawYarn {
   }
 
   /// Returns a `RawYarn` containing a single byte, without allocating.
+  #[inline(always)]
   pub const fn from_byte(c: u8) -> Self {
     unsafe {
       // SAFETY: 1 < Self::SSO_LEN.
@@ -365,6 +410,7 @@ impl RawYarn {
   }
 
   /// Returns a `RawYarn` by taking ownership of the given allocation.
+  #[inline]
   pub fn from_heap(s: Box<[u8]>) -> Self {
     let len = s.len();
     let ptr = Box::into_raw(s) as *mut u8;
