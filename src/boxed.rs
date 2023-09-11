@@ -622,6 +622,52 @@ impl YarnBox<'_, str> {
   }
 }
 
+#[cfg(feature = "serde")]
+impl serde::Serialize for YarnBox<'_, str> {
+  #[inline]
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    serializer.serialize_str(self.as_str())
+  }
+}
+
+#[cfg(feature = "serde")]
+impl<'de: 's, 's> serde::Deserialize<'de> for YarnBox<'s, str> {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: serde::Deserializer<'de>,
+  {
+    let s: &'s str = serde::Deserialize::deserialize(deserializer)?;
+    let s = YarnBox::inlined(s).unwrap_or_else(|| YarnBox::new(s));
+    Ok(s)
+  }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for YarnBox<'_, [u8]> {
+  #[inline]
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    serializer.serialize_bytes(self.as_bytes())
+  }
+}
+
+#[cfg(feature = "serde")]
+impl<'de: 's, 's> serde::Deserialize<'de> for YarnBox<'s, [u8]> {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: serde::Deserializer<'de>,
+  {
+    let s: &'s [u8] = serde::Deserialize::deserialize(deserializer)?;
+    let s = YarnBox::inlined(s).unwrap_or_else(|| YarnBox::new(s));
+    Ok(s)
+  }
+}
+
 impl<Buf> Deref for YarnBox<'_, Buf>
 where
   Buf: crate::Buf + ?Sized,

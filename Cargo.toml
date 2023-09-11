@@ -10,3 +10,6 @@ repository = "https://github.com/mcy/byteyarn"
 keywords = ["string", "text", "binary"]
 
 license = "Apache-2.0"
+
+[dependencies]
+serde = { version = "1.0", optional = true }
