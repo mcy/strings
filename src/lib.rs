@@ -15,7 +15,7 @@
 //! do not track an internal capacity, and the slice returned by
 //! [`Yarn::as_slice()`] does not have the same pointer stability properties as
 //! [`String`] (these are rarely needed, though).
-//! 
+//!
 //! ---
 //!
 //! Yarns are useful for situations in which a copy-on-write string is necessary

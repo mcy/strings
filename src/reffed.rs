@@ -96,7 +96,7 @@ where
   }
 
   /// Returns a new yarn containing the contents of the given slice.
-  /// 
+  ///
   /// This function will always return an inlined string, or `None` if the
   /// given buffer is too big. In general, you should not need to call this
   /// function, since all `YarnRef`-constructing functions will automatically

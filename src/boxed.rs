@@ -68,7 +68,7 @@ where
   }
 
   /// Returns a new yarn containing the contents of the given slice.
-  /// 
+  ///
   /// This function will always return an inlined string, or `None` if the
   /// given buffer is too big. In general, you should not need to call this
   /// function, since all `YarnBox`-constructing functions will automatically
@@ -485,15 +485,15 @@ where
   }
 
   /// Copies `buf` and returns an immortal yarn.
-  /// 
+  ///
   /// This is a shorthand for `YarnBox::new(buf).immortalize()`, which is an
   /// idiom for copying a buffer into an immortal yarn.
-  /// 
+  ///
   /// ```
   /// # use byteyarn::*;
   /// let short = Yarn::copy("short");
   /// assert_eq!(short, "short");
-  /// 
+  ///
   /// let long = Yarn::copy("loooooooooooooooooong");
   /// assert_eq!(long, "loooooooooooooooooong");
   /// ```
