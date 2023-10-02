@@ -68,8 +68,11 @@ where
   }
 
   /// Returns a new yarn containing the contents of the given slice.
+  /// 
   /// This function will always return an inlined string, or `None` if the
-  /// given buffer is too big.
+  /// given buffer is too big. In general, you should not need to call this
+  /// function, since all `YarnBox`-constructing functions will automatically
+  /// inline any small strings passed to them.
   ///
   /// Note that the maximum inlined size is architecture-dependent.
   ///
@@ -479,6 +482,23 @@ where
   /// This function will *not* be found by `From` impls.
   pub const fn from_static(buf: &'static Buf) -> Self {
     YarnRef::from_static(buf).to_box()
+  }
+
+  /// Copies `buf` and returns an immortal yarn.
+  /// 
+  /// This is a shorthand for `YarnBox::new(buf).immortalize()`, which is an
+  /// idiom for copying a buffer into an immortal yarn.
+  /// 
+  /// ```
+  /// # use byteyarn::*;
+  /// let short = Yarn::copy("short");
+  /// assert_eq!(short, "short");
+  /// 
+  /// let long = Yarn::copy("loooooooooooooooooong");
+  /// assert_eq!(long, "loooooooooooooooooong");
+  /// ```
+  pub fn copy(buf: &Buf) -> Self {
+    YarnBox::new(buf).immortalize()
   }
 }
 

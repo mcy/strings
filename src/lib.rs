@@ -9,12 +9,13 @@
 //! * Can be either an owned buffer or a borrowed buffer (like [`Cow<str>`]).
 //! * Can be upcast to `'static` lifetime if it was constructed from a
 //!   known-static string.
+//! * `Option<Yarn>` has the same size and ABI as `Yarn`.
 //!
 //! The main caveat is that [`Yarn`]s cannot be easily appended to, since they
 //! do not track an internal capacity, and the slice returned by
 //! [`Yarn::as_slice()`] does not have the same pointer stability properties as
 //! [`String`] (these are rarely needed, though).
-//!
+//! 
 //! ---
 //!
 //! Yarns are useful for situations in which a copy-on-write string is necessary
