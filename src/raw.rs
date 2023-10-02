@@ -13,15 +13,8 @@ use std::slice;
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct RawYarn {
-  ptr: PtrOrBytes,
-  len: NonZeroUsize,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-union PtrOrBytes {
-  bytes: [u8; mem::size_of::<*const u8>()],
   ptr: *const u8,
+  len: NonZeroUsize,
 }
 
 #[repr(C)]
@@ -144,7 +137,7 @@ impl RawYarn {
     debug_assert!(tag != Self::SMALL);
 
     Self {
-      ptr: PtrOrBytes { ptr },
+      ptr,
       len: NonZeroUsize::new_unchecked(len | (tag as usize) << Self::SHIFT),
     }
   }
@@ -247,7 +240,7 @@ impl RawYarn {
 
     debug_assert!(self.len() > 0);
     let layout = alloc::Layout::for_value(self.as_slice());
-    alloc::dealloc(self.ptr.ptr as *mut u8, layout)
+    alloc::dealloc(self.ptr as *mut u8, layout)
   }
 
   /// Returns a pointer into the data for this raw yarn.
