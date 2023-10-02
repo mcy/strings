@@ -318,10 +318,68 @@ impl RawYarn {
     len: usize,
   ) -> Self {
     debug_assert!(len <= Self::SSO_LEN);
+    if len > Self::SSO_LEN {
+      // SAFETY: This is a precondition for this function.
+      // This allows the compiler to assume len <= Self::SSO_LEN for the rest
+      // of the function body.
+      std::hint::unreachable_unchecked();
+    }
+
+    let tagged_len = (len as u8) | Self::SMALL << Self::SHIFT8;
+
+    // Specialization for 64-bit architectures.
+    if mem::size_of::<Self>() == 16 {
+      // Do binary search on the length of the buffer to construct the shortest
+      // instruction sequence for reading `len` little-endian bytes into
+      // `register`, with all higher bytes zeroed.
+      //
+      // Regardless of length, this costs three loads if len in 1..4, or two
+      // loads otherwise.
+      let register = if len > 8 {
+        // SAFETY: This reads the low eight bytes of the buffer and the high
+        // eight bytes, which possibly overlap, and then ors them together.
+        //
+        // This reads between 9 and 15 distinct bytes, total.
+        let x0 = ptr.cast::<u64>().read_unaligned() as u128;
+        let x1 = ptr.add(len - 8).cast::<u64>().read_unaligned() as u128;
+        x0 | (x1 << (len - 8) * 8)
+      } else if len > 3 {
+        // SAFETY: This reads the low four bytes of the buffer and the high
+        // four bytes, which possibly overlap, and then ors them together.
+        //
+        // This reads between 4 and 8 distinct bytes, total.
+        let x0 = ptr.cast::<u32>().read_unaligned() as u128;
+        let x1 = ptr.add(len - 4).cast::<u32>().read_unaligned() as u128;
+        x0 | (x1 << (len - 4) * 8)
+      } else if len > 0 {
+        // SAFETY: This code runs when len is 1, 2, or 3, in which case these
+        // three points are, respectively:
+        //  1. p[0], p[0], p[0]
+        //  2. p[0], p[1], p[1]
+        //  3. p[0], p[1], p[2]
+        //
+        // In each case, all three accesses are in bounds. We then shift the
+        // bytes to their corresponding positions in the output.
+        let x0 = ptr.read() as u128;
+        let x1 = ptr.add(len / 2).read() as u128;
+        let x2 = ptr.add(len - 1).read() as u128;
+
+        x0 | x1 << (len / 2 * 8) | x2 << ((len - 1) * 8)
+      } else {
+        0
+      };
+
+      // SAFETY: size_of<u128> == size_of<Small>.
+      // Unfortunately, transmute_copy() is not const as of writing.
+      let mut small = (&register as *const u128).cast::<Small>().read();
+      small.len = tagged_len;
+
+      return mem::transmute::<Small, RawYarn>(small);
+    }
 
     let mut small = Small {
       data: [0; Self::SSO_LEN],
-      len: (len as u8) | Self::SMALL << Self::SHIFT8,
+      len: tagged_len,
     };
 
     // There's no way to get an *mut to `small.data`, so we do an iteration,
