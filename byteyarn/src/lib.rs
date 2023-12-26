@@ -49,20 +49,20 @@
 //! Both kinds of yarns can be `Debug`ed and `Display`ed, and will print out as
 //! strings would. In particular, invalid UTF-8 is converted into either `\xNN`
 //! escapes or replacement characters (for `Debug` and `Display` respectively).
-//! 
+//!
 //! ```
 //! # use byteyarn::*;
 //! let invalid = ByteYarn::from_byte(0xff);
 //! assert_eq!(format!("{invalid:?}"), r#""\xFF""#);
 //! assert_eq!(format!("{invalid}"), "�");
 //! ```
-//! 
+//!
 //! That said, they will support anything that implements the [`Buf`] trait.
 //! For example, you can have 16-bit yarns:
-//! 
+//!
 //! ```
 //! # use byteyarn::*;
-//! 
+//!
 //! let sixteen = YarnBox::<[u16]>::from([1, 2, 3, 4, 5, 6, 8, 9, 10, 11]);
 //! assert_eq!(sixteen[2], 3u16);
 //! ```

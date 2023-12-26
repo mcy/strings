@@ -328,10 +328,9 @@ where
 
         let raw = self.into_raw();
         ptr.copy_from_nonoverlapping(raw.as_slice().as_ptr(), raw.len());
-        return Box::from_raw(buf_trait::as_buf_mut(slice::from_raw_parts_mut(
-          ptr,
-          raw.len(),
-        )));
+        return Box::from_raw(buf_trait::as_buf_mut(
+          slice::from_raw_parts_mut(ptr, raw.len()),
+        ));
       }
     }
 
