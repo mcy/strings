@@ -1,6 +1,7 @@
 [package]
 name = "buf-trait"
 version = "0.3.0"
+description = "abstract over [u8], str, and friends"
 
 edition.workspace = true
 authors.workspace = true

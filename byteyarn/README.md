@@ -56,5 +56,3 @@ let invalid = ByteYarn::from_byte(0xff);
 assert_eq!(format!("{invalid:?}"), r#""\xFF""#);
 assert_eq!(format!("{invalid}"), "�");
 ```
-
-License: Apache-2.0
