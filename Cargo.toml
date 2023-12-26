@@ -1,12 +1,13 @@
-[package]
-name = "byteyarn"
-version = "0.3.0"
+[workspace]
+members = ["byteyarn", "buf-trait"]
+resolver = "2"
+
+[workspace.package]
 edition = "2021"
 
 authors = ["Miguel Young de la Sota <mcyoung@mit.edu>"]
-description = "hyper-compact strings"
-homepage = "https://github.com/mcy/byteyarn"
-repository = "https://github.com/mcy/byteyarn"
+homepage = "https://github.com/mcy/strings"
+repository = "https://github.com/mcy/strings"
 keywords = ["string", "text", "binary"]
 
 license = "Apache-2.0"

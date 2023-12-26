@@ -342,7 +342,7 @@ impl RawYarn {
         // This reads between 9 and 15 distinct bytes, total.
         let x0 = ptr.cast::<u64>().read_unaligned() as u128;
         let x1 = ptr.add(len - 8).cast::<u64>().read_unaligned() as u128;
-        x0 | (x1 << (len - 8) * 8)
+        x0 | (x1 << ((len - 8) * 8))
       } else if len > 3 {
         // SAFETY: This reads the low four bytes of the buffer and the high
         // four bytes, which possibly overlap, and then ors them together.
@@ -350,7 +350,7 @@ impl RawYarn {
         // This reads between 4 and 8 distinct bytes, total.
         let x0 = ptr.cast::<u32>().read_unaligned() as u128;
         let x1 = ptr.add(len - 4).cast::<u32>().read_unaligned() as u128;
-        x0 | (x1 << (len - 4) * 8)
+        x0 | (x1 << ((len - 4) * 8))
       } else if len > 0 {
         // SAFETY: This code runs when len is 1, 2, or 3, in which case these
         // three points are, respectively:
