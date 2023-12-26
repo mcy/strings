@@ -1,7 +1,6 @@
 [package]
-name = "byteyarn"
+name = "buf-trait"
 version = "0.3.0"
-description = "hyper-compact strings"
 
 edition.workspace = true
 authors.workspace = true
@@ -9,6 +8,3 @@ homepage.workspace = true
 repository.workspace = true
 keywords.workspace = true
 license.workspace = true
-
-[dependencies]
-buf-trait = { version = "0.3", path = "../buf-trait" }

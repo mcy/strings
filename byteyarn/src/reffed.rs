@@ -38,25 +38,20 @@ impl<'a, Buf> YarnRef<'a, Buf>
 where
   Buf: crate::Buf + ?Sized,
 {
-  pub(crate) const fn buf2raw(buf: &Buf) -> &[u8] {
-    let ptr = &buf as *const &Buf as *const &[u8];
-    unsafe {
-      // SAFETY: The safety rules of `Buf` make this valid.
-      *ptr
-    }
-  }
-
-  pub(crate) const unsafe fn raw2buf(buf: &[u8]) -> &Buf {
-    let ptr = &buf as *const &[u8] as *const &Buf;
-    *ptr
-  }
-
   pub(crate) const unsafe fn from_raw(raw: RawYarn) -> Self {
     debug_assert!(!raw.on_heap());
-    Self {
+    let yarn = Self {
       raw,
       _ph: PhantomData,
+    };
+
+    if cfg!(miri) {
+      // Materialize a slice. This is the best we can do as an alignment check
+      // in const.
+      let _slice = yarn.as_slice();
     }
+
+    yarn
   }
 
   /// Returns a reference to an empty yarn of any lifetime.
@@ -87,7 +82,10 @@ where
     unsafe {
       // SAFETY: We copy the lifetime from buf into self, so this alias slice
       // must go away before buf can.
-      let raw = RawYarn::alias_slice(Self::buf2raw(buf));
+      let raw = RawYarn::alias_slice(
+        buf_trait::layout_of(buf),
+        buf as *const Buf as *const u8,
+      );
 
       // SAFETY: buf is a valid slice by construction, and alias_slice() never
       // returns a HEAP yarn.
@@ -114,7 +112,9 @@ where
   /// ```
   pub const fn inlined(buf: &Buf) -> Option<Self> {
     // This is a const fn, hence no ?.
-    let Some(raw) = RawYarn::from_slice_inlined(Self::buf2raw(buf)) else {
+    let Some(raw) = RawYarn::from_slice_inlined(
+      buf_trait::layout_of(buf),
+      buf as *const Buf as *const u8,) else {
       return None;
     };
 
@@ -152,7 +152,7 @@ where
 
   /// Converts this yarn into a slice.
   pub const fn as_slice(&self) -> &Buf {
-    unsafe { Self::raw2buf(self.as_bytes()) }
+    unsafe { buf_trait::as_buf(self.as_bytes()) }
   }
 
   /// Converts this yarn into a byte slice.
@@ -174,12 +174,12 @@ where
 
   /// Converts this yarn into a boxed slice by copying it.
   pub fn to_boxed_bytes(self) -> Box<[u8]> {
-    self.to_box().into_boxed_bytes()
+    self.to_box().into_bytes().into_box()
   }
 
   /// Converts this yarn into a vector by copying it.
-  pub fn to_vec(self) -> Vec<u8> {
-    self.to_box().into_vec()
+  pub fn to_byte_vec(self) -> Vec<u8> {
+    self.to_box().into_bytes().into_vec()
   }
 
   /// Converts this yarn into a byte yarn.
@@ -266,7 +266,7 @@ where
   ///
   /// This function will *not* be found by `From` impls.
   pub const fn from_static(buf: &'static Buf) -> Self {
-    let raw = RawYarn::new(Self::buf2raw(buf));
+    let raw = RawYarn::new(buf_trait::as_bytes(buf));
     unsafe { Self::from_raw(raw) }
   }
 }
@@ -368,7 +368,7 @@ impl<Buf: crate::Buf + ?Sized> fmt::Display for YarnRef<'_, Buf> {
 
 impl<Slice, Buf> PartialEq<Slice> for YarnRef<'_, Buf>
 where
-  Buf: crate::Buf + ?Sized,
+  Buf: crate::Buf + PartialEq + ?Sized,
   Slice: AsRef<Buf> + ?Sized,
 {
   fn eq(&self, that: &Slice) -> bool {
@@ -380,7 +380,7 @@ impl<Buf: crate::Buf + Eq + ?Sized> Eq for YarnRef<'_, Buf> {}
 
 impl<Slice, Buf> PartialOrd<Slice> for YarnRef<'_, Buf>
 where
-  Buf: crate::Buf + ?Sized,
+  Buf: crate::Buf + PartialOrd + ?Sized,
   Slice: AsRef<Buf> + ?Sized,
 {
   fn partial_cmp(&self, that: &Slice) -> Option<Ordering> {
@@ -388,13 +388,13 @@ where
   }
 }
 
-impl<Buf: crate::Buf + ?Sized> Ord for YarnRef<'_, Buf> {
+impl<Buf: crate::Buf + Ord + ?Sized> Ord for YarnRef<'_, Buf> {
   fn cmp(&self, that: &Self) -> Ordering {
     self.as_slice().cmp(that.as_slice())
   }
 }
 
-impl<Buf: crate::Buf + ?Sized> Hash for YarnRef<'_, Buf> {
+impl<Buf: crate::Buf + Hash + ?Sized> Hash for YarnRef<'_, Buf> {
   fn hash<H: Hasher>(&self, state: &mut H) {
     self.as_slice().hash(state)
   }

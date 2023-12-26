@@ -92,6 +92,15 @@ where
   }
 }
 
+impl<T, const N: usize> From<[T; N]> for YarnBox<'_, [T]>
+where
+  [T]: crate::Buf,
+{
+  fn from(s: [T; N]) -> Self {
+    YarnBox::from(s.as_slice()).immortalize()
+  }
+}
+
 impl<'a, Buf> From<&'a YarnBox<'_, Buf>> for YarnBox<'a, Buf>
 where
   Buf: crate::Buf + ?Sized,
@@ -119,31 +128,37 @@ where
   }
 }
 
-impl From<Box<[u8]>> for YarnBox<'_, [u8]> {
-  fn from(s: Box<[u8]>) -> Self {
-    Self::from_boxed_bytes(s)
+impl<Buf> From<Box<Buf>> for YarnBox<'_, Buf>
+where
+  Buf: crate::Buf + ?Sized,
+{
+  fn from(s: Box<Buf>) -> Self {
+    Self::from_box(s)
   }
 }
 
-impl From<Vec<u8>> for YarnBox<'_, [u8]> {
-  fn from(s: Vec<u8>) -> Self {
+impl<T> From<Vec<T>> for YarnBox<'_, [T]>
+where
+  [T]: crate::Buf,
+{
+  fn from(s: Vec<T>) -> Self {
     Self::from_vec(s)
   }
 }
 
-impl<Buf> From<Box<str>> for YarnBox<'_, Buf>
-where
-  Buf: crate::Buf + ?Sized,
-{
+impl From<Box<str>> for YarnBox<'_, [u8]> {
   fn from(s: Box<str>) -> Self {
     Self::from_boxed_str(s)
   }
 }
 
-impl<Buf> From<String> for YarnBox<'_, Buf>
-where
-  Buf: crate::Buf + ?Sized,
-{
+impl From<String> for YarnBox<'_, str> {
+  fn from(s: String) -> Self {
+    Self::from_string(s)
+  }
+}
+
+impl From<String> for YarnBox<'_, [u8]> {
   fn from(s: String) -> Self {
     Self::from_string(s)
   }
@@ -172,7 +187,7 @@ where
   Buf: crate::Buf + ?Sized,
 {
   fn from(y: YarnBox<Buf>) -> Self {
-    y.into_vec()
+    y.into_byte_vec()
   }
 }
 
@@ -181,7 +196,7 @@ where
   Buf: crate::Buf + ?Sized,
 {
   fn from(y: YarnRef<Buf>) -> Self {
-    y.to_vec()
+    y.to_byte_vec()
   }
 }
 

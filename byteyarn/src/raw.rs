@@ -2,8 +2,10 @@ use std::alloc;
 use std::fmt;
 use std::fmt::Write;
 use std::mem;
+use std::mem::ManuallyDrop;
 use std::mem::MaybeUninit;
 use std::num::NonZeroUsize;
+use std::ptr;
 use std::slice;
 
 /// The core implementation of yarns.
@@ -233,13 +235,12 @@ impl RawYarn {
   /// This function must be called at most once, when the raw yarn is being
   /// disposed of.
   #[inline(always)]
-  pub unsafe fn destroy(self) {
+  pub unsafe fn destroy(self, layout: alloc::Layout) {
     if !self.on_heap() {
       return;
     }
 
-    debug_assert!(self.len() > 0);
-    let layout = alloc::Layout::for_value(self.as_slice());
+    debug_assert!(layout.size() > 0);
     alloc::dealloc(self.ptr as *mut u8, layout)
   }
 
@@ -285,11 +286,15 @@ impl RawYarn {
   }
 
   /// Returns a `RawYarn` by making a copy of the given slice.
+  ///
+  /// # Safety
+  ///
+  /// `align` must be a power of two.
   #[inline(always)]
-  pub fn copy_slice(s: &[u8]) -> Self {
-    match Self::from_slice_inlined(s) {
+  pub unsafe fn copy_slice(layout: alloc::Layout, ptr: *const u8) -> Self {
+    match Self::from_slice_inlined(layout, ptr) {
       Some(inl) => inl,
-      None => Self::from_heap(s.into()),
+      None => Self::from_heap(AlignedBox::new(layout, ptr)),
     }
   }
 
@@ -299,12 +304,15 @@ impl RawYarn {
   ///
   /// `s` must outlive all uses of the returned yarn.
   #[inline(always)]
-  pub const unsafe fn alias_slice(s: &[u8]) -> Self {
-    if let Some(inlined) = Self::from_slice_inlined(s) {
+  pub const unsafe fn alias_slice(
+    layout: alloc::Layout,
+    ptr: *const u8,
+  ) -> Self {
+    if let Some(inlined) = Self::from_slice_inlined(layout, ptr) {
       return inlined;
     }
 
-    Self::from_ptr_len_tag(s.as_ptr(), s.len(), Self::ALIASED)
+    Self::from_ptr_len_tag(ptr, layout.size(), Self::ALIASED)
   }
 
   /// Returns a new `RawYarn` containing the contents of the given slice.
@@ -399,14 +407,22 @@ impl RawYarn {
   ///
   /// This function will always return an inlined string.
   #[inline]
-  pub const fn from_slice_inlined(s: &[u8]) -> Option<Self> {
-    if s.len() > Self::SSO_LEN {
+  pub const fn from_slice_inlined(
+    layout: alloc::Layout,
+    ptr: *const u8,
+  ) -> Option<Self> {
+    assert!(
+      layout.align() <= mem::align_of::<Self>(),
+      "cannot store types with alignment greater than a pointer in a Yarn"
+    );
+
+    if layout.size() > Self::SSO_LEN {
       return None;
     }
 
     unsafe {
       // SAFETY: s.len() is within bounds; we just checked it above.
-      Some(Self::from_slice_inlined_unchecked(s.as_ptr(), s.len()))
+      Some(Self::from_slice_inlined_unchecked(ptr, layout.size()))
     }
   }
 
@@ -439,16 +455,11 @@ impl RawYarn {
   ///
   /// `total_len < Self::SSO_LEN`.
   pub unsafe fn concat<'a>(
-    total_len: usize,
+    layout: alloc::Layout,
     iter: impl IntoIterator<Item = &'a [u8]>,
   ) -> Self {
-    if total_len > Self::SSO_LEN {
-      let mut buf = Vec::with_capacity(total_len);
-      for b in iter {
-        buf.extend_from_slice(b);
-      }
-
-      return Self::from_heap(buf.into());
+    if layout.size() > Self::SSO_LEN {
+      return Self::from_heap(AlignedBox::concat(layout, iter));
     }
 
     let mut cursor = 0;
@@ -458,18 +469,19 @@ impl RawYarn {
       cursor += b.len();
     }
 
-    Self::from_slice_inlined(&data[..cursor]).unwrap_unchecked()
+    Self::from_slice_inlined(layout, data[..cursor].as_ptr()).unwrap_unchecked()
   }
 
   /// Returns a `RawYarn` by taking ownership of the given allocation.
   #[inline]
-  pub fn from_heap(s: Box<[u8]>) -> Self {
-    if let Some(inline) = Self::from_slice_inlined(&s) {
+  pub fn from_heap(s: AlignedBox) -> Self {
+    if let Some(inline) =
+      Self::from_slice_inlined(s.layout(), s.as_slice().as_ptr())
+    {
       return inline;
     }
 
-    let len = s.len();
-    let ptr = Box::into_raw(s) as *mut u8;
+    let (ptr, len) = s.into_raw_parts();
     unsafe {
       // SAFETY: s is a heap allocation of the appropriate layout for HEAP,
       // which we own uniquely because we dismantled it from a box.
@@ -513,8 +525,114 @@ impl RawYarn {
     let mut w = Buf::Sso(0, [0; RawYarn::SSO_LEN]);
     let _ = w.write_fmt(args);
     match w {
-      Buf::Sso(len, bytes) => Self::from_slice_inlined(&bytes[..len]).unwrap(),
-      Buf::Vec(vec) => Self::from_heap(vec.into()),
+      Buf::Sso(len, bytes) => {
+        let chunk = &bytes[..len];
+        Self::from_slice_inlined(
+          alloc::Layout::for_value(chunk),
+          chunk.as_ptr(),
+        )
+        .unwrap()
+      }
+      Buf::Vec(vec) => Self::from_heap(unsafe {
+        // SAFETY: 1 == 2^0.
+        AlignedBox::from_vec(1, vec)
+      }),
+    }
+  }
+}
+
+/// A type-erased box that remembers its alignment.
+pub struct AlignedBox {
+  data: Box<[u8]>,
+  align: usize,
+}
+
+impl<T: ?Sized> From<Box<T>> for AlignedBox {
+  fn from(value: Box<T>) -> Self {
+    let len = mem::size_of_val(&*value);
+    let align = mem::align_of_val(&*value);
+    let ptr = Box::into_raw(value) as *mut u8;
+
+    Self {
+      data: unsafe { Box::from_raw(ptr::slice_from_raw_parts_mut(ptr, len)) },
+      align,
+    }
+  }
+}
+
+impl AlignedBox {
+  // SAFETY: `data` must have the given layout.
+  unsafe fn new(layout: alloc::Layout, data: *const u8) -> Self {
+    Self::concat(layout, [slice::from_raw_parts(data, layout.size())])
+  }
+
+  // SAFETY: `align` must be a power of two.
+  unsafe fn from_vec(align: usize, data: Vec<u8>) -> Self {
+    if align == 1 {
+      return Self {
+        data: data.into(),
+        align,
+      };
+    }
+
+    Self::new(
+      alloc::Layout::from_size_align_unchecked(data.len(), align),
+      data.as_ptr(),
+    )
+  }
+
+  // SAFETY: `data` must yield enough data to actually fill out `layout`.
+  unsafe fn concat<'a>(
+    layout: alloc::Layout,
+    slices: impl IntoIterator<Item = &'a [u8]>,
+  ) -> Self {
+    let mut ptr = alloc::alloc(layout);
+    if ptr.is_null() {
+      alloc::handle_alloc_error(layout);
+    }
+
+    for slice in slices {
+      ptr.copy_from_nonoverlapping(slice.as_ptr(), slice.len());
+      ptr = ptr.add(slice.len());
+    }
+    ptr = ptr.sub(layout.size());
+
+    let ptr = ptr::slice_from_raw_parts_mut(ptr, layout.size());
+    Self {
+      data: Box::from_raw(ptr),
+      align: layout.align(),
+    }
+  }
+
+  fn layout(&self) -> alloc::Layout {
+    unsafe {
+      // SAFETY: `self.align` is a power of 2.
+      alloc::Layout::from_size_align_unchecked(self.data.len(), self.align)
+    }
+  }
+
+  fn as_slice(&self) -> &[u8] {
+    self.data.as_ref()
+  }
+
+  fn into_raw_parts(self) -> (*mut u8, usize) {
+    let len = self.data.len();
+    let ptr = ManuallyDrop::new(self).data.as_mut_ptr();
+    (ptr, len)
+  }
+}
+
+impl Drop for AlignedBox {
+  fn drop(&mut self) {
+    let len = self.data.len();
+    let ptr =
+      ManuallyDrop::new(mem::replace(&mut self.data, [].into())).as_mut_ptr();
+
+    unsafe {
+      alloc::dealloc(
+        ptr,
+        alloc::Layout::from_size_align_unchecked(len, self.align),
+      )
     }
   }
 }
