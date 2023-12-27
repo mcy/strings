@@ -9,3 +9,6 @@ homepage.workspace = true
 repository.workspace = true
 keywords.workspace = true
 license.workspace = true
+
+[dependencies]
+zerocopy = "0.7"

@@ -23,20 +23,33 @@ use core::slice::SliceIndex;
 /// # Safety
 ///
 /// This trait should only be implemented on types that are, essentially, a
-/// thin wrapper over a `[T]` for some Copy type `T`. In particular, the
-/// following must be valid operations:
-///   1. Transmute `&impl Buf` to `&[T]`, where `T` has no uninitialized bits
-///      (no padding, etc).
-///   2. Transmute `&[T]` to `&impl Buf` if the contents of that `&[T]`
-///      originated from operation (1).
-///   3. Copy `&impl Buf` to an appropriately-aligned buffer, and then transmute
-///      the resulting `&[T]` to that `&impl Buf` again.
+/// `repr(transpartent)` wrapper over a `[T]` for some Copy type `T`.
+///
+/// In particular, `B: Buf` the requires that the following must hold:
+///
+///   1. Transmute `&B` to `&[T]`, where `T` is [`zerocopy::AsBytes`]. Transmute
+///      here is quite literal: `mem::transmute<&B, &[T]>` MUST be a valid way
+///      to convert between them.
+///
+///   2. Transmute `&[T]` to `&B` if the contents of that `&[T]` originated from
+///      operation (1).
+///
+///   3. Byte-copy `&B` to a `T`-aligned buffer, and then transmute
+///      the resulting `&[T]` to `&B` again.
+///
+///   4. `x == y` implies that `x.as_bytes() == y.as_bytes()`.
+///
+///   5. `B::from_bytes(&[])` and `B::from_bytes_mut(&mut [])` always produce
+///      valid values.
+///
+/// Notably, none of `CStr`, `OsStr`, or `Path` can implement `Buf` because
+/// their layout as slices is not part of their interface.
 ///
 /// `T` may be zero-sized, but functions will panic in this case.
 pub unsafe trait Buf {
   /// The element type of the underlying type. This is used for computing e.g.
   /// alignment and stride.
-  type Element: Copy;
+  type Element: zerocopy::AsBytes + Copy;
 
   /// The length of this value, in elements.
   fn elem_len(&self) -> usize {
@@ -46,6 +59,11 @@ pub unsafe trait Buf {
   /// The length of this value, in bytes.
   fn byte_len(&self) -> usize {
     mem::size_of_val(self)
+  }
+
+  /// Creates a new empty [`Buf`].
+  fn empty<'a, B: ?Sized + Buf>() -> &'a B {
+    empty()
   }
 
   /// Converts a reference to a [`Buf`] into its underlying bytes.
@@ -94,6 +112,14 @@ pub unsafe trait Buf {
   }
 }
 
+unsafe impl<T: zerocopy::AsBytes + Copy> Buf for [T] {
+  type Element = T;
+}
+
+unsafe impl Buf for str {
+  type Element = u8;
+}
+
 /// Computes the layout of `buf`.
 ///
 /// This function is `const`, unlike [`Layout::for_value()`].
@@ -104,6 +130,13 @@ pub const fn layout_of<B: ?Sized + Buf>(buf: &B) -> Layout {
       mem::align_of::<B::Element>(),
     )
   }
+}
+
+/// Creates a new empty [`Buf`].
+///
+/// Unlike [`Buf::empty()`], this function is `const`.
+pub const fn empty<'a, B: ?Sized + Buf>() -> &'a B {
+  unsafe { as_buf(&[]) }
 }
 
 /// Converts a reference to a [`Buf`] into its underlying bytes.
@@ -184,44 +217,3 @@ pub unsafe fn as_buf_mut<B: ?Sized + Buf>(bytes: &mut [u8]) -> &mut B {
   let ptr = &mut buf as *mut &mut [_] as *mut &mut B;
   *ptr
 }
-
-unsafe impl<T: Pod + Copy> Buf for [T] {
-  type Element = T;
-}
-
-unsafe impl Buf for str {
-  type Element = u8;
-}
-
-/// Helper trait for generating implementations of `Buf` on slice types.
-///
-/// # Safety
-///
-/// Implement only on types with no padding.
-unsafe trait Pod {}
-
-unsafe impl Pod for u8 {}
-unsafe impl Pod for u16 {}
-unsafe impl Pod for u32 {}
-unsafe impl Pod for u64 {}
-unsafe impl Pod for u128 {}
-unsafe impl Pod for usize {}
-unsafe impl Pod for i8 {}
-unsafe impl Pod for i16 {}
-unsafe impl Pod for i32 {}
-unsafe impl Pod for i64 {}
-unsafe impl Pod for i128 {}
-unsafe impl Pod for isize {}
-
-unsafe impl Pod for bool {}
-unsafe impl Pod for char {}
-
-unsafe impl Pod for f32 {}
-unsafe impl Pod for f64 {}
-
-unsafe impl<T: ?Sized> Pod for &T {}
-unsafe impl<T: ?Sized> Pod for &mut T {}
-unsafe impl<T: ?Sized> Pod for *const T {}
-unsafe impl<T: ?Sized> Pod for *mut T {}
-
-unsafe impl<T, const N: usize> Pod for [T; N] {}
