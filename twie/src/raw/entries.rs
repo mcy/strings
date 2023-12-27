@@ -5,6 +5,7 @@ use std::mem::MaybeUninit;
 use std::ptr::NonNull;
 
 use buf_trait::Buf;
+use byteyarn::YarnBox;
 
 use crate::raw::nodes::Index;
 use crate::raw::nodes::Node;
@@ -14,7 +15,7 @@ use crate::raw::Prefix;
 /// The actual user-provided data stored by the trie, separate from the tree
 /// structure.
 pub struct Entries<K: Buf + ?Sized, V, I: Index> {
-  keys: Vec<Box<[u8]>>,
+  keys: Vec<YarnBox<'static, [u8]>>,
   values: StealthVec<Entry<V, I>>,
   _ph: PhantomData<fn(&K) -> &K>,
 }
@@ -142,7 +143,7 @@ impl<K: Buf + ?Sized, V, I: Index> Entries<K, V, I> {
   pub fn new_entry(
     &mut self,
     prefix: &Prefix,
-    suffix: &[u8],
+    suffix: YarnBox<[u8]>,
     maybe_key: Option<usize>,
   ) -> Result<usize, OutOfIndices> {
     let new = self.values.len;
@@ -162,7 +163,7 @@ impl<K: Buf + ?Sized, V, I: Index> Entries<K, V, I> {
 
     if keyhole
       .as_ref()
-      .is_some_and(|k| k[prefix.len()..].starts_with(suffix))
+      .is_some_and(|k| k.as_bytes()[prefix.len()..].starts_with(&suffix))
     {
       unsafe {
         // SAFETY: Vec::push does not panic unless we try to allocate half of
@@ -173,10 +174,10 @@ impl<K: Buf + ?Sized, V, I: Index> Entries<K, V, I> {
     }
 
     let key = if prefix.prev().is_none() {
-      suffix.into()
+      suffix.immortalize()
     } else {
       let mut key = vec![0; prefix.len() + suffix.len()].into_boxed_slice();
-      key[prefix.len()..].copy_from_slice(suffix);
+      key[prefix.len()..].copy_from_slice(&suffix);
 
       let mut prefix = prefix;
       loop {
@@ -189,10 +190,10 @@ impl<K: Buf + ?Sized, V, I: Index> Entries<K, V, I> {
         }
       }
 
-      key
+      YarnBox::from(key)
     };
 
-    if let Some(keyhole) = keyhole.filter(|k| key.starts_with(k)) {
+    if let Some(keyhole) = keyhole.filter(|k| key.starts_with(k.as_bytes())) {
       *keyhole = key;
     } else {
       entry.key[0] = self.keys.len().try_into()?;
@@ -216,7 +217,7 @@ impl<K: Buf + ?Sized, V, I: Index> Entries<K, V, I> {
   pub fn get(&self, entry: usize) -> Option<(&K, &V)> {
     let e = self.values.get(entry);
     let [key, len] = e.key;
-    let key = &&self.keys[key.idx()][..len.try_into().ok()?];
+    let key = &&self.keys[key.idx()].as_bytes()[..len.try_into().ok()?];
     unsafe { Some((K::from_bytes(key), e.value.assume_init_ref())) }
   }
 
@@ -229,7 +230,7 @@ impl<K: Buf + ?Sized, V, I: Index> Entries<K, V, I> {
   pub unsafe fn get_mut_may_alias(&self, entry: usize) -> Option<(&K, &mut V)> {
     let e = self.values.get_mut_may_alias(entry);
     let [key, len] = e.key;
-    let key = &&self.keys[key.idx()][..len.try_into().ok()?];
+    let key = &&self.keys[key.idx()].as_bytes()[..len.try_into().ok()?];
     unsafe { Some((K::from_bytes(key), e.value.assume_init_mut())) }
   }
 

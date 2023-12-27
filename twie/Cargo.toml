@@ -12,5 +12,6 @@ license.workspace = true
 
 [dependencies]
 buf-trait = { version = "0.4", path = "../buf-trait" }
+byteyarn = { version = "0.4", path = "../byteyarn" }
 
 boxy = "0.1.0"

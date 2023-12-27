@@ -63,6 +63,7 @@ mod sealed {
 }
 
 pub use buf_trait::Buf;
+use byteyarn::YarnBox;
 
 /// An radix prefix trie, optimized for searching for known prefixes of a
 /// string (for a fairly open-ended definition of "string").
@@ -335,7 +336,14 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   ///
   /// Panics if the trie runs out of indices while inserting.
   #[inline]
-  pub fn insert(&mut self, key: &K, value: V) -> Option<V> {
+  pub fn insert<'a>(
+    &mut self,
+    key: impl Into<YarnBox<'a, K>>,
+    value: V,
+  ) -> Option<V>
+  where
+    K: 'a,
+  {
     let mut value = Some(value);
     let ptr = self.get_or_insert_with(key, || value.take().unwrap());
     value.map(|v| mem::replace(ptr, v))
@@ -357,7 +365,14 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   ///
   /// Panics if the trie runs out of indices while inserting.
   #[inline]
-  pub fn get_or_insert(&mut self, key: &K, value: V) -> &mut V {
+  pub fn get_or_insert<'a>(
+    &mut self,
+    key: impl Into<YarnBox<'a, K>>,
+    value: V,
+  ) -> &mut V
+  where
+    K: 'a,
+  {
     self.get_or_insert_with(key, || value)
   }
 
@@ -376,8 +391,12 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   ///
   /// Panics if the trie runs out of indices while inserting.
   #[inline]
-  pub fn get_or_insert_default(&mut self, key: &K) -> &mut V
+  pub fn get_or_insert_default<'a>(
+    &mut self,
+    key: impl Into<YarnBox<'a, K>>,
+  ) -> &mut V
   where
+    K: 'a,
     V: Default,
   {
     self.get_or_insert_with(key, Default::default)
@@ -399,18 +418,23 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   ///
   /// Panics if the trie runs out of indices while inserting.
   #[inline]
-  pub fn get_or_insert_with(
+  pub fn get_or_insert_with<'a>(
     &mut self,
-    key: &K,
+    key: impl Into<YarnBox<'a, K>>,
     value: impl FnOnce() -> V,
-  ) -> &mut V {
+  ) -> &mut V
+  where
+    K: 'a,
+  {
+    let key = key.into();
+    let key_len = key.as_bytes().len();
     unsafe {
       let idx = self
         .raw
-        .mutate(&mut { Prefix::ROOT }, key.as_bytes())
+        .mutate(&mut { Prefix::ROOT }, key.into_bytes())
         .unwrap();
 
-      self.raw.data.init(idx, key.byte_len(), value)
+      self.raw.data.init(idx, key_len, value)
     }
   }
 

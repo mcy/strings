@@ -1,6 +1,7 @@
 // Core implementation of the trie.
 
 use buf_trait::Buf;
+use byteyarn::YarnBox;
 
 use crate::raw::entries::Entries;
 use crate::raw::nodes::Index;
@@ -88,9 +89,9 @@ impl<K: Buf + ?Sized, V, I: Index> RawTrie<K, V, I> {
   pub unsafe fn mutate(
     &mut self,
     prefix: &mut Prefix,
-    suffix: &[u8],
+    suffix: YarnBox<[u8]>,
   ) -> Result<usize, OutOfIndices> {
-    let (insert_at, maybe_key) = self.pre_mutate(prefix, suffix)?;
+    let (insert_at, maybe_key) = self.pre_mutate(prefix, &suffix)?;
 
     if let Some(entry) = self.nodes.get(insert_at) {
       return Ok(entry);
