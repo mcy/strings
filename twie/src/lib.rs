@@ -37,6 +37,11 @@
 //!   ["poison", "poisonous"],
 //! )
 //! ```
+//!
+//! <details>
+//! <summary>Here's a pretty diagram of what this trie looks like in memory.</summary>
+#![doc = concat!("<pre><code>", include_str!("poison_trie.txt"),"</code></pre>")]
+//! </details>
 
 use std::fmt;
 use std::mem;
