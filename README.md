@@ -7,11 +7,14 @@ depend on each other.
 
 ## Table of Contents
 
-- [`buf-trait`](https://github.com/mcy/strings/tree/main/buf-trait) - A trait
+- 📜 [`buf-trait`](https://github.com/mcy/strings/tree/main/buf-trait) - A trait
   for abstracting over buffers of POD data.
 
-- [`byteyarn` 🧶](https://github.com/mcy/strings/tree/main/byteyarn) -
+- 🧶 [`byteyarn`](https://github.com/mcy/strings/tree/main/byteyarn) -
   Space-efficient byte strings.
+
+- 🌲 [`twie`](https://github.com/mcy/strings/tree/main/twie) - Fast and compact
+  prefix tries.
 
 ---
 
