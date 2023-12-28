@@ -1,5 +1,5 @@
 [workspace]
-members = ["byteyarn", "buf-trait", "twie"]
+members = ["byteyarn", "buf-trait", "ilex", "twie"]
 resolver = "2"
 
 [workspace.package]

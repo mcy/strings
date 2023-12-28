@@ -27,7 +27,6 @@ where
 impl<K, V, I> Default for Trie<K, V, I>
 where
   K: Buf + ?Sized,
-  V: Default,
   I: Index,
 {
   fn default() -> Self {
