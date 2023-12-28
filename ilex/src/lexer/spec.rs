@@ -93,6 +93,18 @@ impl From<NumberRule> for Rule {
   }
 }
 
+impl From<Delimiter> for Rule {
+  fn from(rule: Delimiter) -> Self {
+    Self::Delimiter(rule)
+  }
+}
+
+impl<Y: Into<Yarn>> From<Y> for Rule {
+  fn from(rule: Y) -> Self {
+    Self::Keyword(rule.into())
+  }
+}
+
 impl SpecBuilder {
   /// Compiles a new [`Spec`] out of this builder.
   ///
@@ -232,7 +244,7 @@ impl SpecBuilder {
   /// let str = builder.rule(
   ///   QuotedRule::new(('"', '"'))
   ///     .with_prefix("r")
-  ///     .escapes(Escapes::rust())
+  ///     .add_rust_escapes()
   /// );
   /// let spec = builder.compile();
   /// ```
@@ -308,35 +320,16 @@ pub enum Delimiter {
   },
 }
 
+impl Delimiter {
+  /// Creates a new [`Delimiter::Paired`], with automatic `into()` calls.
+  pub fn paired(open: impl Into<Yarn>, close: impl Into<Yarn>) -> Self {
+    Self::Paired(open.into(), close.into())
+  }
+}
+
 impl<Y1: Into<Yarn>, Y2: Into<Yarn>> From<(Y1, Y2)> for Delimiter {
-  fn from((y1, y2): (Y1, Y2)) -> Self {
-    Delimiter::Paired(y1.into(), y2.into())
-  }
-}
-
-/// Sink type for rules; only used in the [`SpecBuilder::rule()`] API.
-#[allow(clippy::large_enum_variant)]
-pub enum RuleSink {
-  Ident(IdentRule),
-  Quoted(QuotedRule),
-  Number(NumberRule),
-}
-
-impl From<IdentRule> for RuleSink {
-  fn from(value: IdentRule) -> Self {
-    Self::Ident(value)
-  }
-}
-
-impl From<QuotedRule> for RuleSink {
-  fn from(value: QuotedRule) -> Self {
-    Self::Quoted(value)
-  }
-}
-
-impl From<NumberRule> for RuleSink {
-  fn from(value: NumberRule) -> Self {
-    Self::Number(value)
+  fn from((open, close): (Y1, Y2)) -> Self {
+    Delimiter::paired(open, close)
   }
 }
 
@@ -523,7 +516,7 @@ impl IdentRule {
 /// non-Unicode target encodings).
 pub struct QuotedRule {
   pub(super) delimiter: Delimiter,
-  pub(super) escapes: Option<Escapes>,
+  pub(super) escapes: Trie<str, Escape>,
   pub(super) affixes: Affixes,
 }
 
@@ -532,70 +525,47 @@ impl QuotedRule {
   pub fn new(delimiter: impl Into<Delimiter>) -> Self {
     Self {
       delimiter: delimiter.into(),
-      escapes: None,
+      escapes: Trie::new(),
       affixes: Affixes::default(),
     }
   }
 
-  /// Sets the escapes for this quoted string rule.
-  ///
-  /// See [`Escapes`].
-  pub fn escapes(mut self, escapes: Escapes) -> Self {
-    self.escapes = Some(escapes);
-    self
-  }
-
-  with_affixes!();
-}
-
-/// Escape sequence information for a [`QuotedRule`].
-#[derive(Default)]
-pub struct Escapes {
-  pub(super) rules: Trie<str, EscapeRule>,
-}
-
-impl Escapes {
-  /// Creates a new, empty [`Escapes`].
-  pub fn new() -> Self {
-    Default::default()
-  }
-
-  /// Adds a new escape rule to this [`Escapes`].
+  /// Adds a new escape rule to this rule.
   ///
   /// ```
   /// # use ilex::spec::*;
-  /// Escapes::new()
-  ///   .rule("\\n", '\n');
+  /// QuotedRule::new(('"', '"'))
+  ///   .escape("\\n", '\n');
   /// ```
-  pub fn rule(self, key: impl Into<Yarn>, rule: impl Into<EscapeRule>) -> Self {
-    self.rules([(key, rule)])
+  pub fn escape(self, key: impl Into<Yarn>, rule: impl Into<Escape>) -> Self {
+    self.escapes([(key, rule)])
   }
 
-  /// Multiple new escape rules to this [`Escapes`].
+  /// Adds multiple new escape rules to this rule.
   ///
   /// ```
   /// # use ilex::spec::*;
-  /// Escapes::new()
-  ///   .rules([
+  /// QuotedRule::new(('"', '"'))
+  ///   .escapes([
   ///     ("\\n", '\n'),
   ///     ("\\", '\\'),
   ///   ]);
   /// ```
-  pub fn rules<Y: Into<Yarn>, R: Into<EscapeRule>>(
+  pub fn escapes<Y: Into<Yarn>, R: Into<Escape>>(
     mut self,
     xs: impl IntoIterator<Item = (Y, R)>,
   ) -> Self {
     for (y, r) in xs {
-      self.rules.insert(y.into(), r.into());
+      self.escapes.insert(y.into(), r.into());
     }
     self
   }
 
-  /// Returns an [`Escapes`] that represents the Rust text escaping rules.
-  pub fn rust() -> Self {
-    Self::new()
-      .rule('\\', EscapeRule::Invalid)
-      .rules([
+  /// Adds the Rust escaping rules to this rule.
+  pub fn add_rust_escapes(self) -> Self {
+    self
+      .escape('\\', Escape::Invalid)
+      .escapes([
         ("\\0", '\0'),
         ("\\n", '\n'),
         ("\\r", '\r'),
@@ -604,9 +574,9 @@ impl Escapes {
         ("\\\"", '\"'),
         ("\\\'", '\''),
       ])
-      .rule(
+      .escape(
         "\\x",
-        EscapeRule::Fixed {
+        Escape::Fixed {
           char_count: 2,
           parse: Box::new(|hex| match u8::from_str_radix(hex, 16) {
             Ok(byte) if byte < 0x80 => Some(byte as u32),
@@ -614,9 +584,9 @@ impl Escapes {
           }),
         },
       )
-      .rule(
+      .escape(
         "\\u",
-        EscapeRule::Delimited {
+        Escape::Delimited {
           delim: ('{', '}').into(),
           parse: Box::new(|hex| match u32::from_str_radix(hex, 16) {
             Ok(code) if char::from_u32(code).is_some() => Some(code),
@@ -625,11 +595,13 @@ impl Escapes {
         },
       )
   }
+
+  with_affixes!();
 }
 
 /// A rule to apply to resolve an escape sequence.
 #[allow(clippy::type_complexity)]
-pub enum EscapeRule {
+pub enum Escape {
   /// This escape is always invalid. Useful for catching e.g. a single \ that
   /// is not followed by an actually-valid escape.
   Invalid,
@@ -661,7 +633,7 @@ pub enum EscapeRule {
   },
 }
 
-impl<U: Into<u32>> From<U> for EscapeRule {
+impl<U: Into<u32>> From<U> for Escape {
   fn from(value: U) -> Self {
     Self::Literal(value.into())
   }

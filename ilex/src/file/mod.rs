@@ -3,6 +3,7 @@
 use std::fmt;
 use std::iter;
 use std::ops::Range;
+use std::pin::Pin;
 use std::ptr;
 use std::slice;
 
@@ -15,79 +16,76 @@ use crate::report::Fatal;
 use crate::token::TokenStream;
 
 mod context;
-pub use context::FileCtx;
+pub use context::Context;
 
 /// An input source file.
 #[derive(Copy, Clone)]
-pub struct File<'fcx> {
-  text: &'fcx str,
-  fcx: &'fcx FileCtx,
+pub struct File<'ctx> {
+  text: &'ctx str,
+  ctx: &'ctx Context,
   idx: usize,
 }
 
-impl<'fcx> File<'fcx> {
+impl<'ctx> File<'ctx> {
   /// Returns the name of this file, as a path.
-  pub fn name(&self) -> &'fcx Utf8Path {
-    let (path, _) = self.fcx.lookup_file(self.idx);
+  pub fn name(&self) -> &'ctx Utf8Path {
+    let (path, _) = self.ctx.lookup_file(self.idx);
     path
   }
 
   /// Returns the contents of this file, as text.
-  pub fn text(&self) -> &'fcx str {
+  pub fn text(&self) -> &'ctx str {
     self.text
   }
 
   /// Returns the contents of this file, as text.
-  pub fn context(&self) -> &'fcx FileCtx {
-    self.fcx
+  pub fn context(&self) -> &'ctx Context {
+    self.ctx
   }
 }
 
 impl PartialEq for File<'_> {
   fn eq(&self, other: &Self) -> bool {
-    ptr::eq(self.fcx, other.fcx) && self.idx == other.idx
+    ptr::eq(self.ctx, other.ctx) && self.idx == other.idx
   }
 }
 
 /// An input source file.
-pub struct FileMut<'fcx> {
-  fcx: &'fcx mut FileCtx,
+pub struct FileMut<'ctx> {
+  ctx: Pin<&'ctx mut Context>,
   idx: usize,
 }
 
-impl<'fcx> FileMut<'fcx> {
+impl<'ctx> FileMut<'ctx> {
   /// Returns the name of this file, as a path.
   pub fn name(&self) -> &Utf8Path {
-    let (path, _) = self.fcx.lookup_file(self.idx);
+    let (path, _) = self.ctx.lookup_file(self.idx);
     path
   }
 
   /// Returns the contents of this file, as text.
   pub fn text(&self) -> &str {
-    let (_, text) = self.fcx.lookup_file(self.idx);
+    let (_, text) = self.ctx.lookup_file(self.idx);
     text
   }
 
   /// Returns the context that owns this file.
-  pub fn context(&self) -> &FileCtx {
-    self.fcx
+  pub fn context(&self) -> &Context {
+    &self.ctx
   }
 
   /// Returns the context that owns this file.
-  pub fn context_mut(&mut self) -> &mut FileCtx {
-    self.fcx
+  pub fn context_mut(&mut self) -> Pin<&mut Context> {
+    self.ctx.as_mut()
   }
 
   /// Returns the context that owns this file.
-  pub fn into_context(self) -> &'fcx mut FileCtx {
-    self.fcx
+  pub fn into_context(self) -> Pin<&'ctx mut Context> {
+    self.ctx
   }
 
   /// Parses the file wrapped by this context and generates a token stream.
-  pub fn lex(
-    self,
-    spec: &Spec,
-  ) -> Result<TokenStream, Fatal> {
+  pub fn lex(self, spec: &Spec) -> Result<TokenStream, Fatal> {
     rt::lex(self, spec)
   }
 
@@ -98,14 +96,14 @@ impl<'fcx> FileMut<'fcx> {
       "tried to create new span on the synthetic file"
     );
 
-    self.fcx.new_span(range.start, range.end, self.idx)
+    self.ctx.as_mut().new_span(range.start, range.end, self.idx)
   }
 }
 
 /// A span in a [`File`].
 ///
 /// This type is just a numeric ID. In order to obtain information about the
-/// span, it must be passed to an [`FileCtx`], which tracks this information
+/// span, it must be passed to an [`Context`], which tracks this information
 /// in a compressed format.
 #[derive(Copy, Clone)]
 pub struct Span {
@@ -119,7 +117,7 @@ pub struct Span {
   end: i32,
 
   // Token from the context that created this span.
-  fcx: u32,
+  ctx: u32,
 }
 
 impl Span {
@@ -136,7 +134,7 @@ impl Span {
     let end = Span {
       start: self.end,
       end: -1,
-      fcx: self.fcx,
+      ctx: self.ctx,
     };
 
     assert!(
@@ -151,10 +149,10 @@ impl Span {
   ///
   /// # Panics
   ///
-  /// May panic if this span isn't owned by `fcx`.
-  pub fn file(self, fcx: &FileCtx) -> File {
-    let (_, idx) = fcx.lookup_range(self);
-    fcx.file(idx).unwrap()
+  /// May panic if this span isn't owned by `ctx`.
+  pub fn file(self, ctx: &Context) -> File {
+    let (_, idx) = ctx.lookup_range(self);
+    ctx.file(idx).unwrap()
   }
 
   /// Gets the byte range for this node.
@@ -164,22 +162,22 @@ impl Span {
   ///
   /// # Panics
   ///
-  /// May panic if this span isn't owned by `fcx`.
-  pub fn range(self, fcx: &FileCtx) -> Option<Range<usize>> {
-    fcx.lookup_range(self).0
+  /// May panic if this span isn't owned by `ctx`.
+  pub fn range(self, ctx: &Context) -> Option<Range<usize>> {
+    ctx.lookup_range(self).0
   }
 
   /// Gets the text for the given span.
   ///
   /// # Panics
   ///
-  /// May panic if this span isn't owned by `fcx`.
-  pub fn text(self, fcx: &FileCtx) -> &str {
-    if let (Some(range), file) = fcx.lookup_range(self) {
-      let (_, text) = fcx.lookup_file(file);
+  /// May panic if this span isn't owned by `ctx`.
+  pub fn text(self, ctx: &Context) -> &str {
+    if let (Some(range), file) = ctx.lookup_range(self) {
+      let (_, text) = ctx.lookup_file(file);
       &text[range]
     } else {
-      fcx.lookup_synthetic(self)
+      ctx.lookup_synthetic(self)
     }
   }
 
@@ -188,10 +186,10 @@ impl Span {
   /// # Panics
   ///
   /// Panics if `node` produces a span that isn't owned by this context.
-  pub fn comments(self, fcx: &FileCtx) -> Comments {
+  pub fn comments(self, ctx: &Context) -> Comments {
     Comments {
-      slice: fcx.lookup_comments(self),
-      fcx,
+      slice: ctx.lookup_comments(self),
+      ctx,
     }
   }
 
@@ -200,9 +198,13 @@ impl Span {
   /// # Panics
   ///
   /// Panics if `node` produces a span that isn't owned by this context.
-  pub fn append_comment(self, fcx: &mut FileCtx, text: impl Into<Yarn>) {
-    let span = fcx.new_synthetic_span(text.into());
-    self.append_comment_span(fcx, span);
+  pub fn append_comment(
+    self,
+    mut ctx: Pin<&mut Context>,
+    text: impl Into<Yarn>,
+  ) {
+    let span = ctx.as_mut().new_synthetic_span(text.into());
+    self.append_comment_span(ctx, span);
   }
 
   /// Looks up this span's context and runs the given callback on it.
@@ -211,15 +213,19 @@ impl Span {
   /// out of scope, the callback will be passed `None`.
   pub fn run_with_context<R>(
     self,
-    callback: impl FnOnce(Option<&FileCtx>) -> R,
+    callback: impl FnOnce(Option<&Context>) -> R,
   ) -> R {
-    FileCtx::run_in_fcx(self.fcx, callback)
+    Context::find_and_run(self.ctx, callback)
   }
 
   /// Sets the comment associated with a given span. The comment must itself
   /// be specified as a span.
-  pub(crate) fn append_comment_span(self, fcx: &mut FileCtx, comment: Span) {
-    fcx.add_comment(self, comment)
+  pub(crate) fn append_comment_span(
+    self,
+    ctx: Pin<&mut Context>,
+    comment: Span,
+  ) {
+    ctx.add_comment(self, comment)
   }
 
   fn index(self) -> usize {
@@ -233,13 +239,13 @@ impl Span {
 
 impl fmt::Debug for Span {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    self.run_with_context(|fcx| match fcx {
+    self.run_with_context(|ctx| match ctx {
       None => f.write_str("<expired>"),
-      Some(fcx) => {
-        let text = self.text(fcx);
-        match self.range(fcx) {
+      Some(ctx) => {
+        let text = self.text(ctx);
+        match self.range(ctx) {
           Some(range) => {
-            write!(f, "{text:?} ({}[{range:?}])", self.file(fcx).name())
+            write!(f, "{text:?} ({}[{range:?}])", self.file(ctx).name())
           }
           None => write!(f, "{text:?} (synth)"),
         }
@@ -249,21 +255,21 @@ impl fmt::Debug for Span {
 }
 
 /// An iterator over the comment spans attached to a span.
-pub struct Comments<'fcx> {
-  slice: &'fcx [Span],
-  fcx: &'fcx FileCtx,
+pub struct Comments<'ctx> {
+  slice: &'ctx [Span],
+  ctx: &'ctx Context,
 }
 
-impl<'fcx> Comments<'fcx> {
+impl<'ctx> Comments<'ctx> {
   /// Adapts this iterator to return just the text contents of each span.
-  pub fn as_strings(&self) -> impl Iterator<Item = &'fcx str> {
-    self.slice.iter().map(|span| span.text(self.fcx))
+  pub fn as_strings(&self) -> impl Iterator<Item = &'ctx str> {
+    self.slice.iter().map(|span| span.text(self.ctx))
   }
 }
 
-impl<'fcx> IntoIterator for Comments<'fcx> {
+impl<'ctx> IntoIterator for Comments<'ctx> {
   type Item = Span;
-  type IntoIter = iter::Copied<slice::Iter<'fcx, Span>>;
+  type IntoIter = iter::Copied<slice::Iter<'ctx, Span>>;
 
   fn into_iter(self) -> Self::IntoIter {
     self.slice.iter().copied()
@@ -276,42 +282,42 @@ impl<'fcx> IntoIterator for Comments<'fcx> {
 /// that spans its contents in their entirety.
 pub trait Spanned {
   /// Returns the span in this syntax element.
-  fn span(&self, fcx: &FileCtx) -> Span;
+  fn span(&self, ctx: &Context) -> Span;
 
   /// Forwards to [`Span::file()`].
-  fn file<'fcx>(&self, fcx: &'fcx FileCtx) -> File<'fcx> {
-    self.span(fcx).file(fcx)
+  fn file<'ctx>(&self, ctx: &'ctx Context) -> File<'ctx> {
+    self.span(ctx).file(ctx)
   }
 
   /// Forwards to [`Span::range()`].
-  fn range(&self, fcx: &FileCtx) -> Option<Range<usize>> {
-    self.span(fcx).range(fcx)
+  fn range(&self, ctx: &Context) -> Option<Range<usize>> {
+    self.span(ctx).range(ctx)
   }
 
   /// Forwards to [`Span::text()`].
-  fn text<'fcx>(&self, fcx: &'fcx FileCtx) -> &'fcx str {
-    self.span(fcx).text(fcx)
+  fn text<'ctx>(&self, ctx: &'ctx Context) -> &'ctx str {
+    self.span(ctx).text(ctx)
   }
 
   /// Forwards to [`Span::comments()`].
-  fn comments<'fcx>(&self, fcx: &'fcx FileCtx) -> Comments<'fcx> {
-    self.span(fcx).comments(fcx)
+  fn comments<'ctx>(&self, ctx: &'ctx Context) -> Comments<'ctx> {
+    self.span(ctx).comments(ctx)
   }
 
   /// Forwards to [`Span::append_comment()`].
-  fn append_comment(&self, fcx: &mut FileCtx, text: impl Into<Yarn>) {
-    self.span(fcx).append_comment(fcx, text)
+  fn append_comment(&self, ctx: Pin<&mut Context>, text: impl Into<Yarn>) {
+    self.span(&ctx).append_comment(ctx, text)
   }
 }
 
 impl Spanned for Span {
-  fn span(&self, _fcx: &FileCtx) -> Span {
+  fn span(&self, _ctx: &Context) -> Span {
     *self
   }
 }
 
 impl<S: Spanned> Spanned for &S {
-  fn span(&self, fcx: &FileCtx) -> Span {
-    S::span(self, fcx)
+  fn span(&self, ctx: &Context) -> Span {
+    S::span(self, ctx)
   }
 }

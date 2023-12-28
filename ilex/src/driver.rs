@@ -5,46 +5,48 @@ use std::panic;
 use std::panic::AssertUnwindSafe;
 use std::panic::PanicInfo;
 use std::panic::UnwindSafe;
+use std::pin::pin;
+use std::pin::Pin;
 use std::process;
 use std::thread;
 
 use std::format_args as f;
 
-use crate::file::FileCtx;
+use crate::file::Context;
+use crate::report;
 use crate::report::Fatal;
-use crate::report::ReportCtx;
+use crate::report::Report;
 
 /// Executes a "compiler main function".
 ///
 /// If the main function panics, this is caught, errs are printed, and
 /// then the panic resumes. Otherwise, on successful return of the main
 /// function, errs are printed to stderr and the program exits.
-pub fn main<Compiler>(rcx: ReportCtx, compiler: Compiler) -> !
+pub fn main<Compiler>(rcx: Report, compiler: Compiler) -> !
 where
-  Compiler: FnOnce(&mut FileCtx) -> Result<(), Fatal>,
+  Compiler: FnOnce(Pin<&mut Context>) -> Result<(), Fatal>,
   Compiler: UnwindSafe,
 {
   let hook = panic::take_hook();
   panic::set_hook(Box::new(move |panic| {
-    FileCtx::run(|fcx| ilex_panic(fcx, panic, &hook))
+    ilex_panic(&pin!(Context::new()), panic, &hook)
   }));
 
-  rcx.clone().install();
+  report::install(rcx.clone());
 
-  FileCtx::run(|fcx| {
-    let result = panic::catch_unwind(AssertUnwindSafe(|| compiler(fcx)))
-      .map(|r| r.is_ok());
-    let _ignored = rcx.finish(fcx, io::stderr());
-    match result {
-      Ok(true) => process::exit(0),
-      Ok(false) => process::exit(1),
-      Err(e) => panic::resume_unwind(e),
-    }
-  })
+  let mut ctx = pin!(Context::new());
+  let result = panic::catch_unwind(AssertUnwindSafe(|| compiler(ctx.as_mut())))
+    .map(|r| r.is_ok());
+  let _ignored = rcx.finish(&ctx, io::stderr());
+  match result {
+    Ok(true) => process::exit(0),
+    Ok(false) => process::exit(1),
+    Err(e) => panic::resume_unwind(e),
+  }
 }
 
-fn ilex_panic(fcx: &FileCtx, panic: &PanicInfo, hook: &dyn Fn(&PanicInfo)) {
-  let Some(report) = ReportCtx::try_current() else {
+fn ilex_panic(ctx: &Context, panic: &PanicInfo, hook: &dyn Fn(&PanicInfo)) {
+  let Some(report) = report::try_current() else {
     return hook(panic);
   };
 
@@ -59,7 +61,7 @@ fn ilex_panic(fcx: &FileCtx, panic: &PanicInfo, hook: &dyn Fn(&PanicInfo)) {
 
   let thread = thread::current();
   let mut err =
-    report.error(fcx, f!("internal compiler error: panicked at '{msg}'",));
+    report.error(ctx, f!("internal compiler error: panicked at '{msg}'",));
 
   if let Some(location) = panic.location() {
     err = err.note(f!(
