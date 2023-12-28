@@ -4,20 +4,37 @@ use std::format_args as f;
 
 use byteyarn::YarnBox;
 
-use crate::file::FileCtx;
+use crate::file::Context;
 use crate::file::Spanned;
 use crate::lexer::spec::Spec;
-use crate::report::Builtins;
 use crate::report::Diagnostic;
 use crate::token::Token;
 use crate::token::Tokenish;
+
+use crate::report::Report;
+use crate::report;
+
+/// A wrapper over [`Report`] for generating diagnostics.
+///
+/// See [`Report::builtins()`].
+pub struct Builtins(pub(super) Report);
+
+/// Returns a `Builtins` wrapping `report::current()`.
+///
+/// # Panics
+/// 
+/// If this thread did not have a report initialized with
+/// [`report::install()`][super::install], this function will panic.
+pub fn builtins() -> Builtins {
+  report::current().builtins()
+}
 
 impl Builtins {
   ///
   #[track_caller]
   pub fn expected<'fcx, 'a, 'b, Expected, Found>(
     self,
-    fcx: &'fcx FileCtx,
+    fcx: &'fcx Context,
     spec: &Spec,
     expected: Expected,
     found: Found,
@@ -34,7 +51,7 @@ impl Builtins {
   #[track_caller]
   pub fn expected_one_of<'fcx, 'a, 'b, Expected, Found>(
     self,
-    fcx: &'fcx FileCtx,
+    fcx: &'fcx Context,
     spec: &Spec,
     expected: impl IntoIterator<Item = Expected>,
     found: Found,
@@ -64,7 +81,7 @@ impl Builtins {
   #[track_caller]
   pub fn unclosed_delimiter(
     self,
-    fcx: &FileCtx,
+    fcx: &Context,
     open: impl Spanned,
     eof: impl Spanned,
   ) -> Diagnostic {
@@ -78,7 +95,7 @@ impl Builtins {
   #[track_caller]
   pub fn invalid_escape_sequence(
     self,
-    fcx: &FileCtx,
+    fcx: &Context,
     at: impl Spanned,
   ) -> Diagnostic {
     let at = at.span(fcx);
@@ -92,7 +109,7 @@ impl Builtins {
 }
 
 fn non_printable_note<'a>(
-  fcx: &FileCtx,
+  fcx: &Context,
   found: Tokenish,
   diagnostic: Diagnostic<'a>,
 ) -> Diagnostic<'a> {
@@ -136,7 +153,7 @@ fn non_printable_note<'a>(
 
 fn disjunction_to_string<'a>(
   spec: &'a Spec,
-  fcx: &'a FileCtx,
+  fcx: &'a Context,
   lexemes: &'a [Tokenish],
 ) -> YarnBox<'a, str> {
   let mut names = lexemes

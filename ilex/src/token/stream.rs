@@ -1,11 +1,11 @@
 use std::fmt;
 
-use crate::file::FileCtx;
+use crate::file::Context;
 use crate::lexer::rt;
 use crate::lexer::rt::Kind;
 use crate::lexer::spec::Lexeme;
 use crate::lexer::spec::Spec;
-use crate::report::ReportCtx;
+use crate::report;
 use crate::token::Ident;
 use crate::token::Number;
 use crate::token::Quoted;
@@ -123,7 +123,7 @@ impl<'lex> Cursor<'lex> {
   #[track_caller]
   pub fn one_of(
     &mut self,
-    fcx: &FileCtx,
+    fcx: &Context,
     lexemes: &[Lexeme],
   ) -> Option<Token<'lex>> {
     let next = self.next()?;
@@ -133,7 +133,7 @@ impl<'lex> Cursor<'lex> {
       }
     }
 
-    ReportCtx::current().builtins().expected_one_of(
+    report::builtins().expected_one_of(
       fcx,
       self.spec,
       lexemes.iter().copied(),
@@ -147,7 +147,7 @@ impl<'lex> Cursor<'lex> {
   /// Like [`Cursor::one_of()`], but does not skip over the token.
   pub fn peek_one_of(
     &self,
-    fcx: &FileCtx,
+    fcx: &Context,
     lexemes: &[Lexeme],
   ) -> Option<Token<'lex>> {
     let mut copy = *self;

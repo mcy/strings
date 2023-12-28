@@ -6,13 +6,13 @@ use byteyarn::YarnBox;
 use byteyarn::YarnRef;
 
 use crate::lexer::spec::Delimiter;
-use crate::lexer::spec::EscapeRule;
 use crate::lexer::spec::IdentRule;
 use crate::lexer::spec::Lexeme;
 use crate::lexer::spec::NumberRule;
 use crate::lexer::spec::QuotedRule;
 use crate::lexer::spec::Rule;
 use crate::lexer::spec::Spec;
+use crate::spec::Escape;
 
 /// A raw match from `Spec::best_match()`.
 pub struct Match<'a> {
@@ -479,10 +479,7 @@ fn take_quote(
       break (len - close.len(), true);
     }
 
-    let escape = rule
-      .escapes
-      .as_ref()
-      .and_then(|e| e.rules.longest_prefix(src));
+    let escape = rule.escapes.longest_prefix(src);
 
     let Some((esc, rule)) = escape else {
       let Some(next) = src.chars().next() else { break (len, false) };
@@ -497,10 +494,10 @@ fn take_quote(
     let esc_start = len;
     len += take(src, esc)?;
     let value = match rule {
-      EscapeRule::Invalid => Some(Err(esc_start..len)),
-      EscapeRule::Literal(lit) => Some(Ok(*lit)),
+      Escape::Invalid => Some(Err(esc_start..len)),
+      Escape::Literal(lit) => Some(Ok(*lit)),
 
-      EscapeRule::Fixed { char_count, parse } => 'fixed: {
+      Escape::Fixed { char_count, parse } => 'fixed: {
         let arg_start = len;
         for _ in 0..*char_count {
           match src.chars().next() {
@@ -512,7 +509,7 @@ fn take_quote(
         Some(parse(&start[arg_start..len]).ok_or(esc_start..len))
       }
 
-      EscapeRule::Delimited { delim, parse } => 'delim: {
+      Escape::Delimited { delim, parse } => 'delim: {
         let Some((open, data)) = take_open_delim(src, delim) else {
           break 'delim Some(Err(esc_start..len));
         };

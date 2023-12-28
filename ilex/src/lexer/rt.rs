@@ -11,8 +11,8 @@ use crate::lexer::spec::Delimiter;
 use crate::lexer::spec::Lexeme;
 use crate::lexer::spec::Rule;
 use crate::lexer::spec::Spec;
+use crate::report;
 use crate::report::Fatal;
-use crate::report::ReportCtx;
 use crate::token::Content;
 use crate::token::TokenStream;
 
@@ -24,7 +24,7 @@ pub fn lex<'spec>(
   lex.run();
 
   let toks = mem::take(&mut lex.tokens);
-  ReportCtx::current().fatal_or(TokenStream { spec, toks })
+  report::current().fatal_or(TokenStream { spec, toks })
 }
 
 #[derive(Clone)]
@@ -131,7 +131,7 @@ impl<'spec, 'fcx> Lexer<'spec, 'fcx> {
   {
     let span = self.span_from_zero_with(self.cursor);
     let next = self.file.text()[self.cursor..].graphemes(true).next();
-    ReportCtx::current().builtins().expected_one_of(
+    Report::current().builtins().expected_one_of(
       self.file.context(),
       self.spec,
       alts,
@@ -233,8 +233,8 @@ impl<'spec, 'fcx> Lexer<'spec, 'fcx> {
         self.comments.push(span);
 
         if best_match.unexpected_eof {
-          ReportCtx::current()
-            .error(self.file.context_mut(), "found an unclosed block comment")
+          report::current()
+            .error(self.file.context(), "found an unclosed block comment")
             .at(span);
         }
       }
@@ -325,9 +325,9 @@ impl<'spec, 'fcx> Lexer<'spec, 'fcx> {
         if best_match.unexpected_eof {
           use crate::lexer::stringify::lexeme_to_string;
           let name = lexeme_to_string(self.spec, best_match.lexeme);
-          ReportCtx::current()
+          report::current()
             .error(
-              self.file.context_mut(),
+              self.file.context(),
               format_args!("found an unclosed {name}"),
             )
             .at(span);
@@ -342,8 +342,7 @@ impl<'spec, 'fcx> Lexer<'spec, 'fcx> {
               Ok(code) => *code,
               Err(r) => {
                 let span = self.span_from_range(start + r.start, start + r.end);
-                ReportCtx::current()
-                  .builtins()
+                report::builtins()
                   .invalid_escape_sequence(self.file.context(), span);
                 !0
               }
@@ -399,7 +398,7 @@ impl<'spec, 'fcx> Lexer<'spec, 'fcx> {
 
     for delim in self.delims.drain(..) {
       let open = self.tokens[delim.open_idx].span;
-      ReportCtx::current().builtins().unclosed_delimiter(
+      report::builtins().unclosed_delimiter(
         self.file.context(),
         open,
         eof,

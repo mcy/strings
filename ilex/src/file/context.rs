@@ -1,8 +1,9 @@
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::fs;
-use std::mem::ManuallyDrop;
+use std::mem;
 use std::ops::Range;
+use std::pin::Pin;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Mutex;
@@ -16,17 +17,17 @@ use camino::Utf8PathBuf;
 use crate::file::File;
 use crate::file::FileMut;
 use crate::file::Span;
+use crate::report;
 use crate::report::Fatal;
-use crate::report::ReportCtx;
 
 pub type Offset = u32;
 
 /// A source context, which tracks various source file information,
 /// including spans and comments.
-pub struct FileCtx {
-  // Const pointer for covariance of 'src.
-  state: *const State,
-  fcx_idx: u32,
+pub struct Context {
+  state: UnsafeCell<State>,
+  token: u32,
+  is_installed: bool,
 }
 
 #[derive(Default)]
@@ -44,55 +45,80 @@ unsafe impl<T: ?Sized> Send for SyncPtr<T> {}
 unsafe impl<T: ?Sized> Sync for SyncPtr<T> {}
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
-static CONTEXTS: Mutex<Option<HashMap<u32, SyncPtr<State>>>> = Mutex::new(None);
+static CONTEXTS: Mutex<Option<HashMap<u32, SyncPtr<Context>>>> =
+  Mutex::new(None);
 
-impl Drop for FileCtx {
+impl Drop for Context {
   fn drop(&mut self) {
     if let Ok(Some(map)) = CONTEXTS.lock().as_deref_mut() {
-      assert!(map.remove(&self.fcx_idx).is_some());
+      assert!(map.remove(&self.token).is_some());
     }
   }
 }
 
-impl FileCtx {
-  fn state(&self) -> &State {
-    unsafe { &*self.state }
+impl Default for Context {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl Context {
+  pub fn new() -> Self {
+    Self {
+      state: UnsafeCell::new(Default::default()),
+      token: COUNTER.fetch_add(1, Relaxed),
+      is_installed: false,
+    }
   }
 
-  fn mutate(&mut self, body: impl FnOnce(&mut State)) {
-    let _l = CONTEXTS.lock();
-    body(unsafe { &mut *self.state.cast_mut() });
-  }
-
-  /// Creates a new source context.
-  pub fn run<R>(body: impl FnOnce(&mut FileCtx) -> R) -> R {
-    let state = UnsafeCell::new(Default::default());
-    let mut fcx = Self {
-      state: state.get(),
-      fcx_idx: COUNTER.fetch_add(1, Relaxed),
+  fn install(mut self: Pin<&mut Self>) {
+    let mut is_installed = unsafe {
+      // SAFETY: No other function touches this value, and it is not
+      // address-dependent.
+      self.as_mut().map_unchecked_mut(|x| &mut x.is_installed)
     };
+
+    if mem::replace(&mut is_installed, true) {
+      return;
+    }
 
     CONTEXTS
       .lock()
       .unwrap()
       .get_or_insert_with(HashMap::new)
-      .insert(fcx.fcx_idx, SyncPtr(state.get().cast()));
-    body(&mut fcx)
+      .insert(
+        self.token,
+        SyncPtr(unsafe { Pin::get_unchecked_mut(self.as_mut()) }),
+      );
+  }
+
+  fn state(&self) -> &State {
+    unsafe { &*self.state.get() }
+  }
+
+  fn mutate(mut self: Pin<&mut Self>, body: impl FnOnce(&mut State)) {
+    self.as_mut().install();
+    let _l = CONTEXTS.lock();
+    body(unsafe { &mut *self.state.get() });
   }
 
   /// Adds a new file to this source context.
   pub fn new_file(
-    &mut self,
+    mut self: Pin<&mut Self>,
     name: impl Into<Utf8PathBuf>,
     text: impl Into<String>,
   ) -> FileMut {
-    self.mutate(|state| state.files.push((name.into(), text.into())));
-    self.file_mut(self.state().files.len() - 1).unwrap()
+    self
+      .as_mut()
+      .mutate(|state| state.files.push((name.into(), text.into())));
+
+    let idx = self.state().files.len() - 1;
+    self.file_mut(idx).unwrap()
   }
 
   /// Adds a new file to this source context from the file system.
   pub fn open_file(
-    &mut self,
+    self: Pin<&mut Self>,
     name: impl Into<Utf8PathBuf>,
   ) -> Result<FileMut, Fatal> {
     let name = name.into();
@@ -100,14 +126,14 @@ impl FileCtx {
     let bytes = match fs::read(&name) {
       Ok(bytes) => bytes,
       Err(e) => {
-        crate::error(self, f!("could not open input file `{name}`: {e}"));
-        return ReportCtx::current().fatal();
+        crate::error(&self, f!("could not open input file `{name}`: {e}"));
+        return report::current().fatal();
       }
     };
 
     let Ok(utf8) = String::from_utf8(bytes) else {
-      crate::error(self, "input file `{name}` was not valid UTF-8");
-      return ReportCtx::current().fatal();
+      crate::error(&self, "input file `{name}` was not valid UTF-8");
+      return report::current().fatal();
     };
 
     Ok(self.new_file(name, utf8))
@@ -122,15 +148,15 @@ impl FileCtx {
     let (_, text) = self.state().files.get(idx)?;
     Some(File {
       text,
-      fcx: self,
+      ctx: self,
       idx,
     })
   }
 
   /// Gets the `idx`th file in this source context.
-  pub fn file_mut(&mut self, idx: usize) -> Option<FileMut> {
+  pub fn file_mut(self: Pin<&mut Self>, idx: usize) -> Option<FileMut> {
     self.state().files.get(idx)?;
-    Some(FileMut { fcx: self, idx })
+    Some(FileMut { ctx: self, idx })
   }
 
   /// Gets the number of files currently tracked by this source context.
@@ -139,25 +165,20 @@ impl FileCtx {
   }
 
   pub(crate) fn token(&self) -> u32 {
-    self.fcx_idx
+    self.token
   }
 
-  pub(crate) fn run_in_fcx<R>(
+  pub(crate) fn find_and_run<R>(
     token: u32,
-    body: impl FnOnce(Option<&FileCtx>) -> R,
+    body: impl FnOnce(Option<&Context>) -> R,
   ) -> R {
     let contexts = CONTEXTS.lock().unwrap();
-    let fcx = contexts
+    let ctx = contexts
       .as_ref()
       .and_then(|map| map.get(&token))
-      .map(|ptr| {
-        ManuallyDrop::new(FileCtx {
-          state: ptr.0 as *mut _,
-          fcx_idx: token,
-        })
-      });
+      .map(|ptr| unsafe { &*ptr.0 });
 
-    body(fcx.as_deref())
+    body(ctx)
   }
 
   /// Gets the byte range for the given span, if it isn't the synthetic span.
@@ -176,7 +197,7 @@ impl FileCtx {
     span: Span,
   ) -> (Option<Range<usize>>, usize) {
     assert_eq!(
-      span.fcx, self.fcx_idx,
+      span.ctx, self.token,
       "attempted to resolve span from another context"
     );
 
@@ -196,7 +217,7 @@ impl FileCtx {
 
   pub(crate) fn lookup_synthetic(&self, span: Span) -> &str {
     assert_eq!(
-      span.fcx, self.fcx_idx,
+      span.ctx, self.token,
       "attempted to look up comments of span from another context"
     );
 
@@ -205,7 +226,7 @@ impl FileCtx {
 
   pub(crate) fn lookup_comments(&self, span: Span) -> &[Span] {
     assert_eq!(
-      span.fcx, self.fcx_idx,
+      span.ctx, self.token,
       "attempted to look up comments of span from another context"
     );
 
@@ -217,13 +238,13 @@ impl FileCtx {
       .unwrap_or_default()
   }
 
-  pub(crate) fn add_comment(&mut self, span: Span, comment: Span) {
+  pub(crate) fn add_comment(self: Pin<&mut Self>, span: Span, comment: Span) {
     assert_eq!(
-      span.fcx, self.fcx_idx,
+      span.ctx, self.token,
       "attempted to attach comment to span from another context"
     );
     assert_eq!(
-      comment.fcx, self.fcx_idx,
+      comment.ctx, self.token,
       "attempted to attach comment span from another context"
     );
 
@@ -234,7 +255,7 @@ impl FileCtx {
 
   /// Creates a new synthetic span with the given contents.
   pub(crate) fn new_span(
-    &mut self,
+    self: Pin<&mut Self>,
     start: usize,
     end: usize,
     file_idx: usize,
@@ -257,7 +278,7 @@ impl FileCtx {
     let span = Span {
       start: self.state().ranges.len() as i32,
       end: -1,
-      fcx: self.token(),
+      ctx: self.token(),
     };
 
     self.mutate(|state| {
@@ -269,7 +290,7 @@ impl FileCtx {
   }
 
   /// Creates a new synthetic span with the given contents.
-  pub(crate) fn new_synthetic_span(&mut self, text: Yarn) -> Span {
+  pub(crate) fn new_synthetic_span(self: Pin<&mut Self>, text: Yarn) -> Span {
     assert!(
       self.state().synthetics.len() < (i32::MAX as usize),
       "ran out of spans",
@@ -278,7 +299,7 @@ impl FileCtx {
     let span = Span {
       start: !self.state().synthetics.len() as i32,
       end: -1,
-      fcx: self.token(),
+      ctx: self.token(),
     };
 
     self.mutate(|state| state.synthetics.push(text));
@@ -289,7 +310,7 @@ impl FileCtx {
   ///
   /// # Panics
   ///
-  /// Panics if not all of the spans are part of this [`FileCtx`] and are are
+  /// Panics if not all of the spans are part of this [`Context`] and are are
   /// part of the same file, or if `spans` is empty.
   pub fn join(&self, spans: impl IntoIterator<Item = Span>) -> Span {
     struct Best {
@@ -303,7 +324,7 @@ impl FileCtx {
 
     for span in spans {
       assert_eq!(
-        span.fcx, self.fcx_idx,
+        span.ctx, self.token,
         "attempted to join span from another context"
       );
 
@@ -335,7 +356,7 @@ impl FileCtx {
     let mut span = Span {
       start: best.start,
       end: best.end,
-      fcx: self.fcx_idx,
+      ctx: self.token,
     };
 
     if span.end == span.start {
@@ -348,7 +369,7 @@ impl FileCtx {
   pub(crate) fn synthetic_file(&self) -> File {
     File {
       text: "",
-      fcx: self,
+      ctx: self,
       idx: !0,
     }
   }

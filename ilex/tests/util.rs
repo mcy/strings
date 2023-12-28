@@ -1,33 +1,35 @@
 use std::fmt;
 use std::fmt::DebugStruct;
 use std::ops::Range;
+use std::pin::pin;
 
 use byteyarn::Yarn;
 use byteyarn::YarnBox;
 
-use ilex::report::ReportCtx;
+use ilex::report;
+use ilex::report::Report;
 use ilex::spec::Spec;
-use ilex::FileCtx;
+use ilex::Context;
 use ilex::Span;
 use ilex::Spanned;
 
 pub fn drive(spec: &Spec, text: &str, expect: &[Token]) {
-  FileCtx::run(|fcx| {
-    ReportCtx::new().install();
-    let tokens = match fcx.new_file("test.file", text).lex(spec) {
-      Ok(ok) => ok,
-      Err(e) => {
-        ReportCtx::current().collate();
-        e.panic(fcx)
-      }
-    };
+  let mut ctx = pin!(Context::new());
+  report::install(Report::new());
 
-    let tree = tokens
-      .cursor()
-      .map(|tok| Token::from_fcx(tok, fcx))
-      .collect::<Vec<_>>();
-    pretty_assertions::assert_eq!(tree.as_slice(), expect);
-  });
+  let tokens = match ctx.as_mut().new_file("test.file", text).lex(spec) {
+    Ok(ok) => ok,
+    Err(e) => {
+      report::current().collate();
+      e.panic(&ctx)
+    }
+  };
+
+  let tree = tokens
+    .cursor()
+    .map(|tok| Token::from_ctx(tok, &ctx))
+    .collect::<Vec<_>>();
+  pretty_assertions::assert_eq!(tree.as_slice(), expect);
 }
 
 pub struct Text {
@@ -64,9 +66,9 @@ impl Text {
     }
   }
 
-  pub fn from_span(span: Span, fcx: &FileCtx) -> Self {
-    let text = span.text(fcx);
-    let range = span.range(fcx).unwrap();
+  pub fn from_span(span: Span, ctx: &Context) -> Self {
+    let text = span.text(ctx);
+    let range = span.range(ctx).unwrap();
     Text {
       text: Some(YarnBox::new(text).immortalize()),
       range: Some(range),
@@ -91,8 +93,8 @@ impl From<(&str, Range<usize>)> for Text {
   }
 }
 
-impl From<(Span, &FileCtx)> for Text {
-  fn from(value: (Span, &FileCtx)) -> Self {
+impl From<(Span, &Context)> for Text {
+  fn from(value: (Span, &Context)) -> Self {
     Text::from_span(value.0, value.1)
   }
 }
@@ -324,40 +326,40 @@ impl Token {
     }
   }
 
-  pub fn from_fcx(tok: ilex::Token, fcx: &FileCtx) -> Token {
+  pub fn from_ctx(tok: ilex::Token, ctx: &Context) -> Token {
     match tok {
       ilex::Token::Eof(..) => Token::eof(),
       ilex::Token::Unexpected(..) => Token::unexpected(),
       ilex::Token::Ident(tok) => {
-        let mut out = Token::ident((tok.name(), fcx));
+        let mut out = Token::ident((tok.name(), ctx));
         if let Some(prefix) = tok.prefix() {
-          out = out.prefix((prefix, fcx));
+          out = out.prefix((prefix, ctx));
         }
         if let Some(suffix) = tok.suffix() {
-          out = out.suffix((suffix, fcx));
+          out = out.suffix((suffix, ctx));
         }
         out
       }
       ilex::Token::Quoted(tok) => {
         let (open, close) = tok.delimiters();
         let mut out = Token::escaped(
-          (open, fcx),
-          (close, fcx),
+          (open, ctx),
+          (close, ctx),
           tok
             .raw_content()
             .map(|content| match content {
-              ilex::Content::Lit(s) => Content::Lit(Text::from_span(s, fcx)),
+              ilex::Content::Lit(s) => Content::Lit(Text::from_span(s, ctx)),
               ilex::Content::Esc(s, c) => {
-                Content::Esc(Text::from_span(s, fcx), c)
+                Content::Esc(Text::from_span(s, ctx), c)
               }
             })
             .collect(),
         );
         if let Some(prefix) = tok.prefix() {
-          out = out.prefix((prefix, fcx));
+          out = out.prefix((prefix, ctx));
         }
         if let Some(suffix) = tok.suffix() {
-          out = out.suffix((suffix, fcx));
+          out = out.suffix((suffix, ctx));
         }
         out
       }
@@ -365,13 +367,13 @@ impl Token {
         // TODO: exponent.
         let mut out = Token::number(
           tok.radix(),
-          tok.digit_blocks().map(|span| Text::from_span(span, fcx)),
+          tok.digit_blocks().map(|span| Text::from_span(span, ctx)),
         );
         if let Some(prefix) = tok.prefix() {
-          out = out.prefix((prefix, fcx));
+          out = out.prefix((prefix, ctx));
         }
         if let Some(suffix) = tok.suffix() {
-          out = out.suffix((suffix, fcx));
+          out = out.suffix((suffix, ctx));
         }
         out
       }
@@ -382,13 +384,13 @@ impl Token {
         contents,
         ..
       } => Token::delimited(
-        (open, fcx),
-        (close, fcx),
-        contents.map(|tok| Token::from_fcx(tok, fcx)).collect(),
+        (open, ctx),
+        (close, ctx),
+        contents.map(|tok| Token::from_ctx(tok, ctx)).collect(),
       ),
     }
-    .span((tok.span(fcx), fcx))
-    .comments(tok.comments(fcx).into_iter().map(|span| (span, fcx)))
+    .span((tok.span(ctx), ctx))
+    .comments(tok.comments(ctx).into_iter().map(|span| (span, ctx)))
   }
 }
 

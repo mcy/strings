@@ -1,8 +1,7 @@
 mod util;
+use ilex::spec::Escape;
 use util::Token;
 
-use ilex::spec::EscapeRule;
-use ilex::spec::Escapes;
 use ilex::spec::NumberExponent;
 use ilex::spec::NumberRule;
 use ilex::spec::QuotedRule;
@@ -16,27 +15,25 @@ fn json() {
   spec.delimiters([("[", "]"), ("{", "}")]);
   spec.keywords([",", ":", "-", "true", "false", "null"]);
   spec.rule(
-    QuotedRule::new(('"', '"')).escapes(
-      Escapes::new()
-        .rule("\\", EscapeRule::Invalid)
-        .rules([
-          ("\\\"", '\"'),
-          ("\\\\", '\\'),
-          ("\\/", '/'),
-          ("\\b", '\x08'),
-          ("\\f", '\x0C'),
-          ("\\n", '\n'),
-          ("\\t", '\t'),
-          ("\\r", '\r'),
-        ])
-        .rule(
-          "\\u",
-          EscapeRule::Fixed {
-            char_count: 4,
-            parse: Box::new(|hex| u32::from_str_radix(hex, 16).ok()),
-          },
-        ),
-    ),
+    QuotedRule::new(('"', '"'))
+      .escape("\\", Escape::Invalid)
+      .escapes([
+        ("\\\"", '\"'),
+        ("\\\\", '\\'),
+        ("\\/", '/'),
+        ("\\b", '\x08'),
+        ("\\f", '\x0C'),
+        ("\\n", '\n'),
+        ("\\t", '\t'),
+        ("\\r", '\r'),
+      ])
+      .escape(
+        "\\u",
+        Escape::Fixed {
+          char_count: 4,
+          parse: Box::new(|hex| u32::from_str_radix(hex, 16).ok()),
+        },
+      ),
   );
   spec.rule(
     NumberRule::new(10)

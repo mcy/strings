@@ -1,8 +1,7 @@
 mod util;
+use ilex::spec::Escape;
 use util::Token;
 
-use ilex::spec::EscapeRule;
-use ilex::spec::Escapes;
 use ilex::spec::IdentRule;
 use ilex::spec::NumberExponent;
 use ilex::spec::NumberRule;
@@ -46,13 +45,13 @@ fn llvm() {
 
   spec.rule(
     QuotedRule::new(('"', '"'))
-      .escapes(Escapes::new().rule(
+      .escape(
         "\\",
-        EscapeRule::Fixed {
+        Escape::Fixed {
           char_count: 2,
           parse: Box::new(|hex| u32::from_str_radix(hex, 16).ok()),
         },
-      ))
+      )
       .with_prefixes(["", "c", "!", "@", "%"]),
   );
 
