@@ -1,0 +1,23 @@
+[package]
+name = "ilex"
+version = "0.4.1"
+description = "quick and easy lexers for C-like languages"
+
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+license.workspace = true
+
+[dependencies]
+byteyarn = { version = "0.4", path = "../byteyarn" }
+twie = { version = "0.4", path = "../twie" }
+
+annotate-snippets = "0.9.2"
+camino = "1.1.6"
+unicode-segmentation = "1.10.1"
+unicode-xid = "0.2.4"
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
