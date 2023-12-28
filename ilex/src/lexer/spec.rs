@@ -13,7 +13,7 @@ use crate::lexer::compile::Compiled;
 /// An ID for a lexeme that a [`Spec`] can capture.
 ///
 /// Methods on [`SpecBuilder`] will return lexemes that can be used to
-/// distinguish what rule a [`Token`] came from.
+/// distinguish what rule a [`Token`][crate::Token] came from.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Lexeme(u32);
 
@@ -722,7 +722,7 @@ impl NumberRule {
   with_affixes!();
 }
 
-/// An exponent for a [`NumberBase`].
+/// An the exponent part of a [`NumberRule`].
 ///
 /// This specifies the `e-10` part of something like `1.5e-10`.
 #[derive(Debug)]
