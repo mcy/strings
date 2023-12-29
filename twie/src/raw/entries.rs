@@ -35,6 +35,16 @@ pub struct Entry<V, I: Index> {
   value: MaybeUninit<V>,
 }
 
+impl<V, I: Index> Drop for Entry<V, I> {
+  fn drop(&mut self) {
+    if !self.key[1].is_empty() {
+      unsafe {
+        self.value.assume_init_drop();
+      }
+    }
+  }
+}
+
 /// A deconstructed `Vec<T>` that ensures we only ever manipulate the data for
 /// the entries vector through raw pointers, except when creating new entries.
 ///
