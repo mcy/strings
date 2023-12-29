@@ -26,7 +26,7 @@ use crate::report::Report;
 /// Generally, the way using this function would look is something like this:
 ///
 // Delete "should_panic" to see what the ICE errors look like.
-/// ```
+/// ```should_panic
 /// use ilex::ice;
 /// use ilex::report;
 ///

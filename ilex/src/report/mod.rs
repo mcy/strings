@@ -199,7 +199,7 @@ impl Report {
   /// Collates all of the "unsorted diagnostics" into the "sorted diagnostics",
   /// sorting them by thread id. This ensures that all diagnostics coming from
   /// a particular thread are together.
-  pub fn collate(&mut self) {
+  pub fn collate(&self) {
     render::collate(self)
   }
 

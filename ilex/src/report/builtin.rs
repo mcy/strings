@@ -84,7 +84,7 @@ impl Builtins {
     self
       .0
       .error("found an unclosed delimiter")
-      .remark(open, "delimiter opened here")
+      .remark(open, "opened here")
       .saying(eof, "expected it to be closed here")
   }
 

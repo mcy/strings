@@ -4,9 +4,14 @@ use std::ops::Range;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::Arc;
 
-use annotate_snippets::display_list::DisplayList;
-use annotate_snippets::display_list::FormatOptions;
-use annotate_snippets::snippet;
+use annotate_snippets::renderer::AnsiColor;
+use annotate_snippets::renderer::Style;
+use annotate_snippets::Annotation;
+use annotate_snippets::AnnotationType;
+use annotate_snippets::Renderer;
+use annotate_snippets::Slice;
+use annotate_snippets::Snippet;
+use annotate_snippets::SourceAnnotation;
 
 use crate::file::Context;
 use crate::file::Spanned;
@@ -18,19 +23,9 @@ use crate::report::Report;
 /// Collates all of the "unsorted diagnostics" into the "sorted diagnostics",
 /// sorting them by thread id. This ensures that all diagnostics coming from
 /// a particular thread are together.
-pub fn collate(report: &mut Report) {
-  let (mut lock1, mut lock2);
-  let (recent, sorted) = match Arc::get_mut(&mut report.state) {
-    Some(state) => (
-      state.recent_diagnostics.get_mut().unwrap(),
-      state.sorted_diagnostics.get_mut().unwrap(),
-    ),
-    None => {
-      lock1 = report.state.recent_diagnostics.lock().unwrap();
-      lock2 = report.state.sorted_diagnostics.lock().unwrap();
-      (&mut *lock1, &mut *lock2)
-    }
-  };
+pub fn collate(report: &Report) {
+  let mut recent = report.state.recent_diagnostics.lock().unwrap();
+  let mut sorted = report.state.sorted_diagnostics.lock().unwrap();
 
   recent.sort_by_key(|&(id, _)| id);
   sorted.extend(recent.drain(..).map(|(_, i)| i));
@@ -55,7 +50,7 @@ pub(in crate::report) fn insert_diagnostic(report: &mut Report, info: Info) {
 
 /// Consumes this `Report` and dumps its diagnostics to `sink`.
 pub fn finish(
-  mut report: Report,
+  report: Report,
   fcx: &Context,
   sink: impl io::Write,
 ) -> io::Result<()> {
@@ -73,7 +68,7 @@ pub fn finish(
     }
   }
 
-  collate(&mut report);
+  collate(&report);
   let mut out = Writer { sink, error: None };
   render_fmt(&report, fcx, &mut out).map_err(|_| {
     if let Some(e) = out.error.take() {
@@ -90,36 +85,39 @@ pub fn render_fmt(
   fcx: &Context,
   sink: &mut dyn fmt::Write,
 ) -> fmt::Result {
+  collate(report);
   let mut errors = 0;
-  for (i, e) in report
-    .state
-    .sorted_diagnostics
-    .lock()
-    .unwrap()
-    .iter()
-    .enumerate()
-  {
+
+  let mut renderer = Renderer::plain();
+  #[rustfmt::skip]
+  #[allow(clippy::let_unit_value)]
+  let _ = if report.state.opts.color {
+    renderer = Renderer::styled()
+      .error(Style::new().fg_color(Some(AnsiColor::BrightRed.into())).bold())
+      .warning(Style::new().fg_color(Some(AnsiColor::BrightYellow.into())).bold())
+      .note(Style::new().fg_color(Some(AnsiColor::BrightGreen.into())).bold())
+      .info(Style::new().fg_color(Some(AnsiColor::BrightBlue.into())).bold())
+      .help(Style::new().fg_color(Some(AnsiColor::BrightCyan.into())).bold());
+  };
+
+  for e in report.state.sorted_diagnostics.lock().unwrap().iter() {
     let kind = match e.kind.unwrap() {
-      Kind::Note => snippet::AnnotationType::Note,
-      Kind::Warning => snippet::AnnotationType::Warning,
+      Kind::Note => AnnotationType::Note,
+      Kind::Warning => AnnotationType::Warning,
       Kind::Error => {
         errors += 1;
-        snippet::AnnotationType::Error
+        AnnotationType::Error
       }
     };
 
-    let mut snippet = snippet::Snippet {
-      title: Some(snippet::Annotation {
+    let mut snippet = Snippet {
+      title: Some(Annotation {
         id: None,
         label: Some(&e.message),
         annotation_type: kind,
       }),
-      opt: FormatOptions {
-        color: report.state.opts.color,
-        anonymized_line_numbers: false,
-        margin: None,
-      },
-      ..Default::default()
+      footer: Vec::new(),
+      slices: Vec::new(),
     };
 
     for snips in &e.snippets {
@@ -133,7 +131,7 @@ pub fn render_fmt(
             snippet.slices.push(slice);
           }
 
-          cur_slice = Some(snippet::Slice {
+          cur_slice = Some(Slice {
             source: file.text(),
             line_start: 1,
             origin: Some(file.name().as_str()),
@@ -158,11 +156,11 @@ pub fn render_fmt(
           }
         }
 
-        slice.annotations.push(snippet::SourceAnnotation {
+        slice.annotations.push(SourceAnnotation {
           range: (start, end),
           label: text,
           annotation_type: if *is_remark {
-            snippet::AnnotationType::Info
+            AnnotationType::Info
           } else {
             kind
           },
@@ -200,52 +198,43 @@ pub fn render_fmt(
     }
 
     for note in &e.notes {
-      snippet.footer.push(snippet::Annotation {
+      snippet.footer.push(Annotation {
         id: None,
         label: Some(note),
-        annotation_type: snippet::AnnotationType::Note,
+        annotation_type: AnnotationType::Note,
       });
     }
 
     let footer;
     if report.state.opts.show_report_locations {
       footer = format!("reported at: {}", e.reported_at.unwrap());
-      snippet.footer.push(snippet::Annotation {
+      snippet.footer.push(Annotation {
         id: None,
         label: Some(&footer),
-        annotation_type: snippet::AnnotationType::Note,
+        annotation_type: AnnotationType::Note,
       });
     }
 
-    if i != 0 {
-      writeln!(sink)?;
-    }
-    writeln!(sink, "{}", DisplayList::from(snippet))?;
+    write!(sink, "{}\n\n", renderer.render(snippet))?;
   }
 
   if errors != 0 {
-    writeln!(sink)?;
     let message = match errors {
       1 => "aborting due to previous error".into(),
       n => format!("aborting due to {n} errors"),
     };
 
-    writeln!(
-      sink,
-      "{}",
-      DisplayList::from(snippet::Snippet {
-        title: Some(snippet::Annotation {
-          id: None,
-          label: Some(&message),
-          annotation_type: snippet::AnnotationType::Error,
-        }),
-        opt: FormatOptions {
-          color: report.state.opts.color,
-          ..Default::default()
-        },
-        ..Default::default()
-      })
-    )?;
+    let aborting = Snippet {
+      title: Some(Annotation {
+        id: None,
+        label: Some(&message),
+        annotation_type: AnnotationType::Error,
+      }),
+      footer: Vec::new(),
+      slices: Vec::new(),
+    };
+
+    writeln!(sink, "{}", renderer.render(aborting))?;
   }
 
   Ok(())
