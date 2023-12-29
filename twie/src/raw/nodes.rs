@@ -273,7 +273,6 @@ impl<I: Index> Iterator for Prefixes<'_, '_, I> {
   type Item = (Node<I>, Option<usize>, bool);
 
   fn next(&mut self) -> Option<Self::Item> {
-    dbg!(self.node);
     if self.node.is_empty() {
       return None;
     }
