@@ -1,6 +1,5 @@
 use std::fmt;
 
-use crate::file::Context;
 use crate::lexer::rt;
 use crate::lexer::rt::Kind;
 use crate::lexer::spec::Lexeme;
@@ -28,6 +27,12 @@ impl<'spec> TokenStream<'spec> {
       toks: &self.toks,
       cursor: 0,
     }
+  }
+}
+
+impl fmt::Debug for TokenStream<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fmt::Debug::fmt(&self.cursor(), f)
   }
 }
 
@@ -121,11 +126,7 @@ impl<'lex> Cursor<'lex> {
   /// This function's primary use is for generating diagnostics; the caller will
   /// still need to match on the resulting [`Token`] to extract its contents.
   #[track_caller]
-  pub fn one_of(
-    &mut self,
-    fcx: &Context,
-    lexemes: &[Lexeme],
-  ) -> Option<Token<'lex>> {
+  pub fn one_of(&mut self, lexemes: &[Lexeme]) -> Option<Token<'lex>> {
     let next = self.next()?;
     for &lex in lexemes {
       if next.is(lex) {
@@ -134,7 +135,6 @@ impl<'lex> Cursor<'lex> {
     }
 
     report::builtins().expected_one_of(
-      fcx,
       self.spec,
       lexemes.iter().copied(),
       next,
@@ -145,13 +145,9 @@ impl<'lex> Cursor<'lex> {
   }
 
   /// Like [`Cursor::one_of()`], but does not skip over the token.
-  pub fn peek_one_of(
-    &self,
-    fcx: &Context,
-    lexemes: &[Lexeme],
-  ) -> Option<Token<'lex>> {
+  pub fn peek_one_of(&self, lexemes: &[Lexeme]) -> Option<Token<'lex>> {
     let mut copy = *self;
-    copy.one_of(fcx, lexemes)
+    copy.one_of(lexemes)
   }
 }
 

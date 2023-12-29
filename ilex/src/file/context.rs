@@ -1,9 +1,8 @@
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::fs;
-use std::mem;
+use std::mem::ManuallyDrop;
 use std::ops::Range;
-use std::pin::Pin;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Mutex;
@@ -19,15 +18,15 @@ use crate::file::FileMut;
 use crate::file::Span;
 use crate::report;
 use crate::report::Fatal;
+use crate::Report;
 
 pub type Offset = u32;
 
 /// A source context, which tracks various source file information,
 /// including spans and comments.
 pub struct Context {
-  state: UnsafeCell<State>,
-  token: u32,
-  is_installed: bool,
+  state: *const UnsafeCell<State>,
+  ctx_id: u32,
 }
 
 #[derive(Default)]
@@ -40,18 +39,18 @@ struct State {
   comments: HashMap<i32, Vec<Span>>,
 }
 
-struct SyncPtr<T: ?Sized>(*const T);
-unsafe impl<T: ?Sized> Send for SyncPtr<T> {}
-unsafe impl<T: ?Sized> Sync for SyncPtr<T> {}
+#[derive(Default)]
+struct VeryUnsafeCell<T>(UnsafeCell<T>);
+unsafe impl<T> Send for VeryUnsafeCell<T> {}
+unsafe impl<T> Sync for VeryUnsafeCell<T> {}
 
-static COUNTER: AtomicU32 = AtomicU32::new(0);
-static CONTEXTS: Mutex<Option<HashMap<u32, SyncPtr<Context>>>> =
+static CONTEXTS: Mutex<Option<HashMap<u32, Box<VeryUnsafeCell<State>>>>> =
   Mutex::new(None);
 
 impl Drop for Context {
   fn drop(&mut self) {
     if let Ok(Some(map)) = CONTEXTS.lock().as_deref_mut() {
-      assert!(map.remove(&self.token).is_some());
+      assert!(map.remove(&self.ctx_id).is_some());
     }
   }
 }
@@ -64,61 +63,61 @@ impl Default for Context {
 
 impl Context {
   pub fn new() -> Self {
-    Self {
-      state: UnsafeCell::new(Default::default()),
-      token: COUNTER.fetch_add(1, Relaxed),
-      is_installed: false,
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let ctx_id = COUNTER.fetch_add(1, Relaxed);
+
+    let mut contexts = CONTEXTS.lock().unwrap();
+    let contexts = contexts.get_or_insert_with(HashMap::new);
+
+    let cell = Box::<VeryUnsafeCell<State>>::default();
+    contexts.insert(ctx_id, cell);
+    // This is a bit janky, but MIRI doesn't like it unless we get the pointer
+    // after moving the box into the hashmap.
+    let state = &contexts.get(&ctx_id).unwrap().0 as *const UnsafeCell<State>;
+
+    let ctx = Self { state, ctx_id };
+
+    // If there is no report yet, create and install one.
+    if report::try_current().is_none() {
+      report::install(ctx.new_report());
     }
-  }
 
-  fn install(mut self: Pin<&mut Self>) {
-    let mut is_installed = unsafe {
-      // SAFETY: No other function touches this value, and it is not
-      // address-dependent.
-      self.as_mut().map_unchecked_mut(|x| &mut x.is_installed)
-    };
-
-    if mem::replace(&mut is_installed, true) {
-      return;
-    }
-
-    CONTEXTS
-      .lock()
-      .unwrap()
-      .get_or_insert_with(HashMap::new)
-      .insert(
-        self.token,
-        SyncPtr(unsafe { Pin::get_unchecked_mut(self.as_mut()) }),
-      );
+    ctx
   }
 
   fn state(&self) -> &State {
-    unsafe { &*self.state.get() }
+    unsafe { &*(*self.state).get() }
   }
 
-  fn mutate(mut self: Pin<&mut Self>, body: impl FnOnce(&mut State)) {
-    self.as_mut().install();
+  fn mutate(&mut self, body: impl FnOnce(&mut State)) {
     let _l = CONTEXTS.lock();
-    body(unsafe { &mut *self.state.get() });
+    body(unsafe { &mut *(*self.state).get() });
   }
 
   /// Adds a new file to this source context.
   pub fn new_file(
-    mut self: Pin<&mut Self>,
+    &mut self,
     name: impl Into<Utf8PathBuf>,
     text: impl Into<String>,
   ) -> FileMut {
-    self
-      .as_mut()
-      .mutate(|state| state.files.push((name.into(), text.into())));
+    self.mutate(|state| state.files.push((name.into(), text.into())));
 
     let idx = self.state().files.len() - 1;
     self.file_mut(idx).unwrap()
   }
 
+  /// Creates a new report based on this context.
+  pub fn new_report(&self) -> Report {
+    Report::new(self, Default::default())
+  }
+
+  pub fn new_report_with(&self, options: report::Options) -> Report {
+    Report::new(self, options)
+  }
+
   /// Adds a new file to this source context from the file system.
   pub fn open_file(
-    self: Pin<&mut Self>,
+    &mut self,
     name: impl Into<Utf8PathBuf>,
   ) -> Result<FileMut, Fatal> {
     let name = name.into();
@@ -126,13 +125,13 @@ impl Context {
     let bytes = match fs::read(&name) {
       Ok(bytes) => bytes,
       Err(e) => {
-        crate::error(&self, f!("could not open input file `{name}`: {e}"));
+        crate::error(f!("could not open input file `{name}`: {e}"));
         return report::current().fatal();
       }
     };
 
     let Ok(utf8) = String::from_utf8(bytes) else {
-      crate::error(&self, "input file `{name}` was not valid UTF-8");
+      crate::error("input file `{name}` was not valid UTF-8");
       return report::current().fatal();
     };
 
@@ -154,7 +153,7 @@ impl Context {
   }
 
   /// Gets the `idx`th file in this source context.
-  pub fn file_mut(self: Pin<&mut Self>, idx: usize) -> Option<FileMut> {
+  pub fn file_mut(&mut self, idx: usize) -> Option<FileMut> {
     self.state().files.get(idx)?;
     Some(FileMut { ctx: self, idx })
   }
@@ -164,21 +163,26 @@ impl Context {
     self.state().files.len()
   }
 
-  pub(crate) fn token(&self) -> u32 {
-    self.token
+  pub(crate) fn ctx_id(&self) -> u32 {
+    self.ctx_id
   }
 
   pub(crate) fn find_and_run<R>(
-    token: u32,
+    ctx_id: u32,
     body: impl FnOnce(Option<&Context>) -> R,
   ) -> R {
     let contexts = CONTEXTS.lock().unwrap();
     let ctx = contexts
       .as_ref()
-      .and_then(|map| map.get(&token))
-      .map(|ptr| unsafe { &*ptr.0 });
+      .and_then(|map| map.get(&ctx_id))
+      .map(|bx| {
+        ManuallyDrop::new(Context {
+          state: &bx.0,
+          ctx_id,
+        })
+      });
 
-    body(ctx)
+    body(ctx.as_deref())
   }
 
   /// Gets the byte range for the given span, if it isn't the synthetic span.
@@ -197,7 +201,7 @@ impl Context {
     span: Span,
   ) -> (Option<Range<usize>>, usize) {
     assert_eq!(
-      span.ctx, self.token,
+      span.ctx, self.ctx_id,
       "attempted to resolve span from another context"
     );
 
@@ -217,7 +221,7 @@ impl Context {
 
   pub(crate) fn lookup_synthetic(&self, span: Span) -> &str {
     assert_eq!(
-      span.ctx, self.token,
+      span.ctx, self.ctx_id,
       "attempted to look up comments of span from another context"
     );
 
@@ -226,7 +230,7 @@ impl Context {
 
   pub(crate) fn lookup_comments(&self, span: Span) -> &[Span] {
     assert_eq!(
-      span.ctx, self.token,
+      span.ctx, self.ctx_id,
       "attempted to look up comments of span from another context"
     );
 
@@ -238,13 +242,13 @@ impl Context {
       .unwrap_or_default()
   }
 
-  pub(crate) fn add_comment(self: Pin<&mut Self>, span: Span, comment: Span) {
+  pub(crate) fn add_comment(&mut self, span: Span, comment: Span) {
     assert_eq!(
-      span.ctx, self.token,
+      span.ctx, self.ctx_id,
       "attempted to attach comment to span from another context"
     );
     assert_eq!(
-      comment.ctx, self.token,
+      comment.ctx, self.ctx_id,
       "attempted to attach comment span from another context"
     );
 
@@ -255,7 +259,7 @@ impl Context {
 
   /// Creates a new synthetic span with the given contents.
   pub(crate) fn new_span(
-    self: Pin<&mut Self>,
+    &mut self,
     start: usize,
     end: usize,
     file_idx: usize,
@@ -278,7 +282,7 @@ impl Context {
     let span = Span {
       start: self.state().ranges.len() as i32,
       end: -1,
-      ctx: self.token(),
+      ctx: self.ctx_id(),
     };
 
     self.mutate(|state| {
@@ -290,7 +294,7 @@ impl Context {
   }
 
   /// Creates a new synthetic span with the given contents.
-  pub(crate) fn new_synthetic_span(self: Pin<&mut Self>, text: Yarn) -> Span {
+  pub(crate) fn new_synthetic_span(&mut self, text: Yarn) -> Span {
     assert!(
       self.state().synthetics.len() < (i32::MAX as usize),
       "ran out of spans",
@@ -299,7 +303,7 @@ impl Context {
     let span = Span {
       start: !self.state().synthetics.len() as i32,
       end: -1,
-      ctx: self.token(),
+      ctx: self.ctx_id(),
     };
 
     self.mutate(|state| state.synthetics.push(text));
@@ -324,7 +328,7 @@ impl Context {
 
     for span in spans {
       assert_eq!(
-        span.ctx, self.token,
+        span.ctx, self.ctx_id,
         "attempted to join span from another context"
       );
 
@@ -356,7 +360,7 @@ impl Context {
     let mut span = Span {
       start: best.start,
       end: best.end,
-      ctx: self.token,
+      ctx: self.ctx_id,
     };
 
     if span.end == span.start {

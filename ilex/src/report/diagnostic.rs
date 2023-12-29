@@ -2,18 +2,17 @@ use std::fmt;
 use std::mem;
 use std::panic;
 
-use crate::Span;
 use crate::file::Context;
 use crate::file::Spanned;
-use crate::report::Report;
 use crate::report::render;
+use crate::report::Report;
+use crate::Span;
 
 /// A diagnostic that is being built up.
 ///
 /// See [`Report::error()`].
-pub struct Diagnostic<'fcx> {
-  pub(super) rcx: Report,
-  pub(super) fcx: &'fcx Context,
+pub struct Diagnostic {
+  pub(super) report: Report,
   pub(super) info: Info,
 }
 
@@ -21,6 +20,7 @@ pub struct Diagnostic<'fcx> {
 pub enum Kind {
   Error,
   Warning,
+  Note,
 }
 
 #[derive(Default)]
@@ -32,7 +32,7 @@ pub struct Info {
   pub reported_at: Option<&'static panic::Location<'static>>,
 }
 
-impl Diagnostic<'_> {
+impl Diagnostic {
   /// Adds a new relevant snippet at the given location.
   pub fn at(self, span: impl Spanned) -> Self {
     self.saying(span, "")
@@ -59,12 +59,15 @@ impl Diagnostic<'_> {
       self.info.snippets = vec![vec![]];
     }
 
-    self.info.snippets.last_mut().unwrap().push((
-      span.span(self.fcx),
-      message.to_string(),
-      is_remark,
-    ));
-    self
+    Context::find_and_run(self.report.ctx, |ctx| {
+      let ctx = ctx.expect("attempted to emit a diagnostic after the ilex::Context that owns it has disappeared");
+      self.info.snippets.last_mut().unwrap().push((
+        span.span(ctx),
+        message.to_string(),
+        is_remark,
+      ));
+      self
+    })
   }
 
   /// Starts a new snippet, even if the next span is in the same file.
@@ -94,8 +97,8 @@ impl Diagnostic<'_> {
   }
 }
 
-impl Drop for Diagnostic<'_> {
+impl Drop for Diagnostic {
   fn drop(&mut self) {
-    render::insert_diagnostic(&mut self.rcx, mem::take(&mut self.info));
+    render::insert_diagnostic(&mut self.report, mem::take(&mut self.info));
   }
 }

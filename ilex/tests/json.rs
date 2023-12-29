@@ -1,51 +1,58 @@
-mod util;
 use ilex::spec::Escape;
-use util::Token;
-
 use ilex::spec::NumberExponent;
 use ilex::spec::NumberRule;
 use ilex::spec::QuotedRule;
-use ilex::spec::Spec;
+use ilex::testing;
+use ilex::testing::Content;
+use ilex::testing::LexemeExt;
 
-use self::util::Content;
+mod util;
 
-#[test]
-fn json() {
-  let mut spec = Spec::builder();
-  spec.delimiters([("[", "]"), ("{", "}")]);
-  spec.keywords([",", ":", "-", "true", "false", "null"]);
-  spec.rule(
-    QuotedRule::new(('"', '"'))
-      .escape("\\", Escape::Invalid)
+ilex::spec! {
+  struct Json {
+    comma: ',',
+    colon: ':',
+    minus: '-',
+    true_: "true",
+    false_: "false",
+    null: "null",
+
+    #[named] array: ('[', ']'),
+    #[named] object: ('{','}'),
+    #[named] string: QuotedRule::new('"')
+      .escape(r"\", Escape::Invalid)
       .escapes([
         ("\\\"", '\"'),
-        ("\\\\", '\\'),
-        ("\\/", '/'),
-        ("\\b", '\x08'),
-        ("\\f", '\x0C'),
-        ("\\n", '\n'),
-        ("\\t", '\t'),
-        ("\\r", '\r'),
+        (r"\\", '\\'),
+        (r"\/", '/'),
+        (r"\b", '\x08'),
+        (r"\f", '\x0C'),
+        (r"\n", '\n'),
+        (r"\t", '\t'),
+        (r"\r", '\r'),
       ])
       .escape(
-        "\\u",
+        r"\u",
         Escape::Fixed {
           char_count: 4,
           parse: Box::new(|hex| u32::from_str_radix(hex, 16).ok()),
         },
       ),
-  );
-  spec.rule(
-    NumberRule::new(10)
+
+    #[named] number: NumberRule::new(10)
       .max_decimal_points(1)
       .exponent_part(NumberExponent::new(10, ["e", "E"])),
-  );
-  let spec = spec.compile();
+  }
+}
+
+#[test]
+fn json() {
+  let json = Json::get();
 
   let text = r#"
     {
       "keywords": [null, true, false],
-      "string": "abcefg",
+      "string": "abcdefg",
       "number": 42,
       "int": 42.0,
       "frac": 0.42,
@@ -57,95 +64,97 @@ fn json() {
     }
   "#;
 
-  let expect = vec![
-    Token::delimited(
-      "{",
-      "}",
-      vec![
-        Token::quoted("\"", "\"", "keywords"),
-        Token::keyword(":"),
-        Token::delimited(
-          "[",
-          "]",
-          vec![
-            Token::keyword("null"),
-            Token::keyword(","),
-            Token::keyword("true"),
-            Token::keyword(","),
-            Token::keyword("false"),
-          ],
-        ),
-        Token::keyword(","),
-        //
-        Token::quoted("\"", "\"", "string"),
-        Token::keyword(":"),
-        Token::quoted("\"", "\"", "abcefg"),
-        Token::keyword(","),
-        //
-        Token::quoted("\"", "\"", "number"),
-        Token::keyword(":"),
-        Token::number(10, ["42"]),
-        Token::keyword(","),
-        //
-        Token::quoted("\"", "\"", "int"),
-        Token::keyword(":"),
-        Token::number(10, ["42", "0"]),
-        Token::keyword(","),
-        //
-        Token::quoted("\"", "\"", "frac"),
-        Token::keyword(":"),
-        Token::number(10, ["0", "42"]),
-        Token::keyword(","),
-        //
-        Token::quoted("\"", "\"", "neg"),
-        Token::keyword(":"),
-        Token::keyword("-"),
-        Token::number(10, ["42"]),
-        Token::keyword(","),
-        //
-        Token::quoted("\"", "\"", "exp"),
-        Token::keyword(":"),
-        Token::number(10, ["42"]), // TODO...
-        Token::keyword(","),
-        //
-        Token::quoted("\"", "\"", "nest"),
-        Token::keyword(":"),
-        Token::delimited(
-          "{",
-          "}",
-          vec![
-            Token::escaped(
-              "\"",
-              "\"",
-              vec![
-                Content::Lit("escapes".into()),
-                Content::Esc("\\n".into(), '\n' as u32),
-              ],
-            ),
-            Token::keyword(":"),
-            Token::escaped(
-              "\"",
-              "\"",
-              vec![
-                Content::Esc("\\\"".into(), '\"' as u32),
-                Content::Esc("\\\\".into(), '\\' as u32),
-                Content::Esc("\\/".into(), '/' as u32),
-                Content::Esc("\\b".into(), 0x8),
-                Content::Esc("\\f".into(), 0xc),
-                Content::Esc("\\n".into(), '\n' as u32),
-                Content::Esc("\\t".into(), '\t' as u32),
-                Content::Esc("\\r".into(), '\r' as u32),
-                Content::Esc("\\u0000".into(), 0x0000),
-                Content::Esc("\\u1234".into(), 0x1234),
-                Content::Esc("\\uffff".into(), 0xffff),
-              ],
-            ),
-          ],
-        ),
-      ],
-    ),
-    Token::eof(),
-  ];
-
-  util::drive(&spec, text, &expect);
+  util::drive(
+    json.spec(),
+    text,
+    &vec![
+      json.object.delimited(
+        "{",
+        "}",
+        vec![
+          json.string.quoted("\"", "\"", "keywords"),
+          json.colon.keyword(":"),
+          json.array.delimited(
+            "[",
+            "]",
+            vec![
+              json.null.keyword("null"),
+              json.comma.keyword(","),
+              json.true_.keyword("true"),
+              json.comma.keyword(","),
+              json.false_.keyword("false"),
+            ],
+          ),
+          json.comma.keyword(","),
+          //
+          json.string.quoted("\"", "\"", "string"),
+          json.colon.keyword(":"),
+          json.string.quoted("\"", "\"", "abcdefg"),
+          json.comma.keyword(","),
+          //
+          json.string.quoted("\"", "\"", "number"),
+          json.colon.keyword(":"),
+          json.number.number(10, ["42"]),
+          json.comma.keyword(","),
+          //
+          json.string.quoted("\"", "\"", "int"),
+          json.colon.keyword(":"),
+          json.number.number(10, ["42", "0"]),
+          json.comma.keyword(","),
+          //
+          json.string.quoted("\"", "\"", "frac"),
+          json.colon.keyword(":"),
+          json.number.number(10, ["0", "42"]),
+          json.comma.keyword(","),
+          //
+          json.string.quoted("\"", "\"", "neg"),
+          json.colon.keyword(":"),
+          json.minus.keyword("-"),
+          json.number.number(10, ["42"]),
+          json.comma.keyword(","),
+          //
+          json.string.quoted("\"", "\"", "exp"),
+          json.colon.keyword(":"),
+          json.number.number(10, ["42"]), // TODO...
+          json.comma.keyword(","),
+          //
+          json.string.quoted("\"", "\"", "nest"),
+          json.colon.keyword(":"),
+          json.object.delimited(
+            "{",
+            "}",
+            vec![
+              json.string.escaped(
+                "\"",
+                "\"",
+                vec![
+                  Content::Lit("escapes".into()),
+                  Content::Esc("\\n".into(), '\n' as u32),
+                ],
+              ),
+              json.colon.keyword(":"),
+              json.string.escaped(
+                "\"",
+                "\"",
+                vec![
+                  Content::Esc("\\\"".into(), '\"' as u32),
+                  Content::Esc("\\\\".into(), '\\' as u32),
+                  Content::Esc("\\/".into(), '/' as u32),
+                  Content::Esc("\\b".into(), 0x8),
+                  Content::Esc("\\f".into(), 0xc),
+                  Content::Esc("\\n".into(), '\n' as u32),
+                  Content::Esc("\\t".into(), '\t' as u32),
+                  Content::Esc("\\r".into(), '\r' as u32),
+                  Content::Esc("\\u0000".into(), 0x0000),
+                  Content::Esc("\\u1234".into(), 0x1234),
+                  Content::Esc("\\uffff".into(), 0xffff),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+      testing::Token::eof(),
+    ],
+  );
 }

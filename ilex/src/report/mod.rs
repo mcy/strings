@@ -3,10 +3,12 @@
 //! These functions are used to simplify the display of various errors to
 //! the user.
 
+use std::backtrace::Backtrace;
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::fmt;
 use std::io;
+use std::io::Write;
 use std::mem;
 use std::panic;
 use std::process;
@@ -25,29 +27,37 @@ mod render;
 
 pub use builtin::builtins;
 pub use builtin::Builtins;
+pub use builtin::Token;
 pub use diagnostic::Diagnostic;
 
 /// Adds a new error to [`report::current()`][current].
 #[track_caller]
-pub fn error(fcx: &Context, message: impl fmt::Display) -> Diagnostic {
-  current().error(fcx, message)
+pub fn error(message: impl fmt::Display) -> Diagnostic {
+  current().error(message)
 }
 
 /// Adds a new warning to [`report::current()`][current].
 #[track_caller]
-pub fn warn(fcx: &Context, message: impl fmt::Display) -> Diagnostic {
-  current().warn(fcx, message)
+pub fn warn(message: impl fmt::Display) -> Diagnostic {
+  current().warn(message)
+}
+
+/// Adds a new top-level note to [`report::current()`][current].
+#[track_caller]
+pub fn note(message: impl fmt::Display) -> Diagnostic {
+  current().note(message)
 }
 
 /// A collection of errors that may built up over the course of an operation.
 #[derive(Clone)]
 pub struct Report {
   id: u32,
+  ctx: u32,
   state: Arc<State>,
 }
 
 struct State {
-  opts: RenderOptions,
+  opts: Options,
   has_error: AtomicBool,
   next_id: AtomicU32,
   sorted_diagnostics: Mutex<Vec<diagnostic::Info>>,
@@ -55,7 +65,7 @@ struct State {
 }
 
 /// Options for a [`Report`].
-pub struct RenderOptions {
+pub struct Options {
   /// Whether to color the output.
   pub color: bool,
   /// Whether to add a note to each diagnostic showing where it was
@@ -63,7 +73,7 @@ pub struct RenderOptions {
   pub show_report_locations: bool,
 }
 
-impl Default for RenderOptions {
+impl Default for Options {
   fn default() -> Self {
     Self {
       color: true,
@@ -73,15 +83,11 @@ impl Default for RenderOptions {
 }
 
 impl Report {
-  /// Creates a new report.
-  pub fn new() -> Self {
-    Self::with_options(RenderOptions::default())
-  }
-
   /// Creates a report with the given options for rendering.
-  pub fn with_options(opts: RenderOptions) -> Self {
+  pub(crate) fn new(ctx: &Context, opts: Options) -> Self {
     Self {
       id: 0,
+      ctx: ctx.ctx_id(),
       state: Arc::new(State {
         opts,
         has_error: AtomicBool::new(false),
@@ -99,10 +105,9 @@ impl Report {
 
   /// Adds a new error to this report.
   #[track_caller]
-  pub fn error(self, fcx: &Context, message: impl fmt::Display) -> Diagnostic {
+  pub fn error(self, message: impl fmt::Display) -> Diagnostic {
     Diagnostic {
-      rcx: self,
-      fcx,
+      report: self,
       info: diagnostic::Info {
         message: message.to_string(),
         kind: Some(diagnostic::Kind::Error),
@@ -118,18 +123,16 @@ impl Report {
   #[track_caller]
   pub fn error_by(
     self,
-    fcx: &Context,
     fmt: impl FnOnce(&mut fmt::Formatter) -> fmt::Result,
   ) -> Diagnostic {
-    self.error(fcx, display_by(fmt))
+    self.error(display_by(fmt))
   }
 
   /// Adds a new warning to this report.
   #[track_caller]
-  pub fn warn(self, fcx: &Context, message: impl fmt::Display) -> Diagnostic {
+  pub fn warn(self, message: impl fmt::Display) -> Diagnostic {
     Diagnostic {
-      rcx: self,
-      fcx,
+      report: self,
       info: diagnostic::Info {
         message: message.to_string(),
         kind: Some(diagnostic::Kind::Warning),
@@ -145,10 +148,34 @@ impl Report {
   #[track_caller]
   pub fn warn_by(
     self,
-    fcx: &Context,
     fmt: impl FnOnce(&mut fmt::Formatter) -> fmt::Result,
   ) -> Diagnostic {
-    self.warn(fcx, display_by(fmt))
+    self.warn(display_by(fmt))
+  }
+
+  /// Adds a new top-level note to this report.
+  #[track_caller]
+  pub fn note(self, message: impl fmt::Display) -> Diagnostic {
+    Diagnostic {
+      report: self,
+      info: diagnostic::Info {
+        message: message.to_string(),
+        kind: Some(diagnostic::Kind::Note),
+        snippets: Vec::new(),
+        notes: Vec::new(),
+        reported_at: Some(panic::Location::caller()),
+      },
+    }
+  }
+
+  /// Like [`Report::note()`], but accepts a closure for generating the
+  /// diagnostic message.
+  #[track_caller]
+  pub fn note_by(
+    self,
+    fmt: impl FnOnce(&mut fmt::Formatter) -> fmt::Result,
+  ) -> Diagnostic {
+    self.warn(display_by(fmt))
   }
 
   /// Returns a `Fatal` regardless of whether this report contains any errors.
@@ -177,8 +204,33 @@ impl Report {
   }
 
   /// Consumes this `Report` and dumps its diagnostics to `sink`.
-  pub fn finish(self, fcx: &Context, sink: impl io::Write) -> io::Result<()> {
-    render::finish(self, fcx, sink)
+  pub fn finish(self, sink: impl io::Write) -> io::Result<()> {
+    self.in_context(|this, ctx| render::finish(this, ctx, sink))
+  }
+
+  /// Executes `cb` after looking up the context that "owns" this report.
+  fn in_context<R>(self, cb: impl FnOnce(Report, &Context) -> R) -> R {
+    Context::find_and_run(self.ctx, |ctx| {
+      match ctx {
+        Some(ctx) => cb(self, ctx),
+        None => {
+          let msg = "ilex: attempted to operate on a report, but ilex::Context that owns it has disappeared; this is probably a bug";
+
+          // It is highly probable this will be called while handling a panic.
+          // Instead of double panicking (which is an instant abort) we print,
+          // flush, print a backtrace, and *then* panic.
+          if thread::panicking() {
+            eprintln!("{msg}");
+            let bt = Backtrace::capture();
+            eprintln!("{bt}");
+            std::io::stderr().flush().unwrap();
+            panic!("double panic!");
+          }
+
+          panic!("{msg}")
+        }
+      }
+    })
   }
 }
 
@@ -187,19 +239,19 @@ thread_local! {
 }
 
 pub(crate) fn try_current() -> Option<Report> {
-  REPORT.with(|rcx| rcx.borrow().clone())
+  REPORT.with(|report| report.borrow().clone())
 }
 
 /// Installs a `Report` as this thread's current report.
 ///
 /// Returns a cleanup object that places the previous report back in place
 /// when it goes out of scope.
-pub fn install(mut rcx: Report) -> impl Drop {
-  rcx.id = rcx.state.next_id.fetch_add(1, SeqCst);
+pub fn install(mut report: Report) -> impl Drop {
+  report.id = report.state.next_id.fetch_add(1, SeqCst);
 
   REPORT.with(|tls| {
     let mut tls = tls.borrow_mut();
-    let old = mem::replace(&mut *tls, Some(rcx));
+    let old = mem::replace(&mut *tls, Some(report));
 
     struct Replacer(Option<Report>);
     impl Drop for Replacer {
@@ -222,7 +274,7 @@ pub fn install(mut rcx: Report) -> impl Drop {
 /// function will panic.
 pub fn current() -> Report {
   match try_current() {
-    Some(rcx) => rcx,
+    Some(report) => report,
     None => {
       const MSG: &str =
         "called Report::with_current() on a thread without a report installed";
@@ -236,31 +288,35 @@ pub fn current() -> Report {
   }
 }
 
-impl Default for Report {
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
 /// Returned by functions that take a [`Report`] for writing errors to, if any
 /// errors were written to it.
 pub struct Fatal(Report);
 
 impl Fatal {
   /// Prints all diagnostics to stderr and terminates the program.
-  pub fn terminate(self, fcx: &Context) -> ! {
-    eprintln!("{}", self.to_string(fcx));
+  pub fn terminate(self) -> ! {
+    eprintln!("{self}");
     process::exit(1);
   }
 
   /// Panics with the [`Report`]'s diagnostics as the panic message.
-  pub fn panic(self, fcx: &Context) -> ! {
-    panic::panic_any(self.to_string(fcx))
+  pub fn panic(self) -> ! {
+    panic::panic_any(self.to_string())
   }
+}
 
-  /// Panics with the [`Report`]'s diagnostics as the panic message.
-  pub fn to_string(self, fcx: &Context) -> String {
-    display_by(|f| render::render_fmt(&self.0, fcx, f)).to_string()
+impl fmt::Debug for Fatal {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    self
+      .0
+      .clone()
+      .in_context(|this, ctx| render::render_fmt(&this, ctx, f))
+  }
+}
+
+impl fmt::Display for Fatal {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fmt::Debug::fmt(self, f)
   }
 }
 

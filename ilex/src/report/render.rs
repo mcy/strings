@@ -9,6 +9,7 @@ use annotate_snippets::display_list::FormatOptions;
 use annotate_snippets::snippet;
 
 use crate::file::Context;
+use crate::file::Spanned;
 
 use crate::report::diagnostic::Info;
 use crate::report::diagnostic::Kind;
@@ -99,6 +100,7 @@ pub fn render_fmt(
     .enumerate()
   {
     let kind = match e.kind.unwrap() {
+      Kind::Note => snippet::AnnotationType::Note,
       Kind::Warning => snippet::AnnotationType::Warning,
       Kind::Error => {
         errors += 1;
@@ -224,8 +226,8 @@ pub fn render_fmt(
   if errors != 0 {
     writeln!(sink)?;
     let message = match errors {
-      1 => "aborted due to previous error".into(),
-      n => format!("aborted due to {n} errors"),
+      1 => "aborting due to previous error".into(),
+      n => format!("aborting due to {n} errors"),
     };
 
     writeln!(
