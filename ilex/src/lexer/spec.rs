@@ -15,7 +15,7 @@ use crate::lexer::compile::Compiled;
 /// Methods on [`SpecBuilder`] will return lexemes that can be used to
 /// distinguish what rule a [`Token`][crate::Token] came from.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct Lexeme(u32);
+pub struct Lexeme(pub(crate) u32);
 
 impl Lexeme {
   /// Returns the unique lexeme representing the "end of file" token.
@@ -99,9 +99,33 @@ impl From<Delimiter> for Rule {
   }
 }
 
-impl<Y: Into<Yarn>> From<Y> for Rule {
-  fn from(rule: Y) -> Self {
+impl From<&str> for Rule {
+  fn from(rule: &str) -> Self {
+    Self::Keyword(Yarn::copy(rule))
+  }
+}
+
+impl From<char> for Rule {
+  fn from(rule: char) -> Self {
     Self::Keyword(rule.into())
+  }
+}
+
+impl From<&Yarn> for Rule {
+  fn from(rule: &Yarn) -> Self {
+    Self::Keyword(Yarn::copy(rule))
+  }
+}
+
+impl From<Yarn> for Rule {
+  fn from(rule: Yarn) -> Self {
+    Self::Keyword(rule)
+  }
+}
+
+impl<Y1: Into<Yarn>, Y2: Into<Yarn>> From<(Y1, Y2)> for Rule {
+  fn from((open, close): (Y1, Y2)) -> Self {
+    Delimiter::paired(open, close).into()
   }
 }
 
@@ -120,82 +144,44 @@ impl SpecBuilder {
     compile::compile(self)
   }
 
-  /// Returns an iterator over all rules added to the [`Spec`] so far.
-  pub fn rules(&self) -> impl Iterator<Item = (Lexeme, &Rule)> {
-    self
-      .rules
-      .iter()
-      .enumerate()
-      .map(|(i, r)| (Lexeme(i as u32), r))
-  }
-
-  /// Returns the rule corresponding to a particular lexeme.
+  /// Adds a new rule to the [`Spec`] being built.
   ///
-  /// # Panics
-  ///
-  /// This function will panic, or return an unspecified result, if `lex` was
-  /// not returned by any of this specific [`Spec`]'s methods.
-  pub fn find_rule(&self, lex: Lexeme) -> &Rule {
-    &self.rules[lex.0 as usize]
-  }
-
-  /// Returns the name of a rule corresponding to a particular lexeme, if it has
-  /// one.
-  pub(super) fn rule_name(&self, lex: Lexeme) -> Option<YarnRef<str>> {
-    Some(self.names[lex.0 as usize].as_ref()).filter(|n| !n.is_empty())
-  }
-
-  /// Adds a new keyword to the [`Spec`] being built.
-  ///
-  /// Keywords are specific fixed character sequences, such as for operators
-  /// (e.g. `+`) in a language. Keywords (e.g. `struct`) can also be lexed as
-  /// keywords.
+  /// [`SpecBuilder::compile()`] will ensure that
+  /// every rule begins with a unique prefix (and panic if not).
   ///
   /// ```
   /// # use ilex::spec::*;
   /// let mut builder = Spec::builder();
-  /// let and = builder.keyword("&");
-  /// builder.compile();
-  /// ```
-  pub fn keyword(&mut self, kw: impl Into<Yarn>) -> Lexeme {
-    self.rule(Rule::Keyword(kw.into()))
-  }
-
-  /// Like [`SpecBuilder::keyword()`], but for conveniently defining many of
-  /// them at once.
-  pub fn keywords<const N: usize>(
-    &mut self,
-    keywords: [impl Into<Yarn>; N],
-  ) -> [Lexeme; N] {
-    keywords.map(|d| self.keyword(d.into()))
-  }
-
-  /// Adds a new delimiter to the [`Spec`] being built.
+  /// let ident = builder.rule(IdentRule::new().with_prefix("%"));
   ///
-  /// A delimiter is a pair of character sequences that must be matched with
-  /// each other when lexing. For example, `()` and `[]` can be specified as
-  /// delimiters, and the lexer will automatically flag mismatched delimiters.
-  ///
-  /// Delimiters which internally use a limited form of back references can be
-  /// used by explicitly constructing a [`Delimiter`].
-  ///
-  /// ```
-  /// # use ilex::spec::*;
-  /// let mut builder = Spec::builder();
-  /// let parens = builder.delimiter(("(", ")"));
+  /// let str = builder.rule(
+  ///   QuotedRule::new('"')
+  ///     .with_prefix("r")
+  ///     .add_rust_escapes()
+  /// );
   /// let spec = builder.compile();
   /// ```
-  pub fn delimiter(&mut self, delimiter: impl Into<Delimiter>) -> Lexeme {
-    self.rule(Rule::Delimiter(delimiter.into()))
+  pub fn rule(&mut self, rule: impl Into<Rule>) -> Lexeme {
+    self.named_rule("", rule)
   }
 
-  /// Like [`SpecBuilder::delimiter()`], but for conveniently defining many of
-  /// them at once.
-  pub fn delimiters<const N: usize>(
+  /// Adds a new named rule to the [`Spec`] being built.
+  ///
+  /// This is similar to [`SpecBuilder::rule()`], but diagnostics involving
+  /// the returned [`Lexeme`] will use the given name, instead of a generated
+  /// one.
+  pub fn named_rule(
     &mut self,
-    delimiters: [impl Into<Delimiter>; N],
-  ) -> [Lexeme; N] {
-    delimiters.map(|d| self.delimiter(d.into()))
+    name: impl Into<Yarn>,
+    rule: impl Into<Rule>,
+  ) -> Lexeme {
+    if self.rules.len() == (u32::MAX as usize) - 2 {
+      panic!("ilex: ran out of lexeme ids")
+    }
+
+    self.names.push(name.into());
+    self.rules.push(rule.into());
+    Lexeme(self.rules.len() as u32 - 1)
   }
 
   /// Adds a new line comment delimiter to the [`Spec`] being built.
@@ -224,52 +210,79 @@ impl SpecBuilder {
   /// ```
   /// # use ilex::spec::*;
   /// let mut builder = Spec::builder();
-  /// builder.block_comment(("/*", "*/"));
+  /// //builder.block_comment(("/*", "*/"));
   /// let spec = builder.compile();
   /// ```
-  pub fn block_comment(&mut self, delimiter: impl Into<Delimiter>) -> Lexeme {
-    self.rule(Rule::BlockComment(delimiter.into()))
+  pub fn block_comment(&mut self, delimiter: Delimiter) -> Lexeme {
+    self.rule(Rule::BlockComment(delimiter))
   }
 
-  /// Adds a new rule to the [`Spec`] being built.
-  ///
-  /// [`SpecBuilder::compile()`] will ensure that
-  /// every rule begins with a unique prefix (and panic if not).
-  ///
-  /// ```
-  /// # use ilex::spec::*;
-  /// let mut builder = Spec::builder();
-  /// let ident = builder.rule(IdentRule::new().with_prefix("%"));
-  ///
-  /// let str = builder.rule(
-  ///   QuotedRule::new(('"', '"'))
-  ///     .with_prefix("r")
-  ///     .add_rust_escapes()
-  /// );
-  /// let spec = builder.compile();
-  /// ```
-  pub fn rule(&mut self, rule: impl Into<Rule>) -> Lexeme {
-    self.named_rule("", rule)
+  /// Returns an iterator over all rules added to the [`Spec`] so far.
+  pub fn rules(&self) -> impl Iterator<Item = (Lexeme, &Rule)> {
+    self
+      .rules
+      .iter()
+      .enumerate()
+      .map(|(i, r)| (Lexeme(i as u32), r))
   }
 
-  /// Adds a new named rule to the [`Spec`] being built.
+  /// Returns the rule corresponding to a particular lexeme.
   ///
-  /// This is similar to [`SpecBuilder::rule()`], but diagnostics involving
-  /// the returned [`Lexeme`] will use the given name, instead of a generated
+  /// # Panics
+  ///
+  /// This function will panic, or return an unspecified result, if `lex` was
+  /// not returned by any of this specific [`Spec`]'s methods.
+  pub fn find_rule(&self, lex: Lexeme) -> &Rule {
+    &self.rules[lex.0 as usize]
+  }
+
+  /// Returns the name of a rule corresponding to a particular lexeme, if it has
   /// one.
-  pub fn named_rule(
-    &mut self,
-    name: impl Into<Yarn>,
-    rule: impl Into<Rule>,
-  ) -> Lexeme {
-    if self.rules.len() == (u32::MAX as usize) - 2 {
-      panic!("ran out of lexeme ids")
+  pub(super) fn rule_name(&self, lex: Lexeme) -> Option<YarnRef<str>> {
+    Some(self.names[lex.0 as usize].as_ref()).filter(|n| !n.is_empty())
+  }
+}
+
+#[macro_export]
+macro_rules! spec {
+  (
+    $(#[$meta:meta])*
+    $vis:vis struct $name:ident {$(
+      $(#[$modifier:ident $(($arg:expr))?])? $rule:ident: $expr:expr
+    ),* $(,)?}
+  ) => {
+    $(#[$meta])*
+    $vis struct $name {
+      __spec: $crate::spec::Spec,
+      $(pub $rule: $crate::spec::Lexeme),*
     }
 
-    self.names.push(name.into());
-    self.rules.push(rule.into());
-    Lexeme(self.rules.len() as u32 - 1)
-  }
+    impl $name {
+      pub fn get() -> Self {
+        let mut spec = $crate::spec::Spec::builder();
+        Self {
+          $($rule: $crate::spec!(@impl spec, $rule, $($modifier $(($arg))?,)? $expr),)*
+          __spec: spec.compile(),
+        }
+      }
+
+      pub fn spec(&self) -> &$crate::spec::Spec {
+        &self.__spec
+      }
+    }
+  };
+
+  (@impl $spec:ident, $rule:ident, named, $expr:expr) => {
+    $spec.named_rule(stringify!($rule), $expr)
+  };
+
+  (@impl $spec:ident, $rule:ident, named($name:expr), $expr:expr) => {
+    $spec.named_rule($name, $expr)
+  };
+
+  (@impl $spec:ident, $rule:ident, $expr:expr) => {
+    $spec.rule($expr)
+  };
 }
 
 /// A paired delimiter, such as `(` and `)`.
@@ -324,12 +337,6 @@ impl Delimiter {
   /// Creates a new [`Delimiter::Paired`], with automatic `into()` calls.
   pub fn paired(open: impl Into<Yarn>, close: impl Into<Yarn>) -> Self {
     Self::Paired(open.into(), close.into())
-  }
-}
-
-impl<Y1: Into<Yarn>, Y2: Into<Yarn>> From<(Y1, Y2)> for Delimiter {
-  fn from((open, close): (Y1, Y2)) -> Self {
-    Delimiter::paired(open, close)
   }
 }
 
@@ -521,10 +528,19 @@ pub struct QuotedRule {
 }
 
 impl QuotedRule {
-  /// Creates a new quoted string rule with the given delimiters.
-  pub fn new(delimiter: impl Into<Delimiter>) -> Self {
+  /// Creates a new quoted string rule with the given quote character..
+  ///
+  /// This function is intended for the extremely common case that both sides of
+  /// a quoted thing have the exact same delimiter on either side.
+  pub fn new(quote: impl Into<Yarn>) -> Self {
+    let quote = quote.into();
+    Self::with(Delimiter::paired(quote.clone(), quote))
+  }
+
+  /// Creates a new quoted string rule with the given delimiter.
+  pub fn with(delimiter: Delimiter) -> Self {
     Self {
-      delimiter: delimiter.into(),
+      delimiter,
       escapes: Trie::new(),
       affixes: Affixes::default(),
     }
@@ -534,7 +550,7 @@ impl QuotedRule {
   ///
   /// ```
   /// # use ilex::spec::*;
-  /// QuotedRule::new(('"', '"'))
+  /// QuotedRule::new('"')
   ///   .escape("\\n", '\n');
   /// ```
   pub fn escape(self, key: impl Into<Yarn>, rule: impl Into<Escape>) -> Self {
@@ -545,7 +561,7 @@ impl QuotedRule {
   ///
   /// ```
   /// # use ilex::spec::*;
-  /// QuotedRule::new(('"', '"'))
+  /// QuotedRule::new('"')
   ///   .escapes([
   ///     ("\\n", '\n'),
   ///     ("\\", '\\'),
@@ -587,7 +603,7 @@ impl QuotedRule {
       .escape(
         "\\u",
         Escape::Delimited {
-          delim: ('{', '}').into(),
+          delim: Delimiter::paired('{', '}'),
           parse: Box::new(|hex| match u32::from_str_radix(hex, 16) {
             Ok(code) if char::from_u32(code).is_some() => Some(code),
             _ => None,

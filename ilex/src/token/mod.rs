@@ -1,17 +1,14 @@
 use std::fmt;
 
-use byteyarn::yarn;
-use byteyarn::YarnBox;
-
 use crate::file::Context;
 use crate::file::Span;
 use crate::file::Spanned;
 use crate::lexer::rt;
 use crate::lexer::rt::Kind;
 use crate::lexer::spec::Lexeme;
-use crate::lexer::spec::Spec;
 
 mod stream;
+pub mod testing;
 
 pub use stream::Cursor;
 pub use stream::TokenStream;
@@ -35,14 +32,18 @@ pub enum Token<'lex> {
 
 impl<'lex> Token<'lex> {
   pub fn is(self, lexeme: Lexeme) -> bool {
+    self.lexeme() == Some(lexeme)
+  }
+
+  pub(crate) fn lexeme(self) -> Option<Lexeme> {
     match self {
-      Token::Unexpected(..) => false,
-      Token::Eof(..) => lexeme == Lexeme::eof(),
-      Token::Ident(tok) => tok.is(lexeme),
-      Token::Quoted(tok) => tok.is(lexeme),
-      Token::Number(tok) => tok.is(lexeme),
-      Token::Keyword(this, _) => this == lexeme,
-      Token::Delimited { lexeme: this, .. } => this == lexeme,
+      Token::Unexpected(..) => None,
+      Token::Eof(..) => Some(Lexeme::eof()),
+      Token::Ident(Ident { tok })
+      | Token::Quoted(Quoted { tok })
+      | Token::Number(Number { tok }) => tok.lexeme,
+      Token::Keyword(this, _) => Some(this),
+      Token::Delimited { lexeme: this, .. } => Some(this),
     }
   }
 
@@ -113,68 +114,16 @@ impl fmt::Debug for Token<'_> {
 }
 
 impl Spanned for Token<'_> {
-  fn span(&self, fcx: &Context) -> Span {
+  fn span(&self, ctx: &Context) -> Span {
     match *self {
       Token::Eof(span) | Token::Keyword(_, span) | Token::Unexpected(span) => {
         span
       }
-      Token::Ident(tok) => tok.span(fcx),
-      Token::Quoted(tok) => tok.span(fcx),
-      Token::Number(tok) => tok.span(fcx),
-      Token::Delimited { open, close, .. } => fcx.join([open, close]),
+      Token::Ident(tok) => tok.span(ctx),
+      Token::Quoted(tok) => tok.span(ctx),
+      Token::Number(tok) => tok.span(ctx),
+      Token::Delimited { open, close, .. } => ctx.join([open, close]),
     }
-  }
-}
-
-/// Something that looks enough like a [`Token`] that it could be used for
-/// diagnostics.
-pub enum Tokenish<'lex> {
-  Literal(&'lex str),
-  Lexeme(Lexeme),
-  Token(Token<'lex>),
-}
-
-impl Tokenish<'_> {
-  /// Converts this tokenish into a string that can be used in a diagnostic.
-  pub(crate) fn for_user_diagnostic<'a>(
-    &'a self,
-    spec: &'a Spec,
-    fcx: &Context,
-  ) -> YarnBox<'a, str> {
-    use crate::lexer::stringify::lexeme_to_string;
-    match self {
-      Self::Literal(lit) => yarn!("`{lit}`"),
-      &Self::Lexeme(lex) => lexeme_to_string(spec, lex),
-      Self::Token(tok) => match tok {
-        Token::Ident(Ident { tok })
-        | Token::Number(Number { tok })
-        | Token::Quoted(Quoted { tok }) => {
-          lexeme_to_string(spec, tok.lexeme.unwrap())
-        }
-        Token::Eof(..) => yarn!("<eof>"),
-        &Token::Keyword(lex, _) => lexeme_to_string(spec, lex),
-        &Token::Delimited { lexeme, .. } => lexeme_to_string(spec, lexeme),
-        Token::Unexpected(span) => yarn!("`{}`", span.text(fcx)),
-      },
-    }
-  }
-}
-
-impl<'lex, S: AsRef<str> + ?Sized> From<&'lex S> for Tokenish<'lex> {
-  fn from(value: &'lex S) -> Self {
-    Self::Literal(value.as_ref())
-  }
-}
-
-impl From<Lexeme> for Tokenish<'_> {
-  fn from(value: Lexeme) -> Self {
-    Self::Lexeme(value)
-  }
-}
-
-impl<'lex> From<Token<'lex>> for Tokenish<'lex> {
-  fn from(value: Token<'lex>) -> Self {
-    Self::Token(value)
   }
 }
 
@@ -225,8 +174,8 @@ impl<'lex> Ident<'lex> {
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_prefix(&self, fcx: &Context, expected: &str) -> bool {
-    self.prefix().is_some_and(|s| s.text(fcx) == expected)
+  pub fn has_prefix(&self, ctx: &Context, expected: &str) -> bool {
+    self.prefix().is_some_and(|s| s.text(ctx) == expected)
   }
 
   /// Returns this token's suffix sigil span.
@@ -235,13 +184,13 @@ impl<'lex> Ident<'lex> {
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_suffix(&self, fcx: &Context, expected: &str) -> bool {
-    self.suffix().is_some_and(|s| s.text(fcx) == expected)
+  pub fn has_suffix(&self, ctx: &Context, expected: &str) -> bool {
+    self.suffix().is_some_and(|s| s.text(ctx) == expected)
   }
 }
 
 impl Spanned for Ident<'_> {
-  fn span(&self, _fcx: &Context) -> Span {
+  fn span(&self, _ctx: &Context) -> Span {
     self.tok.span
   }
 }
@@ -338,8 +287,8 @@ impl<'lex> Number<'lex> {
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_prefix(&self, fcx: &Context, expected: &str) -> bool {
-    self.prefix().is_some_and(|s| s.text(fcx) == expected)
+  pub fn has_prefix(&self, ctx: &Context, expected: &str) -> bool {
+    self.prefix().is_some_and(|s| s.text(ctx) == expected)
   }
 
   /// Returns this token's suffix sigil span.
@@ -348,13 +297,13 @@ impl<'lex> Number<'lex> {
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_suffix(&self, fcx: &Context, expected: &str) -> bool {
-    self.suffix().is_some_and(|s| s.text(fcx) == expected)
+  pub fn has_suffix(&self, ctx: &Context, expected: &str) -> bool {
+    self.suffix().is_some_and(|s| s.text(ctx) == expected)
   }
 }
 
 impl Spanned for Number<'_> {
-  fn span(&self, _fcx: &Context) -> Span {
+  fn span(&self, _ctx: &Context) -> Span {
     self.tok.span
   }
 }
@@ -428,11 +377,11 @@ impl<'lex> Quoted<'lex> {
   ///
   /// ```
   /// # use ilex::{Content, Quoted};
-  /// fn decode_unicode(q: Quoted, fcx: &ilex::Context) -> String {
+  /// fn decode_unicode(q: Quoted, ctx: &ilex::Context) -> String {
   ///   let mut out = String::new();
   ///   for chunk in q.raw_content() {
   ///     match chunk {
-  ///       Content::Lit(span) => out.push_str(span.text(fcx)),
+  ///       Content::Lit(span) => out.push_str(span.text(ctx)),
   ///       Content::Esc(_, code) => out.push(char::from_u32(code).unwrap()),
   ///     }
   ///   }
@@ -456,8 +405,8 @@ impl<'lex> Quoted<'lex> {
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_prefix(&self, fcx: &Context, expected: &str) -> bool {
-    self.prefix().is_some_and(|s| s.text(fcx) == expected)
+  pub fn has_prefix(&self, ctx: &Context, expected: &str) -> bool {
+    self.prefix().is_some_and(|s| s.text(ctx) == expected)
   }
 
   /// Returns this token's suffix sigil span.
@@ -466,13 +415,13 @@ impl<'lex> Quoted<'lex> {
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_suffix(&self, fcx: &Context, expected: &str) -> bool {
-    self.suffix().is_some_and(|s| s.text(fcx) == expected)
+  pub fn has_suffix(&self, ctx: &Context, expected: &str) -> bool {
+    self.suffix().is_some_and(|s| s.text(ctx) == expected)
   }
 }
 
 impl Spanned for Quoted<'_> {
-  fn span(&self, _fcx: &Context) -> Span {
+  fn span(&self, _ctx: &Context) -> Span {
     self.tok.span
   }
 }

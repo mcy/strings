@@ -87,7 +87,7 @@ let json = Json {
   // functions.
   string: spec.named_rule(
     "string",
-    QuotedRule::new(('"', '"'))
+    QuotedRule::new('"')
       .escape("\\", Escape::Invalid)
       .escapes([
         ("\\\"", '\"'), (r"\", '\\'), (r"\/", '/'),
@@ -117,6 +117,61 @@ let json = Json {
   spec: spec.compile(),
 };
 ```*/
+//! This is the intended idiom for using `ilex`; there is a convenient macro
+//! for doing this in a single step.
+//!
+/*!```rust
+use ilex::spec::Spec;
+use ilex::spec::Lexeme;
+use ilex::spec::Delimiter;
+use ilex::spec::QuotedRule;
+use ilex::spec::Escape;
+use ilex::spec::NumberRule;
+use ilex::spec::NumberExponent;
+
+ilex::spec! {
+  struct Json {
+    comma: ',',
+    colon: ':',
+    minus: '-',
+    true_: "true",
+    false_: "false",
+    null: "null",
+
+    #[named] array: ('[', ']'),
+    #[named] object: ('{','}'),
+
+    #[named] string: QuotedRule::new('"')
+      .escape(r"\", Escape::Invalid)
+      .escapes([
+        ("\\\"", '\"'),
+        (r"\\", '\\'),
+        (r"\/", '/'),
+        (r"\b", '\x08'),
+        (r"\f", '\x0C'),
+        (r"\n", '\n'),
+        (r"\t", '\t'),
+        (r"\r", '\r'),
+      ])
+      .escape(
+        r"\u",
+        Escape::Fixed {
+          char_count: 4,
+          parse: Box::new(|hex| u32::from_str_radix(hex, 16).ok()),
+        },
+      ),
+
+    #[named] number: NumberRule::new(10)
+      .max_decimal_points(1)
+      .exponent_part(NumberExponent::new(10, ["e", "E"])),
+  }
+}
+
+let json = Json::get();
+let spec = json.spec();
+
+let my_lexeme = json.object;  // Etc.
+```*/
 //!
 //! Other examples of specs can be found in the `tests/` directory. Once you
 //! have a spec, you can start lexing some files. For this you'll need a file
@@ -124,21 +179,17 @@ let json = Json {
 //! of a parsing session, and is used for looking up the contents of spans.
 //!
 //! ```
-//! use std::pin::pin;
 //! use ilex::report;
 //! # fn ignore(_: i32) {
 //! # struct Json { spec: ilex::spec::Spec };
 //! # let json = Json { spec: todo!() };
 //!
-//! // Set up contexts.
-//! let mut ctx = pin!(ilex::Context::new());
-//! report::install(ilex::Report::new());
-//! 
+//! // Set up a source context. This tracks all of the source files
+//! // we're working with (so source spans can be tiny indices).
+//! let mut ctx = ilex::Context::new();
+//!
 //! // Read a file from disk, and lex it with the `json` spec from above.
-//! let file = match ctx.open_file("my_cool_file.json") {
-//!   Ok(file) => file,
-//!   Err(e) => e.panic(&ctx),
-//! };
+//! let file = ctx.open_file("my_cool_file.json").unwrap();
 //! let tokens = file.lex(&json.spec);
 //! # }
 //! ```
@@ -146,20 +197,19 @@ let json = Json {
 //! `tokens` here is a [`TokenStream`], which is a tree, since some tokens
 //! (delimiters key among them) can contain more tokens *within* them. This is
 //! as far as `ilex` will take you.
-//! 
-//! The boiler plate above is *quite* painful; the [`main()`] function
-//! essentially captures what a compiler's main function would do to invoke the
-//! lexer; it also handles generating nice error messages for ICEs.
+//!
+//! The [`main()`] helps set up this boilerplate and handles generating error
+//! messages for ICEs.
 
-mod driver;
 mod file;
 mod lexer;
 mod token;
 
+pub mod ice;
 pub mod report;
+
 pub use byteyarn;
 
-pub use crate::driver::main;
 pub use crate::file::Context;
 pub use crate::file::File;
 pub use crate::file::FileMut;
@@ -169,6 +219,7 @@ pub use crate::lexer::spec;
 pub use crate::report::error;
 pub use crate::report::warn;
 pub use crate::report::Report;
+pub use crate::token::testing;
 pub use crate::token::Content;
 pub use crate::token::Cursor;
 pub use crate::token::Ident;
@@ -176,4 +227,3 @@ pub use crate::token::Number;
 pub use crate::token::Quoted;
 pub use crate::token::Token;
 pub use crate::token::TokenStream;
-pub use crate::token::Tokenish;

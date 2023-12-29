@@ -152,17 +152,17 @@ impl<'a> Matcher<'a> {
   }
 
   /// Checks whether this matcher matches a particular token.
-  pub fn matches(&self, tok: Token, fcx: &FileCtx) -> bool {
+  pub fn matches(&self, tok: Token, ctx: &FileCtx) -> bool {
     match (self, tok) {
       (Matcher::Eof, Token::Eof(..)) => true,
 
       (Matcher::Kw { exact: kw, .. }, Token::Punct(_, span)) => {
-        span.text(fcx) == *kw
+        span.text(ctx) == *kw
       }
       (Matcher::Kw { exact: kw, .. }, Token::Ident(i)) => {
         i.prefix().is_none()
           && i.suffix().is_none()
-          && i.name().text(fcx) == *kw
+          && i.name().text(ctx) == *kw
       }
 
       (Matcher::Delim { open: None, .. }, Token::Delimited { .. }) => true,
@@ -172,17 +172,17 @@ impl<'a> Matcher<'a> {
           open: Some(expect), ..
         },
         Token::Delimited { open, .. },
-      ) => open.text(fcx) == *expect,
+      ) => open.text(ctx) == *expect,
 
       (Matcher::Ident { prefix, suffix, .. }, Token::Ident(tok)) => {
         match prefix {
           Some("") if tok.prefix().is_some() => return false,
-          Some(pre) if !tok.has_prefix(fcx, pre) => return false,
+          Some(pre) if !tok.has_prefix(ctx, pre) => return false,
           _ => {}
         }
         match suffix {
           Some("") if tok.suffix().is_some() => return false,
-          Some(suf) if !tok.has_suffix(fcx, suf) => return false,
+          Some(suf) if !tok.has_suffix(ctx, suf) => return false,
           _ => {}
         }
 
@@ -200,16 +200,16 @@ impl<'a> Matcher<'a> {
       ) => {
         match prefix {
           Some("") if tok.prefix().is_some() => return false,
-          Some(pre) if !tok.has_prefix(fcx, pre) => return false,
+          Some(pre) if !tok.has_prefix(ctx, pre) => return false,
           _ => {}
         }
         match suffix {
           Some("") if tok.suffix().is_some() => return false,
-          Some(suf) if !tok.has_suffix(fcx, suf) => return false,
+          Some(suf) if !tok.has_suffix(ctx, suf) => return false,
           _ => {}
         }
         if let Some(open) = open {
-          return tok.open().text(fcx) == *open;
+          return tok.open().text(ctx) == *open;
         }
 
         true
@@ -218,12 +218,12 @@ impl<'a> Matcher<'a> {
       (Matcher::Number { prefix, suffix, .. }, Token::Number(tok)) => {
         match prefix {
           Some("") if tok.prefix().is_some() => return false,
-          Some(pre) if !tok.has_prefix(fcx, pre) => return false,
+          Some(pre) if !tok.has_prefix(ctx, pre) => return false,
           _ => {}
         }
         match suffix {
           Some("") if tok.suffix().is_some() => return false,
-          Some(suf) if !tok.has_suffix(fcx, suf) => return false,
+          Some(suf) if !tok.has_suffix(ctx, suf) => return false,
           _ => {}
         }
 

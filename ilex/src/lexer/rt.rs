@@ -23,8 +23,10 @@ pub fn lex<'spec>(
   let mut lex = Lexer::new(file, spec);
   lex.run();
 
-  let toks = mem::take(&mut lex.tokens);
-  report::current().fatal_or(TokenStream { spec, toks })
+  report::current().fatal_or(TokenStream {
+    spec,
+    toks: mem::take(&mut lex.tokens),
+  })
 }
 
 #[derive(Clone)]
@@ -60,8 +62,8 @@ pub enum Kind {
   },
 }
 
-struct Lexer<'spec, 'fcx> {
-  file: FileMut<'fcx>,
+struct Lexer<'spec, 'ctx> {
+  file: FileMut<'ctx>,
   spec: &'spec Spec,
 
   cursor: usize,
@@ -77,8 +79,8 @@ struct DelimInfo<'spec> {
   close: Yarn,
 }
 
-impl<'spec, 'fcx> Lexer<'spec, 'fcx> {
-  fn new(file: FileMut<'fcx>, spec: &'spec Spec) -> Self {
+impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
+  fn new(file: FileMut<'ctx>, spec: &'spec Spec) -> Self {
     Lexer {
       file,
       spec,
@@ -119,29 +121,6 @@ impl<'spec, 'fcx> Lexer<'spec, 'fcx> {
 
     self.tokens.push(tok);
   }
-
-  /*
-  #[track_caller]
-  fn report_expected<'lex, Expected>(
-    &mut self,
-    alts: impl IntoIterator<Item = Expected>,
-  ) where
-    Expected: Into<Tokenish<'lex>>,
-    'fcx: 'lex,
-  {
-    let span = self.span_from_zero_with(self.cursor);
-    let next = self.file.text()[self.cursor..].graphemes(true).next();
-    Report::current().builtins().expected_one_of(
-      self.file.context(),
-      self.spec,
-      alts,
-      match next {
-        Some(gr) => Tokenish::from(gr),
-        None => Lexeme::eof().into(),
-      },
-      span,
-    );
-  }*/
 
   pub fn lexer_loop(&mut self) {
     let start = self.cursor;
@@ -233,9 +212,7 @@ impl<'spec, 'fcx> Lexer<'spec, 'fcx> {
         self.comments.push(span);
 
         if best_match.unexpected_eof {
-          report::current()
-            .error(self.file.context(), "found an unclosed block comment")
-            .at(span);
+          report::error("found an unclosed block comment").at(span);
         }
       }
 
@@ -325,12 +302,7 @@ impl<'spec, 'fcx> Lexer<'spec, 'fcx> {
         if best_match.unexpected_eof {
           use crate::lexer::stringify::lexeme_to_string;
           let name = lexeme_to_string(self.spec, best_match.lexeme);
-          report::current()
-            .error(
-              self.file.context(),
-              format_args!("found an unclosed {name}"),
-            )
-            .at(span);
+          report::error(format_args!("found an unclosed {name}")).at(span);
         }
 
         let content = content
@@ -342,8 +314,7 @@ impl<'spec, 'fcx> Lexer<'spec, 'fcx> {
               Ok(code) => *code,
               Err(r) => {
                 let span = self.span_from_range(start + r.start, start + r.end);
-                report::builtins()
-                  .invalid_escape_sequence(self.file.context(), span);
+                report::builtins().invalid_escape_sequence(span);
                 !0
               }
             };
@@ -398,11 +369,7 @@ impl<'spec, 'fcx> Lexer<'spec, 'fcx> {
 
     for delim in self.delims.drain(..) {
       let open = self.tokens[delim.open_idx].span;
-      report::builtins().unclosed_delimiter(
-        self.file.context(),
-        open,
-        eof,
-      );
+      report::builtins().unclosed_delimiter(open, eof);
     }
   }
 }

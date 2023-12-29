@@ -1,9 +1,9 @@
 //! Source code file management.
 
 use std::fmt;
+use std::fmt::Write;
 use std::iter;
 use std::ops::Range;
-use std::pin::Pin;
 use std::ptr;
 use std::slice;
 
@@ -52,7 +52,7 @@ impl PartialEq for File<'_> {
 
 /// An input source file.
 pub struct FileMut<'ctx> {
-  ctx: Pin<&'ctx mut Context>,
+  ctx: &'ctx mut Context,
   idx: usize,
 }
 
@@ -71,16 +71,16 @@ impl<'ctx> FileMut<'ctx> {
 
   /// Returns the context that owns this file.
   pub fn context(&self) -> &Context {
-    &self.ctx
+    self.ctx
   }
 
   /// Returns the context that owns this file.
-  pub fn context_mut(&mut self) -> Pin<&mut Context> {
-    self.ctx.as_mut()
+  pub fn context_mut(&mut self) -> &mut Context {
+    self.ctx
   }
 
   /// Returns the context that owns this file.
-  pub fn into_context(self) -> Pin<&'ctx mut Context> {
+  pub fn into_context(self) -> &'ctx mut Context {
     self.ctx
   }
 
@@ -96,7 +96,7 @@ impl<'ctx> FileMut<'ctx> {
       "tried to create new span on the synthetic file"
     );
 
-    self.ctx.as_mut().new_span(range.start, range.end, self.idx)
+    self.ctx.new_span(range.start, range.end, self.idx)
   }
 }
 
@@ -198,12 +198,8 @@ impl Span {
   /// # Panics
   ///
   /// Panics if `node` produces a span that isn't owned by this context.
-  pub fn append_comment(
-    self,
-    mut ctx: Pin<&mut Context>,
-    text: impl Into<Yarn>,
-  ) {
-    let span = ctx.as_mut().new_synthetic_span(text.into());
+  pub fn append_comment(self, ctx: &mut Context, text: impl Into<Yarn>) {
+    let span = ctx.new_synthetic_span(text.into());
     self.append_comment_span(ctx, span);
   }
 
@@ -211,7 +207,10 @@ impl Span {
   ///
   /// The callback is run unconditionally, but, if this span's context has gone
   /// out of scope, the callback will be passed `None`.
-  pub fn run_with_context<R>(
+  ///
+  /// This function is very, very slow, since it hits a global mutex. Try to
+  /// avoid having to call it.
+  pub fn find_my_context<R>(
     self,
     callback: impl FnOnce(Option<&Context>) -> R,
   ) -> R {
@@ -220,11 +219,7 @@ impl Span {
 
   /// Sets the comment associated with a given span. The comment must itself
   /// be specified as a span.
-  pub(crate) fn append_comment_span(
-    self,
-    ctx: Pin<&mut Context>,
-    comment: Span,
-  ) {
+  pub(crate) fn append_comment_span(self, ctx: &mut Context, comment: Span) {
     ctx.add_comment(self, comment)
   }
 
@@ -239,15 +234,23 @@ impl Span {
 
 impl fmt::Debug for Span {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    self.run_with_context(|ctx| match ctx {
+    self.find_my_context(|ctx| match ctx {
       None => f.write_str("<expired>"),
       Some(ctx) => {
         let text = self.text(ctx);
-        match self.range(ctx) {
-          Some(range) => {
-            write!(f, "{text:?} ({}[{range:?}])", self.file(ctx).name())
+        write!(f, "`")?;
+        for c in text.chars() {
+          if ('\x20'..'\x7e').contains(&c) {
+            f.write_char(c)?;
+          } else {
+            write!(f, "<U+{:X}>", c as u32)?;
           }
-          None => write!(f, "{text:?} (synth)"),
+        }
+        write!(f, "` @ ")?;
+
+        match self.range(ctx) {
+          Some(range) => write!(f, "{}[{range:?}]", self.file(ctx).name()),
+          None => f.write_str("n/a"),
         }
       }
     })
@@ -305,11 +308,12 @@ pub trait Spanned {
   }
 
   /// Forwards to [`Span::append_comment()`].
-  fn append_comment(&self, ctx: Pin<&mut Context>, text: impl Into<Yarn>) {
-    self.span(&ctx).append_comment(ctx, text)
+  fn append_comment(&self, ctx: &mut Context, text: impl Into<Yarn>) {
+    self.span(ctx).append_comment(ctx, text)
   }
 }
 
+// Spans are spanned by their own spans.
 impl Spanned for Span {
   fn span(&self, _ctx: &Context) -> Span {
     *self

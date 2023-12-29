@@ -2,17 +2,18 @@
 
 use std::format_args as f;
 
+use byteyarn::yarn;
 use byteyarn::YarnBox;
 
 use crate::file::Context;
 use crate::file::Spanned;
 use crate::lexer::spec::Spec;
 use crate::report::Diagnostic;
-use crate::token::Token;
-use crate::token::Tokenish;
+use crate::spec::Lexeme;
+use crate::token;
 
-use crate::report::Report;
 use crate::report;
+use crate::report::Report;
 
 /// A wrapper over [`Report`] for generating diagnostics.
 ///
@@ -22,7 +23,7 @@ pub struct Builtins(pub(super) Report);
 /// Returns a `Builtins` wrapping `report::current()`.
 ///
 /// # Panics
-/// 
+///
 /// If this thread did not have a report initialized with
 /// [`report::install()`][super::install], this function will panic.
 pub fn builtins() -> Builtins {
@@ -32,92 +33,83 @@ pub fn builtins() -> Builtins {
 impl Builtins {
   ///
   #[track_caller]
-  pub fn expected<'fcx, 'a, 'b, Expected, Found>(
+  pub fn expected<'a, 'b, Expected, Found>(
     self,
-    fcx: &'fcx Context,
     spec: &Spec,
     expected: Expected,
     found: Found,
     at: impl Spanned,
-  ) -> Diagnostic<'fcx>
+  ) -> Diagnostic
   where
-    Expected: Into<Tokenish<'a>>,
-    Found: Into<Tokenish<'b>>,
+    Expected: Into<Token<'a>>,
+    Found: Into<Token<'b>>,
   {
-    self.expected_one_of(fcx, spec, [expected], found, at)
+    self.expected_one_of(spec, [expected], found, at)
   }
 
   ///
   #[track_caller]
-  pub fn expected_one_of<'fcx, 'a, 'b, Expected, Found>(
+  pub fn expected_one_of<'a, 'b, Expected, Found>(
     self,
-    fcx: &'fcx Context,
     spec: &Spec,
     expected: impl IntoIterator<Item = Expected>,
     found: Found,
     at: impl Spanned,
-  ) -> Diagnostic<'fcx>
+  ) -> Diagnostic
   where
-    Expected: Into<Tokenish<'a>>,
-    Found: Into<Tokenish<'b>>,
+    Expected: Into<Token<'a>>,
+    Found: Into<Token<'b>>,
   {
-    let expected = expected.into_iter().map(Into::into).collect::<Vec<_>>();
-    let alts = disjunction_to_string(spec, fcx, &expected);
-    let found = found.into();
-    let diagnostic = self
-      .0
-      .error(
-        fcx,
-        f!(
+    self.0.in_context(|this, ctx| {
+      let expected = expected.into_iter().map(Into::into).collect::<Vec<_>>();
+      let alts = disjunction_to_string(spec, ctx, &expected);
+      let found = found.into();
+      let diagnostic = this
+        .error(f!(
           "expected {alts}, but found {}",
-          found.for_user_diagnostic(spec, fcx)
-        ),
-      )
-      .saying(at, f!("expected {alts}"));
+          found.for_user_diagnostic(spec, ctx)
+        ))
+        .saying(at, f!("expected {alts}"));
 
-    non_printable_note(fcx, found, diagnostic)
+      non_printable_note(ctx, found, diagnostic)
+    })
   }
 
   #[track_caller]
   pub fn unclosed_delimiter(
     self,
-    fcx: &Context,
     open: impl Spanned,
     eof: impl Spanned,
   ) -> Diagnostic {
     self
       .0
-      .error(fcx, "found an unclosed delimiter")
+      .error("found an unclosed delimiter")
       .remark(open, "delimiter opened here")
       .saying(eof, "expected it to be closed here")
   }
 
   #[track_caller]
-  pub fn invalid_escape_sequence(
-    self,
-    fcx: &Context,
-    at: impl Spanned,
-  ) -> Diagnostic {
-    let at = at.span(fcx);
-    let seq = at.text(fcx);
-
-    self
-      .0
-      .error(fcx, f!("found an invalid escape sequence: `{seq}`"))
-      .saying(at, "invalid escape sequence")
+  pub fn invalid_escape_sequence(self, at: impl Spanned) -> Diagnostic {
+    self.0.in_context(|this, ctx| {
+      let at = at.span(ctx);
+      let seq = at.text(ctx);
+      this
+        .error(f!("found an invalid escape sequence: `{seq}`"))
+        .saying(at, "invalid escape sequence")
+    })
   }
 }
 
-fn non_printable_note<'a>(
-  fcx: &Context,
-  found: Tokenish,
-  diagnostic: Diagnostic<'a>,
-) -> Diagnostic<'a> {
+fn non_printable_note(
+  ctx: &Context,
+  found: Token,
+  diagnostic: Diagnostic,
+) -> Diagnostic {
   // Check to see if any of the characters are outside of the ASCII printable
   // range.
   let literal = match &found {
-    Tokenish::Literal(y) => y,
-    Tokenish::Token(Token::Unexpected(span)) => span.text(fcx),
+    Token::Literal(y) => y,
+    Token::Token(token::Token::Unexpected(span)) => span.text(ctx),
     _ => return diagnostic,
   };
 
@@ -153,12 +145,12 @@ fn non_printable_note<'a>(
 
 fn disjunction_to_string<'a>(
   spec: &'a Spec,
-  fcx: &'a Context,
-  lexemes: &'a [Tokenish],
+  ctx: &'a Context,
+  lexemes: &'a [Token],
 ) -> YarnBox<'a, str> {
   let mut names = lexemes
     .iter()
-    .map(|tok| tok.for_user_diagnostic(spec, fcx))
+    .map(|tok| tok.for_user_diagnostic(spec, ctx))
     .collect::<Vec<_>>();
   names.sort();
   names.dedup();
@@ -244,4 +236,58 @@ fn pos_iter() {
       (Pos::Last, 3)
     ]
   );
+}
+
+/// Something that looks enough like an [`ilex::Token`][token::Token] that it
+/// could be used for diagnostics.
+///
+/// This type exists because there are many potential sources for the "name of
+/// a token", and so it's easier to just have a sink type that they all convert
+/// into.
+pub enum Token<'lex> {
+  // A literal string, equivalent to a keyword token, and wrapped in backticks
+  // in the diagnostic.
+  Literal(&'lex str),
+  // An actual token, which is, with some exceptions, digested into its lexeme.
+  Token(token::Token<'lex>),
+  // A lexeme, from which a name can be inferred.
+  Lexeme(Lexeme),
+}
+
+impl Token<'_> {
+  /// Converts this tokenish into a string that can be used in a diagnostic.
+  pub(crate) fn for_user_diagnostic<'a>(
+    &'a self,
+    spec: &'a Spec,
+    ctx: &Context,
+  ) -> YarnBox<'a, str> {
+    use crate::lexer::stringify::lexeme_to_string;
+    match self {
+      Self::Literal(lit) => yarn!("`{lit}`"),
+      Self::Lexeme(lex) => lexeme_to_string(spec, *lex),
+      Self::Token(tok) => match tok {
+        token::Token::Eof(..) => yarn!("<eof>"),
+        token::Token::Unexpected(span) => yarn!("`{}`", span.text(ctx)),
+        tok => lexeme_to_string(spec, tok.lexeme().unwrap()),
+      },
+    }
+  }
+}
+
+impl<'lex, S: AsRef<str> + ?Sized> From<&'lex S> for Token<'lex> {
+  fn from(value: &'lex S) -> Self {
+    Self::Literal(value.as_ref())
+  }
+}
+
+impl From<Lexeme> for Token<'_> {
+  fn from(value: Lexeme) -> Self {
+    Self::Lexeme(value)
+  }
+}
+
+impl<'lex> From<token::Token<'lex>> for Token<'lex> {
+  fn from(value: token::Token<'lex>) -> Self {
+    Self::Token(value)
+  }
 }
