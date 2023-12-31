@@ -2,6 +2,9 @@
 //!
 //! This type provides testing-oriented matchers for matching on a
 //! [`TokenStream`].
+//!
+//! These matchers are intended for writing *tests*. To write a parser, you\
+//! should use [`Cursor`][crate::token::Cursor] instead.
 
 use std::fmt;
 use std::fmt::DebugStruct;
@@ -14,10 +17,12 @@ use byteyarn::Yarn;
 
 use crate::file::Context;
 use crate::file::Span;
-use crate::spec::Lexeme;
+use crate::file::Spanned;
+use crate::lexer::rule;
+use crate::lexer::Lexeme;
 use crate::token;
-use crate::Cursor;
-use crate::Spanned;
+use crate::token::Any;
+use crate::token::Cursor;
 
 /// Matches a token cursor against a list of token matchers.
 ///
@@ -26,7 +31,7 @@ use crate::Spanned;
 pub fn recognize_tokens<'a>(
   ctx: &Context,
   stream: Cursor,
-  matchers: impl IntoIterator<Item = &'a Token>,
+  matchers: impl IntoIterator<Item = &'a Matcher>,
 ) -> Result<(), String> {
   let mut state = MatchState {
     ctx,
@@ -41,7 +46,7 @@ pub fn recognize_tokens<'a>(
   state.finish()
 }
 
-/// A chunk of text from the input source.
+/// A matcher for a chunk of text from the input source.
 ///
 /// This is slightly more general than a span, since it can specify the content
 /// of the text and the offsets separately, and optionally. `Text` values are
@@ -100,21 +105,9 @@ impl Text {
   }
 }
 
-impl From<&str> for Text {
-  fn from(value: &str) -> Self {
-    Text::new(Yarn::copy(value))
-  }
-}
-
-impl From<Range<usize>> for Text {
-  fn from(value: Range<usize>) -> Self {
-    Text::range(value)
-  }
-}
-
-impl From<(&str, Range<usize>)> for Text {
-  fn from(value: (&str, Range<usize>)) -> Self {
-    Text::text_and_range(Yarn::copy(value.0), value.1)
+impl<Y: Into<Yarn>> From<Y> for Text {
+  fn from(value: Y) -> Self {
+    Text::new(value.into())
   }
 }
 
@@ -129,8 +122,8 @@ impl fmt::Debug for Text {
   }
 }
 
-pub struct Token {
-  which: Option<Lexeme>,
+pub struct Matcher {
+  which: Option<Lexeme<rule::Any>>,
   span: Text,
   comments: Vec<Text>,
   kind: Kind,
@@ -146,7 +139,7 @@ enum Kind {
     suffix: Option<Text>,
   },
   Quoted {
-    content: Vec<Content>,
+    content: Vec<token::Content<Text>>,
     delims: (Text, Text),
     prefix: Option<Text>,
     suffix: Option<Text>,
@@ -160,55 +153,25 @@ enum Kind {
   },
   Delimited {
     delims: (Text, Text),
-    tokens: Vec<Token>,
+    tokens: Vec<Matcher>,
   },
 }
 
-pub trait LexemeExt {
-  fn keyword(self, text: impl Into<Text>) -> Token;
-
-  fn ident(self, name: impl Into<Text>) -> Token;
-
-  fn quoted(
-    self,
-    open: impl Into<Text>,
-    close: impl Into<Text>,
-    content: impl Into<Text>,
-  ) -> Token;
-
-  fn escaped(
-    self,
-    open: impl Into<Text>,
-    close: impl Into<Text>,
-    content: Vec<Content>,
-  ) -> Token;
-
-  fn number<B, T>(self, radix: u8, blocks: B) -> Token
-  where
-    B: IntoIterator<Item = T>,
-    T: Into<Text>;
-
-  fn delimited(
-    self,
-    open: impl Into<Text>,
-    close: impl Into<Text>,
-    tokens: Vec<Token>,
-  ) -> Token;
-}
-
-impl LexemeExt for Lexeme {
-  fn keyword(self, text: impl Into<Text>) -> Token {
-    Token {
-      which: Some(self),
+impl Lexeme<rule::Keyword> {
+  pub fn matcher(self, text: impl Into<Text>) -> Matcher {
+    Matcher {
+      which: Some(self.any()),
       span: text.into(),
       comments: Vec::new(),
       kind: Kind::Keyword,
     }
   }
+}
 
-  fn ident(self, name: impl Into<Text>) -> Token {
-    Token {
-      which: Some(self),
+impl Lexeme<rule::Ident> {
+  pub fn matcher(self, name: impl Into<Text>) -> Matcher {
+    Matcher {
+      which: Some(self.any()),
       span: Text::any(),
       comments: Vec::new(),
       kind: Kind::Ident {
@@ -218,42 +181,42 @@ impl LexemeExt for Lexeme {
       },
     }
   }
+}
 
-  fn quoted(
-    self,
-    open: impl Into<Text>,
-    close: impl Into<Text>,
-    content: impl Into<Text>,
-  ) -> Token {
-    self.escaped(open, close, vec![Content::Lit(content.into())])
+impl<Y: Into<Yarn>> From<Y> for token::Content<Text> {
+  fn from(value: Y) -> Self {
+    Self::Lit(value.into().into())
   }
+}
 
-  fn escaped(
+impl Lexeme<rule::Quoted> {
+  pub fn matcher<C: Into<token::Content<Text>>>(
     self,
-    open: impl Into<Text>,
-    close: impl Into<Text>,
-    content: Vec<Content>,
-  ) -> Token {
-    Token {
-      which: Some(self),
+    quotes: (impl Into<Text>, impl Into<Text>),
+    content: impl IntoIterator<Item = C>,
+  ) -> Matcher {
+    Matcher {
+      which: Some(self.any()),
       span: Text::any(),
       comments: Vec::new(),
       kind: Kind::Quoted {
-        content,
-        delims: (open.into(), close.into()),
+        content: content.into_iter().map(C::into).collect(),
+        delims: (quotes.0.into(), quotes.1.into()),
         prefix: None,
         suffix: None,
       },
     }
   }
+}
 
-  fn number<B, T>(self, radix: u8, blocks: B) -> Token
+impl Lexeme<rule::Number> {
+  pub fn matcher<B, T>(self, radix: u8, blocks: B) -> Matcher
   where
     B: IntoIterator<Item = T>,
     T: Into<Text>,
   {
-    Token {
-      which: Some(self),
+    Matcher {
+      which: Some(self.any()),
       span: Text::any(),
       comments: Vec::new(),
       kind: Kind::Number {
@@ -265,29 +228,30 @@ impl LexemeExt for Lexeme {
       },
     }
   }
+}
 
-  fn delimited(
+impl Lexeme<rule::Bracket> {
+  pub fn matcher(
     self,
-    open: impl Into<Text>,
-    close: impl Into<Text>,
-    tokens: Vec<Token>,
-  ) -> Token {
-    Token {
-      which: Some(self),
+    brackets: (impl Into<Text>, impl Into<Text>),
+    contents: Vec<Matcher>,
+  ) -> Matcher {
+    Matcher {
+      which: Some(self.any()),
       span: Text::any(),
       comments: Vec::new(),
       kind: Kind::Delimited {
-        tokens,
-        delims: (open.into(), close.into()),
+        tokens: contents,
+        delims: (brackets.0.into(), brackets.1.into()),
       },
     }
   }
 }
 
-impl Token {
+impl Matcher {
   pub fn eof() -> Self {
-    Token {
-      which: Some(Lexeme::eof()),
+    Matcher {
+      which: Some(Lexeme::eof().any()),
       span: Text::any(),
       comments: Vec::new(),
       kind: Kind::Eof,
@@ -295,7 +259,7 @@ impl Token {
   }
 
   pub fn unexpected() -> Self {
-    Token {
+    Matcher {
       which: None,
       span: Text::any(),
       comments: Vec::new(),
@@ -343,12 +307,7 @@ impl Token {
     self
   }
 
-  fn recognizes(
-    &self,
-    state: &mut MatchState,
-    tok: token::Token,
-    ctx: &Context,
-  ) {
+  fn recognizes(&self, state: &mut MatchState, tok: token::Any, ctx: &Context) {
     state.match_spans("token span", &self.span, tok.span(ctx));
 
     zip_eq(state, &self.comments, tok.comments(ctx), |state, t, s| {
@@ -356,16 +315,16 @@ impl Token {
     });
 
     match (&self.kind, tok) {
-      (Kind::Eof, token::Token::Eof(..))
-      | (Kind::Unexpected, token::Token::Unexpected(..))
-      | (Kind::Keyword, token::Token::Keyword(..)) => {}
+      (Kind::Eof, Any::Eof(..))
+      | (Kind::Unexpected, Any::Unexpected(..))
+      | (Kind::Keyword, Any::Keyword(..)) => {}
       (
         Kind::Ident {
           name,
           prefix,
           suffix,
         },
-        token::Token::Ident(tok),
+        Any::Ident(tok),
       ) => {
         state.match_spans("identifier name", name, tok.name());
         state.match_options("prefix", prefix.as_ref(), tok.prefix());
@@ -378,7 +337,7 @@ impl Token {
           prefix,
           suffix,
         },
-        token::Token::Quoted(tok),
+        Any::Quoted(tok),
       ) => {
         let (open, close) = tok.delimiters();
         state.match_spans("open quote", &delims.0, open);
@@ -391,10 +350,10 @@ impl Token {
           content,
           tok.raw_content(),
           |state, ours, theirs| match (ours, theirs) {
-            (Content::Lit(t), token::Content::Lit(s)) => {
+            (token::Content::Lit(t), token::Content::Lit(s)) => {
               state.match_spans("string content", t, s)
             }
-            (Content::Esc(t, ours), token::Content::Esc(s, theirs)) => {
+            (token::Content::Esc(t, ours), token::Content::Esc(s, theirs)) => {
               state.match_spans("string escape", t, s);
               if ours != &theirs {
                 state.error(f!(
@@ -416,7 +375,7 @@ impl Token {
           prefix,
           suffix,
         },
-        token::Token::Number(tok),
+        Any::Number(tok),
       ) => {
         if radix != &tok.radix() {
           state.error(f!(
@@ -431,19 +390,11 @@ impl Token {
           state.match_spans("digit block", t, s);
         });
       }
-      (
-        Kind::Delimited { delims, tokens },
-        token::Token::Delimited {
-          open,
-          close,
-          contents,
-          ..
-        },
-      ) => {
-        state.match_spans("open delimiter", &delims.0, open);
-        state.match_spans("close delimiter", &delims.1, close);
+      (Kind::Delimited { delims, tokens }, Any::Bracket(tok)) => {
+        state.match_spans("open delimiter", &delims.0, tok.open());
+        state.match_spans("close delimiter", &delims.1, tok.close());
 
-        zip_eq(state, tokens, contents, |state, ours, theirs| {
+        zip_eq(state, tokens, tok.contents(), |state, ours, theirs| {
           ours.recognizes(state, theirs, ctx)
         });
       }
@@ -452,21 +403,7 @@ impl Token {
   }
 }
 
-pub enum Content {
-  Lit(Text),
-  Esc(Text, u32),
-}
-
-impl fmt::Debug for Content {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      Self::Lit(sp) => write!(f, "Lit({sp:?})"),
-      Self::Esc(sp, x) => write!(f, "Esc({sp:?}, 0x{x:04x})"),
-    }
-  }
-}
-
-impl fmt::Debug for Token {
+impl fmt::Debug for Matcher {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let print_spans = matches!(
       std::env::var("ILEX_SPANS").as_deref(),
@@ -502,7 +439,7 @@ impl fmt::Debug for Token {
     };
 
     let name = match self.which {
-      Some(l) => format!("{name}({})", l.0),
+      Some(l) => format!("{name}({})", l.index()),
       None => name.into(),
     };
 

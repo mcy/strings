@@ -34,52 +34,52 @@
 //! For example, he's what a lexer for JSON looks like.
 //!
 /*! ```
-use ilex::spec::Spec;
-use ilex::spec::Lexeme;
-use ilex::spec::Delimiter;
-use ilex::spec::QuotedRule;
-use ilex::spec::Escape;
-use ilex::spec::NumberRule;
-use ilex::spec::NumberExponent;
+use ilex::Lexeme;
+use ilex::rule::Keyword;
+use ilex::rule::Bracket;
+use ilex::rule::Quoted;
+use ilex::rule::Escape;
+use ilex::rule::Number;
+use ilex::rule::NumberExponent;
 
 // This is a spec builder. You give it rule definitions, and it produces
 // "lexemes", which are IDs for later recalling which rule a token was matched
 // by.
-let mut spec = Spec::builder();
+let mut spec = ilex::Spec::builder();
 
 // It is convenient to wrap all the lexemes in a struct, so that they can be
 // recalled by name elsewhere in the parsing stack.
 struct Json {
-  comma: Lexeme,
-  colon: Lexeme,
-  minus: Lexeme,
-  true_: Lexeme,
-  false_: Lexeme,
-  null: Lexeme,
+  comma: Lexeme<Keyword>,
+  colon: Lexeme<Keyword>,
+  minus: Lexeme<Keyword>,
+  true_: Lexeme<Keyword>,
+  false_: Lexeme<Keyword>,
+  null: Lexeme<Keyword>,
 
-  array: Lexeme,
-  object: Lexeme,
-  string: Lexeme,
-  number: Lexeme,
+  array: Lexeme<Bracket>,
+  object: Lexeme<Bracket>,
+  string: Lexeme<Quoted>,
+  number: Lexeme<Number>,
 
-  spec: Spec,
+  spec: ilex::Spec,
 }
 
 let json = Json {
   // Keywords are any string, so "punctuation" also a keyword.
-  comma: spec.rule(","),
-  colon: spec.rule("."),
-  minus: spec.rule("-"),
-  true_: spec.rule("true"),
-  false_: spec.rule("false"),
-  null: spec.rule("null"),
+  comma: spec.rule(Keyword::new(",")),
+  colon: spec.rule(Keyword::new(".")),
+  minus: spec.rule(Keyword::new("-")),
+  true_: spec.rule(Keyword::new("true")),
+  false_: spec.rule(Keyword::new("false")),
+  null: spec.rule(Keyword::new("null")),
 
-  // "Delimiters" are special kinds of matched rules that must appear in
-  // opposition. I.e., matched brackets. Delimiters can actually be
+  // "Bracket" are special kinds of matched rules that must appear in
+  // opposition. I.e., matched brackets. Brackets can actually be
   // non-context-free, since there is explicit support for Rust-style AND
   // C++-style strings, neither of which are context free.
-  array: spec.named_rule("array", Delimiter::paired("[", "]")),
-  object: spec.named_rule("object", Delimiter::paired("{", "}")),
+  array: spec.named_rule("array", Bracket::from(("[", "]"))),
+  object: spec.named_rule("object", Bracket::from(("{", "}"))),
 
   // A "quoted" or "quoted rule" is a generalization of a string. It is
   // matched delimiters and a collection of escapes that could appear within it.
@@ -87,7 +87,7 @@ let json = Json {
   // functions.
   string: spec.named_rule(
     "string",
-    QuotedRule::new('"')
+    Quoted::new('"')
       .escape("\\", Escape::Invalid)
       .escapes([
         ("\\\"", '\"'), (r"\", '\\'), (r"\/", '/'),
@@ -108,8 +108,8 @@ let json = Json {
   // arbitrary numbers of decimal points: you could lex something like 1.0.0
   // if you wanted. They can also have an "exponent", for parsing floats.
   number: spec.rule(
-    NumberRule::new(10)
-      .max_decimal_points(1)
+    Number::new(10)
+      .decimal_points(0..2)
       .exponent_part(NumberExponent::new(10, ["e", "E"])),
   ),
 
@@ -121,34 +121,32 @@ let json = Json {
 //! for doing this in a single step.
 //!
 /*!```rust
-use ilex::spec::Spec;
-use ilex::spec::Lexeme;
-use ilex::spec::Delimiter;
-use ilex::spec::QuotedRule;
-use ilex::spec::Escape;
-use ilex::spec::NumberRule;
-use ilex::spec::NumberExponent;
+use ilex::rule::Keyword;
+use ilex::rule::Bracket;
+use ilex::rule::Quoted;
+use ilex::rule::Escape;
+use ilex::rule::Number;
+use ilex::rule::NumberExponent;
 
 ilex::spec! {
   struct Json {
-    comma: ',',
-    colon: ':',
-    minus: '-',
-    true_: "true",
-    false_: "false",
-    null: "null",
+    comma: Keyword = ',',
+    colon: Keyword = ':',
+    minus: Keyword = '-',
+    true_: Keyword = "true",
+    false_: Keyword = "false",
+    null: Keyword = "null",
 
-    #[named] array: ('[', ']'),
-    #[named] object: ('{','}'),
-
-    #[named] string: QuotedRule::new('"')
+    #[named] array: Bracket = ('[', ']'),
+    #[named] object: Bracket = ('{','}'),
+    #[named] string: Quoted = Quoted::new('"')
       .escape(r"\", Escape::Invalid)
       .escapes([
         ("\\\"", '\"'),
         (r"\\", '\\'),
         (r"\/", '/'),
         (r"\b", '\x08'),
-        (r"\f", '\x0C'),
+        (r"\f", '\x0c'),
         (r"\n", '\n'),
         (r"\t", '\t'),
         (r"\r", '\r'),
@@ -161,8 +159,8 @@ ilex::spec! {
         },
       ),
 
-    #[named] number: NumberRule::new(10)
-      .max_decimal_points(1)
+    #[named] number: Number = Number::new(10)
+      .decimal_points(0..2)
       .exponent_part(NumberExponent::new(10, ["e", "E"])),
   }
 }
@@ -181,8 +179,12 @@ let my_lexeme = json.object;  // Etc.
 //! ```
 //! use ilex::report;
 //! # fn ignore(_: i32) {
-//! # struct Json { spec: ilex::spec::Spec };
-//! # let json = Json { spec: todo!() };
+//!
+//! ilex::spec! {
+//!   struct Json {
+//!     // As above...
+//!   }
+//! }
 //!
 //! // Set up a source context. This tracks all of the source files
 //! // we're working with (so source spans can be tiny indices).
@@ -190,7 +192,7 @@ let my_lexeme = json.object;  // Etc.
 //!
 //! // Read a file from disk, and lex it with the `json` spec from above.
 //! let file = ctx.open_file("my_cool_file.json").unwrap();
-//! let tokens = file.lex(&json.spec);
+//! let tokens = file.lex(Json::get().spec());
 //! # }
 //! ```
 //!
@@ -201,29 +203,59 @@ let my_lexeme = json.object;  // Etc.
 //! The [`main()`] helps set up this boilerplate and handles generating error
 //! messages for ICEs.
 
+use std::fmt;
+
 mod file;
 mod lexer;
-mod token;
 
 pub mod ice;
 pub mod report;
+pub mod token;
 
 pub use byteyarn;
 
-pub use crate::file::Context;
-pub use crate::file::File;
-pub use crate::file::FileMut;
-pub use crate::file::Span;
-pub use crate::file::Spanned;
-pub use crate::lexer::spec;
-pub use crate::report::error;
-pub use crate::report::warn;
-pub use crate::report::Report;
-pub use crate::token::testing;
-pub use crate::token::Content;
-pub use crate::token::Cursor;
-pub use crate::token::Ident;
-pub use crate::token::Number;
-pub use crate::token::Quoted;
-pub use crate::token::Token;
-pub use crate::token::TokenStream;
+#[cfg(not(test))]
+pub use crate::{
+  file::Context,
+  file::{File, FileMut},
+  file::{Span, Spanned},
+  lexer::rule,
+  lexer::spec::{Spec, SpecBuilder},
+  lexer::Lexeme,
+  report::{error, warn},
+  report::{Fatal, Report},
+};
+
+/// The error returned by [`TryFrom`] implementations in this crate.
+pub struct WrongKind {
+  want: &'static str,
+  got: &'static str,
+}
+
+impl fmt::Debug for WrongKind {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "wrong kind: want `{}`, got `{}`", self.want, self.got)
+  }
+}
+
+/// Uninhabited type in lieu of the never type `!`.
+///
+/// Converts to everything, not constructible.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Never(Void);
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Void {}
+
+impl Never {
+  /// Materializes a `Never` by panicking.
+  #[track_caller]
+  pub fn unreachable() -> Self {
+    unreachable!()
+  }
+
+  /// Constructs any value from a `Never`, which cannot be constructed in a
+  /// well-formed program.
+  pub fn from_nothing_anything(self) -> ! {
+    match self.0 {}
+  }
+}

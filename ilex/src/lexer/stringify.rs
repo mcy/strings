@@ -3,15 +3,17 @@ use std::fmt::Write;
 use byteyarn::yarn;
 use byteyarn::YarnBox;
 
-use crate::lexer::spec::Delimiter;
-use crate::lexer::spec::Lexeme;
-use crate::lexer::spec::Rule;
+use crate::lexer::rule;
+use crate::lexer::rule::Affixes;
 use crate::lexer::spec::Spec;
-use crate::spec::Affixes;
+use crate::lexer::Lexeme;
 
 /// Converts a lexeme into a string, for printing as a diagnostic.
-pub fn lexeme_to_string(spec: &Spec, lexeme: Lexeme) -> YarnBox<str> {
-  if lexeme == Lexeme::eof() {
+pub fn lexeme_to_string(
+  spec: &Spec,
+  lexeme: Lexeme<rule::Any>,
+) -> YarnBox<str> {
+  if lexeme == Lexeme::eof().any() {
     return yarn!("<eof>");
   }
 
@@ -19,30 +21,34 @@ pub fn lexeme_to_string(spec: &Spec, lexeme: Lexeme) -> YarnBox<str> {
     return name.to_box();
   }
 
-  match spec.find_rule(lexeme) {
-    Rule::Keyword(kw) => yarn!("`{kw}`"),
-    Rule::LineComment(kw) => yarn!("`{kw} ...`"),
-    Rule::Delimiter(d) | Rule::BlockComment(d) => match d {
-      Delimiter::Paired(open, close) => yarn!("`{open} ... {close}`"),
-      Delimiter::CppLike {
-        open: (o1, o2),
-        close: (c1, c2),
-        ..
-      } => yarn!("`{o1}<ident>{o2} ... {c1}<ident>{c2}`"),
-      Delimiter::RustLike {
-        repeating,
-        open: (o1, o2),
-        close: (c1, c2),
-      } => yarn!("`{o1}{repeating}{o2} ... {c1}{repeating}{c2}`"),
-    },
+  match spec.rule(lexeme) {
+    rule::Any::Keyword(rule) => yarn!("`{}`", rule.value),
+    rule::Any::Comment(rule::Comment::Line(start)) => {
+      yarn!("`{start} ...`")
+    }
+    rule::Any::Bracket(d) | rule::Any::Comment(rule::Comment::Block(d)) => {
+      match d {
+        rule::Bracket::Paired(open, close) => yarn!("`{open} ... {close}`"),
+        rule::Bracket::CppLike {
+          open: (o1, o2),
+          close: (c1, c2),
+          ..
+        } => yarn!("`{o1}<ident>{o2} ... {c1}<ident>{c2}`"),
+        rule::Bracket::RustLike {
+          repeating,
+          open: (o1, o2),
+          close: (c1, c2),
+        } => yarn!("`{o1}{repeating}{o2} ... {c1}{repeating}{c2}`"),
+      }
+    }
 
-    Rule::Ident(tok) => {
+    rule::Any::Ident(tok) => {
       yarn!("{}identifier", sigils_to_string(&tok.affixes))
     }
-    Rule::Quote(tok) => {
+    rule::Any::Quoted(tok) => {
       yarn!("{}string", sigils_to_string(&tok.affixes))
     }
-    Rule::Number(tok) => {
+    rule::Any::Number(tok) => {
       yarn!("{}number", sigils_to_string(&tok.affixes))
     }
   }

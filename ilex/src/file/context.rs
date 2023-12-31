@@ -5,7 +5,7 @@ use std::mem::ManuallyDrop;
 use std::ops::Range;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::Mutex;
+use std::sync::RwLock;
 
 use std::format_args as f;
 
@@ -18,7 +18,7 @@ use crate::file::FileMut;
 use crate::file::Span;
 use crate::report;
 use crate::report::Fatal;
-use crate::Report;
+use crate::report::Report;
 
 pub type Offset = u32;
 
@@ -27,6 +27,11 @@ pub type Offset = u32;
 pub struct Context {
   state: *const UnsafeCell<State>,
   ctx_id: u32,
+
+  /// This holds onto the old report that this context pushed out when it
+  /// was created, if any (this only matters if multiple contexts co-exist on
+  /// a thread).
+  prev_report: Option<report::Installation>,
 }
 
 #[derive(Default)]
@@ -44,12 +49,12 @@ struct VeryUnsafeCell<T>(UnsafeCell<T>);
 unsafe impl<T> Send for VeryUnsafeCell<T> {}
 unsafe impl<T> Sync for VeryUnsafeCell<T> {}
 
-static CONTEXTS: Mutex<Option<HashMap<u32, Box<VeryUnsafeCell<State>>>>> =
-  Mutex::new(None);
+static CONTEXTS: RwLock<Option<HashMap<u32, Box<VeryUnsafeCell<State>>>>> =
+  RwLock::new(None);
 
 impl Drop for Context {
   fn drop(&mut self) {
-    if let Ok(Some(map)) = CONTEXTS.lock().as_deref_mut() {
+    if let Ok(Some(map)) = CONTEXTS.write().as_deref_mut() {
       assert!(map.remove(&self.ctx_id).is_some());
     }
   }
@@ -66,7 +71,7 @@ impl Context {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let ctx_id = COUNTER.fetch_add(1, Relaxed);
 
-    let mut contexts = CONTEXTS.lock().unwrap();
+    let mut contexts = CONTEXTS.write().unwrap();
     let contexts = contexts.get_or_insert_with(HashMap::new);
 
     let cell = Box::<VeryUnsafeCell<State>>::default();
@@ -75,12 +80,13 @@ impl Context {
     // after moving the box into the hashmap.
     let state = &contexts.get(&ctx_id).unwrap().0 as *const UnsafeCell<State>;
 
-    let ctx = Self { state, ctx_id };
+    let mut ctx = Self {
+      state,
+      ctx_id,
+      prev_report: None,
+    };
 
-    // If there is no report yet, create and install one.
-    if report::try_current().is_none() {
-      report::install(ctx.new_report());
-    }
+    ctx.prev_report = Some(report::install(ctx.new_report()));
 
     ctx
   }
@@ -90,7 +96,7 @@ impl Context {
   }
 
   fn mutate(&mut self, body: impl FnOnce(&mut State)) {
-    let _l = CONTEXTS.lock();
+    let _l = CONTEXTS.write();
     body(unsafe { &mut *(*self.state).get() });
   }
 
@@ -125,13 +131,13 @@ impl Context {
     let bytes = match fs::read(&name) {
       Ok(bytes) => bytes,
       Err(e) => {
-        crate::error(f!("could not open input file `{name}`: {e}"));
+        report::error(f!("could not open input file `{name}`: {e}"));
         return report::current().fatal();
       }
     };
 
     let Ok(utf8) = String::from_utf8(bytes) else {
-      crate::error("input file `{name}` was not valid UTF-8");
+      report::error("input file `{name}` was not valid UTF-8");
       return report::current().fatal();
     };
 
@@ -171,7 +177,7 @@ impl Context {
     ctx_id: u32,
     body: impl FnOnce(Option<&Context>) -> R,
   ) -> R {
-    let contexts = CONTEXTS.lock().unwrap();
+    let contexts = CONTEXTS.read().unwrap();
     let ctx = contexts
       .as_ref()
       .and_then(|map| map.get(&ctx_id))
@@ -179,6 +185,7 @@ impl Context {
         ManuallyDrop::new(Context {
           state: &bx.0,
           ctx_id,
+          prev_report: None,
         })
       });
 

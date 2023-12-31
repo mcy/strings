@@ -1,32 +1,28 @@
 // This test verifies that lexing is greedy in *most* cases.
 
-use ilex::spec::Delimiter;
-use ilex::spec::IdentRule;
-use ilex::spec::QuotedRule;
-use ilex::spec::Spec;
-use ilex::testing;
-use ilex::testing::LexemeExt;
+use ilex::rule::*;
+use ilex::token::testing;
 
 mod util;
 
 #[test]
 fn greedy() {
-  let mut spec = Spec::builder();
-  let rust_like = spec.rule(QuotedRule::with(Delimiter::RustLike {
+  let mut spec = ilex::Spec::builder();
+  let rust_like = spec.rule(Quoted::with(Bracket::RustLike {
     repeating: "#%".into(),
     open: ("poisonous".into(), "[".into()),
     close: ("]".into(), ">".into()),
   }));
 
-  let cpp_like = spec.rule(QuotedRule::with(Delimiter::CppLike {
-    ident_rule: IdentRule::new(),
+  let cpp_like = spec.rule(Quoted::with(Bracket::CppLike {
+    ident_rule: Ident::new(),
     open: ("R\"".into(), "(".into()),
     close: (")".into(), "\"".into()),
   }));
 
-  let array = spec.rule(("[", "]"));
-  let poison = spec.rule("poison");
-  let ident = spec.rule(IdentRule::new());
+  let array = spec.rule(Bracket::from(("[", "]")));
+  let poison = spec.rule(Keyword::new("poison"));
+  let ident = spec.rule(Ident::new());
 
   let spec = spec.compile();
 
@@ -45,14 +41,14 @@ fn greedy() {
     &spec,
     text,
     &[
-      poison.keyword("poison"),
-      ident.ident("poisonous"),
-      rust_like.quoted("poisonous[", "]>", "xyz"),
-      rust_like.quoted("poisonous#%#%[", "]#%#%>", "xyz"),
-      ident.ident("poisonous"),
-      array.delimited("[", "]", vec![ident.ident("xyz")]),
-      cpp_like.quoted("R\"cc(", ")cc\"", "some c++)\" "),
-      testing::Token::eof(),
+      poison.matcher("poison"),
+      ident.matcher("poisonous"),
+      rust_like.matcher(("poisonous[", "]>"), ["xyz"]),
+      rust_like.matcher(("poisonous#%#%[", "]#%#%>"), ["xyz"]),
+      ident.matcher("poisonous"),
+      array.matcher(("[", "]"), vec![ident.matcher("xyz")]),
+      cpp_like.matcher(("R\"cc(", ")cc\""), ["some c++)\" "]),
+      testing::Matcher::eof(),
     ],
   );
 }

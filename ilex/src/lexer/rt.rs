@@ -7,23 +7,24 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::file::FileMut;
 use crate::file::Span;
 use crate::lexer::best_match::MatchData;
-use crate::lexer::spec::Delimiter;
-use crate::lexer::spec::Lexeme;
-use crate::lexer::spec::Rule;
+use crate::lexer::rule;
 use crate::lexer::spec::Spec;
+use crate::lexer::Lexeme;
 use crate::report;
 use crate::report::Fatal;
+use crate::token;
 use crate::token::Content;
-use crate::token::TokenStream;
+use crate::token::Exponent;
+use crate::token::Sign;
 
 pub fn lex<'spec>(
   file: FileMut,
   spec: &'spec Spec,
-) -> Result<TokenStream<'spec>, Fatal> {
+) -> Result<token::Stream<'spec>, Fatal> {
   let mut lex = Lexer::new(file, spec);
   lex.run();
 
-  report::current().fatal_or(TokenStream {
+  report::current().fatal_or(token::Stream {
     spec,
     toks: mem::take(&mut lex.tokens),
   })
@@ -33,7 +34,7 @@ pub fn lex<'spec>(
 pub struct Token {
   pub kind: Kind,
   pub span: Span,
-  pub lexeme: Option<Lexeme>,
+  pub lexeme: Option<Lexeme<rule::Any>>,
   pub prefix: Option<Span>,
   pub suffix: Option<Span>,
 }
@@ -50,9 +51,8 @@ pub enum Kind {
     close: Span,
   },
   Number {
-    radix: u8,
     digit_blocks: Vec<Span>,
-    exponent: Option<(Option<Span>, Span)>,
+    exponent: Option<token::Exponent>,
   },
   Open {
     offset_to_close: u32,
@@ -74,7 +74,7 @@ struct Lexer<'spec, 'ctx> {
 
 struct DelimInfo<'spec> {
   #[allow(unused)]
-  rule: &'spec Delimiter,
+  rule: &'spec rule::Bracket,
   open_idx: usize,
   close: Yarn,
 }
@@ -177,7 +177,7 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
     let span = self.span_to_cursor(start);
 
     match &best_match.rule {
-      Rule::Keyword(_) => {
+      rule::Any::Keyword(_) => {
         self.add_token(Token {
           kind: Kind::Keyword,
           span,
@@ -187,7 +187,7 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
         });
       }
 
-      Rule::Delimiter(rule) => {
+      rule::Any::Bracket(rule) => {
         self.delims.push(DelimInfo {
           rule,
           close: match best_match.data {
@@ -208,7 +208,7 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
         });
       }
 
-      Rule::LineComment(_) | Rule::BlockComment(_) => {
+      rule::Any::Comment(_) => {
         self.comments.push(span);
 
         if best_match.unexpected_eof {
@@ -216,7 +216,7 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
         }
       }
 
-      Rule::Ident(_) => {
+      rule::Any::Ident(_) => {
         let (pre_len, suf_len) = best_match.affixes;
         let core_start = start + pre_len;
         let core_end = self.cursor - suf_len;
@@ -236,7 +236,7 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
         });
       }
 
-      Rule::Number(rule) => {
+      rule::Any::Number(_) => {
         let (pre_len, suf_len) = best_match.affixes;
         let core_start = start + pre_len;
         let core_end = self.cursor - suf_len;
@@ -255,23 +255,21 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
           .map(|r| self.span_from_range(start + r.start, start + r.end))
           .collect();
 
-        let exponent = exp_range.map(|r| {
-          let span = self.span_from_range(start + r.start, start + r.end);
+        let exponent = exp_range.map(|(all, r)| {
+          let span = self.span_from_range(start + all, start + r.end);
+          let value = self.span_from_range(start + r.start, start + r.end);
 
           let sign_offset = start + r.start - 1;
           let sign = match self.text().get(sign_offset..=sign_offset) {
-            Some("+") | Some("-") => {
-              Some(self.span_from_range(sign_offset, sign_offset + 1))
-            }
-            _ => None,
+            Some("-") => Sign::Neg,
+            _ => Sign::Pos,
           };
 
-          (sign, span)
+          Exponent { sign, span, value }
         });
 
         self.add_token(Token {
           kind: Kind::Number {
-            radix: rule.radix,
             digit_blocks,
             exponent,
           },
@@ -282,7 +280,7 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
         });
       }
 
-      Rule::Quote(_) => {
+      rule::Any::Quoted(_) => {
         let (pre_len, suf_len) = best_match.affixes;
         let core_start = start + pre_len;
         let core_end = self.cursor - suf_len;
@@ -300,8 +298,8 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
         let close = self.span_from_range(start + unquoted.end, core_end);
 
         if best_match.unexpected_eof {
-          use crate::lexer::stringify::lexeme_to_string;
-          let name = lexeme_to_string(self.spec, best_match.lexeme);
+          let name =
+            super::stringify::lexeme_to_string(self.spec, best_match.lexeme);
           report::error(format_args!("found an unclosed {name}")).at(span);
         }
 
@@ -314,7 +312,7 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
               Ok(code) => *code,
               Err(r) => {
                 let span = self.span_from_range(start + r.start, start + r.end);
-                report::builtins().invalid_escape_sequence(span);
+                report::builtins().invalid_escape(span);
                 !0
               }
             };

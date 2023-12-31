@@ -13,7 +13,8 @@ use camino::Utf8Path;
 use crate::lexer::rt;
 use crate::lexer::spec::Spec;
 use crate::report::Fatal;
-use crate::token::TokenStream;
+use crate::token;
+use crate::Never;
 
 mod context;
 pub use context::Context;
@@ -85,7 +86,7 @@ impl<'ctx> FileMut<'ctx> {
   }
 
   /// Parses the file wrapped by this context and generates a token stream.
-  pub fn lex(self, spec: &Spec) -> Result<TokenStream, Fatal> {
+  pub fn lex(self, spec: &Spec) -> Result<token::Stream, Fatal> {
     rt::lex(self, spec)
   }
 
@@ -323,5 +324,11 @@ impl Spanned for Span {
 impl<S: Spanned> Spanned for &S {
   fn span(&self, ctx: &Context) -> Span {
     S::span(self, ctx)
+  }
+}
+
+impl Spanned for Never {
+  fn span(&self, _ctx: &Context) -> Span {
+    self.from_nothing_anything()
   }
 }

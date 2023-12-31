@@ -20,6 +20,13 @@ pub struct Entries<K: Buf + ?Sized, V, I: Index> {
   _ph: PhantomData<fn(&K) -> &K>,
 }
 
+// SAFETY: Although there are some sketchy functions that go & -> &mut, these
+// MUST NOT be called except through a &Entries that was derived from an &mut
+// Entries. They exist only so that iterators can vend multiple distinct
+// elements without making MIRI lose its mind.
+unsafe impl<K: Buf + ?Sized, V, I: Index> Send for Entries<K, V, I> {}
+unsafe impl<K: Buf + ?Sized, V, I: Index> Sync for Entries<K, V, I> {}
+
 pub struct Entry<V, I: Index> {
   /// A index-length pair into Data.keys, referring to which key this entry
   /// uses.

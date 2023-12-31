@@ -16,8 +16,13 @@ twie = { version = "0.4", path = "../twie" }
 
 annotate-snippets = "0.10.0"
 camino = "1.1.6"
+num-traits = "0.2.17"
 unicode-segmentation = "1.10.1"
 unicode-xid = "0.2.4"
+
+[dependencies.lexical]
+version = "6.1.1"
+features = ["power-of-two", "compact"]
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

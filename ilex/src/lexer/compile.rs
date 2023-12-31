@@ -1,11 +1,11 @@
 use byteyarn::Yarn;
 use twie::Trie;
 
-use crate::lexer::spec::Delimiter;
-use crate::lexer::spec::Lexeme;
-use crate::lexer::spec::Rule;
+use crate::lexer::rule;
 use crate::lexer::spec::Spec;
 use crate::lexer::spec::SpecBuilder;
+
+use super::Lexeme;
 
 /// A compiled lexer spec.
 pub struct Compiled {
@@ -14,17 +14,16 @@ pub struct Compiled {
 }
 
 /// An action to perform in response to matching a prefix.
-#[derive(Debug)]
 pub struct Action {
   /// The lexeme we should match on.
-  pub lexeme: Lexeme,
+  pub lexeme: Lexeme<rule::Any>,
   /// If the lexeme has prefixes, which prefix we chose as a result of choosing
   /// this prefix.
   pub prefix: u32,
 }
 
 impl Compiled {
-  fn add_lexeme(&mut self, key: Yarn, lexeme: Lexeme) {
+  fn add_lexeme(&mut self, key: Yarn, lexeme: Lexeme<rule::Any>) {
     self
       .trie
       .get_or_insert_default(key)
@@ -40,23 +39,26 @@ impl Compiled {
 pub fn compile(builder: SpecBuilder) -> Spec {
   let mut c = Compiled { trie: Trie::new() };
 
-  for (lexeme, rule) in builder.rules() {
+  for (lexeme, rule) in builder.rules.iter().enumerate() {
+    let lexeme = Lexeme::new(lexeme as u32);
     match rule {
-      Rule::LineComment(open) => c.add_lexeme(open.clone(), lexeme),
+      rule::Any::Comment(rule::Comment::Line(open)) => {
+        c.add_lexeme(open.clone(), lexeme)
+      }
 
-      Rule::BlockComment(delim) => {
-        let (open, _) = make_delim_prefixes(delim);
+      rule::Any::Comment(rule::Comment::Block(bracket)) => {
+        let (open, _) = make_delim_prefixes(bracket);
         c.add_lexeme(open, lexeme);
       }
 
-      Rule::Keyword(kw) => c.add_lexeme(kw.clone(), lexeme),
+      rule::Any::Keyword(rule) => c.add_lexeme(rule.value.clone(), lexeme),
 
-      Rule::Delimiter(delim) => {
-        let (open, _) = make_delim_prefixes(delim);
+      rule::Any::Bracket(rule) => {
+        let (open, _) = make_delim_prefixes(rule);
         c.add_lexeme(open, lexeme);
       }
 
-      Rule::Ident(rule) => {
+      rule::Any::Ident(rule) => {
         for (i, prefix) in rule.affixes.prefixes.iter().enumerate() {
           c.add_action(
             prefix.clone(),
@@ -68,8 +70,8 @@ pub fn compile(builder: SpecBuilder) -> Spec {
         }
       }
 
-      Rule::Quote(rule) => {
-        let (open, _) = make_delim_prefixes(&rule.delimiter);
+      rule::Any::Quoted(rule) => {
+        let (open, _) = make_delim_prefixes(&rule.bracket);
         for (i, prefix) in rule.affixes.prefixes.iter().enumerate() {
           c.add_action(
             Yarn::concat(&[prefix, &open]),
@@ -81,7 +83,7 @@ pub fn compile(builder: SpecBuilder) -> Spec {
         }
       }
 
-      Rule::Number(rule) => {
+      rule::Any::Number(rule) => {
         const ALPHABET: &str = "0123456789abcdef";
         assert!(
           (2..=16).contains(&rule.radix),
@@ -133,15 +135,15 @@ pub fn compile(builder: SpecBuilder) -> Spec {
   }
 }
 
-fn make_delim_prefixes(delim: &Delimiter) -> (Yarn, Yarn) {
+fn make_delim_prefixes(delim: &rule::Bracket) -> (Yarn, Yarn) {
   match delim {
-    Delimiter::Paired(open, close) => (open.clone(), close.clone()),
-    Delimiter::RustLike {
+    rule::Bracket::Paired(open, close) => (open.clone(), close.clone()),
+    rule::Bracket::RustLike {
       open: (open, _),
       close: (close, _),
       ..
     }
-    | Delimiter::CppLike {
+    | rule::Bracket::CppLike {
       open: (open, _),
       close: (close, _),
       ..

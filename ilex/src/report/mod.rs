@@ -27,7 +27,7 @@ mod render;
 
 pub use builtin::builtins;
 pub use builtin::Builtins;
-pub use builtin::Token;
+pub use builtin::Expected;
 pub use diagnostic::Diagnostic;
 
 /// Adds a new error to [`report::current()`][current].
@@ -209,6 +209,9 @@ impl Report {
   }
 
   /// Executes `cb` after looking up the context that "owns" this report.
+  ///
+  /// Danger: calling any diagnostic-generating function in the callback will
+  /// self-deadlock.
   fn in_context<R>(self, cb: impl FnOnce(Report, &Context) -> R) -> R {
     Context::find_and_run(self.ctx, |ctx| {
       match ctx {
@@ -242,27 +245,24 @@ pub(crate) fn try_current() -> Option<Report> {
   REPORT.with(|report| report.borrow().clone())
 }
 
+/// An RAII type that undoes a call to `report::install()`.
+pub struct Installation(Option<Report>);
+impl Drop for Installation {
+  fn drop(&mut self) {
+    if let Some(old) = self.0.take() {
+      mem::forget(old);
+    }
+  }
+}
+
 /// Installs a `Report` as this thread's current report.
 ///
 /// Returns a cleanup object that places the previous report back in place
 /// when it goes out of scope.
-pub fn install(mut report: Report) -> impl Drop {
+pub fn install(mut report: Report) -> Installation {
   report.id = report.state.next_id.fetch_add(1, SeqCst);
-
   REPORT.with(|tls| {
-    let mut tls = tls.borrow_mut();
-    let old = mem::replace(&mut *tls, Some(report));
-
-    struct Replacer(Option<Report>);
-    impl Drop for Replacer {
-      fn drop(&mut self) {
-        if let Some(old) = self.0.take() {
-          mem::forget(old);
-        }
-      }
-    }
-
-    Replacer(old)
+    Installation(mem::replace(&mut *tls.borrow_mut(), Some(report)))
   })
 }
 

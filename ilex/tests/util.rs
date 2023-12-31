@@ -1,8 +1,8 @@
-use ilex::spec::Spec;
-use ilex::testing;
+use ilex::token::testing;
 use ilex::Context;
+use ilex::Spec;
 
-pub fn drive(spec: &Spec, text: &str, matchers: &[testing::Token]) {
+pub fn drive(spec: &Spec, text: &str, matchers: &[testing::Matcher]) {
   let mut ctx = Context::new();
 
   let tokens = ctx.new_file("test.file", text).lex(spec).unwrap();
