@@ -1,19 +1,26 @@
 //! Built-in errors and warnings.
 
-use std::format_args as f;
+use std::fmt;
+use std::ops::Bound;
+use std::ops::RangeBounds;
+
+use format_args as f;
 
 use byteyarn::yarn;
 use byteyarn::YarnBox;
+use num_traits::Bounded;
 
 use crate::file::Context;
 use crate::file::Spanned;
+use crate::lexer::rule;
 use crate::lexer::spec::Spec;
+use crate::lexer::Lexeme;
 use crate::report::Diagnostic;
-use crate::spec::Lexeme;
 use crate::token;
 
 use crate::report;
 use crate::report::Report;
+use crate::token::Token as _;
 
 /// A wrapper over [`Report`] for generating diagnostics.
 ///
@@ -31,39 +38,21 @@ pub fn builtins() -> Builtins {
 }
 
 impl Builtins {
-  ///
+  /// Generates an "expected one of these tokens but got something else"
+  /// diagnostic.
   #[track_caller]
-  pub fn expected<'a, 'b, Expected, Found>(
+  pub fn expected<'a, 'b, E: Into<Expected<'b>>>(
     self,
     spec: &Spec,
-    expected: Expected,
-    found: Found,
+    expected: impl IntoIterator<Item = E>,
+    found: impl Into<Expected<'b>>,
     at: impl Spanned,
-  ) -> Diagnostic
-  where
-    Expected: Into<Token<'a>>,
-    Found: Into<Token<'b>>,
-  {
-    self.expected_one_of(spec, [expected], found, at)
-  }
-
-  ///
-  #[track_caller]
-  pub fn expected_one_of<'a, 'b, Expected, Found>(
-    self,
-    spec: &Spec,
-    expected: impl IntoIterator<Item = Expected>,
-    found: Found,
-    at: impl Spanned,
-  ) -> Diagnostic
-  where
-    Expected: Into<Token<'a>>,
-    Found: Into<Token<'b>>,
-  {
+  ) -> Diagnostic {
     self.0.in_context(|this, ctx| {
       let expected = expected.into_iter().map(Into::into).collect::<Vec<_>>();
       let alts = disjunction_to_string(spec, ctx, &expected);
       let found = found.into();
+
       let diagnostic = this
         .error(f!(
           "expected {alts}, but found {}",
@@ -75,6 +64,8 @@ impl Builtins {
     })
   }
 
+  /// Generates an "unclosed delimiter" diagnostic, for when a delimiter is
+  /// not closed before the end of the input.
   #[track_caller]
   pub fn unclosed_delimiter(
     self,
@@ -88,28 +79,65 @@ impl Builtins {
       .saying(eof, "expected it to be closed here")
   }
 
+  /// Generates an "invalid escape sequence" diagnostic, for when an
+  /// [`Escape::Invalid`][crate::lexer::rule::Escape::Invalid] is encountered.
   #[track_caller]
-  pub fn invalid_escape_sequence(self, at: impl Spanned) -> Diagnostic {
+  pub fn invalid_escape(self, at: impl Spanned) -> Diagnostic {
     self.0.in_context(|this, ctx| {
-      let at = at.span(ctx);
       let seq = at.text(ctx);
       this
         .error(f!("found an invalid escape sequence: `{seq}`"))
         .saying(at, "invalid escape sequence")
     })
   }
+
+  /// Generates a "numeric literal overflowed" diagnostic.
+  #[track_caller]
+  pub fn literal_overflow<N>(
+    self,
+    at: impl Spanned,
+    range: &impl RangeBounds<N>,
+  ) -> Diagnostic
+  where
+    N: Bounded + fmt::Debug,
+  {
+    let (x1, x2);
+    let start = match range.start_bound() {
+      Bound::Included(x) | Bound::Excluded(x) => x,
+      Bound::Unbounded => {
+        x1 = N::min_value();
+        &x1
+      }
+    };
+    let end = match range.end_bound() {
+      Bound::Included(x) | Bound::Excluded(x) => x,
+      Bound::Unbounded => {
+        x2 = N::max_value();
+        &x2
+      }
+    };
+
+    let is_exc = matches!(range.start_bound(), Bound::Excluded(..));
+    let is_inc = matches!(range.end_bound(), Bound::Included(..));
+
+    self.0.error("numeric literal overflowed").at(at).note(f!(
+      "expected value in the range {start:?}{}..{}{end:?}",
+      if is_exc { "<" } else { "" },
+      if is_inc { "=" } else { "" },
+    ))
+  }
 }
 
 fn non_printable_note(
   ctx: &Context,
-  found: Token,
+  found: Expected,
   diagnostic: Diagnostic,
 ) -> Diagnostic {
   // Check to see if any of the characters are outside of the ASCII printable
   // range.
   let literal = match &found {
-    Token::Literal(y) => y,
-    Token::Token(token::Token::Unexpected(span)) => span.text(ctx),
+    Expected::Literal(y) => y,
+    Expected::Token(token::Any::Unexpected(span, ..)) => span.text(ctx),
     _ => return diagnostic,
   };
 
@@ -146,7 +174,7 @@ fn non_printable_note(
 fn disjunction_to_string<'a>(
   spec: &'a Spec,
   ctx: &'a Context,
-  lexemes: &'a [Token],
+  lexemes: &'a [Expected],
 ) -> YarnBox<'a, str> {
   let mut names = lexemes
     .iter()
@@ -244,17 +272,17 @@ fn pos_iter() {
 /// This type exists because there are many potential sources for the "name of
 /// a token", and so it's easier to just have a sink type that they all convert
 /// into.
-pub enum Token<'lex> {
+pub enum Expected<'lex> {
   // A literal string, equivalent to a keyword token, and wrapped in backticks
   // in the diagnostic.
   Literal(&'lex str),
   // An actual token, which is, with some exceptions, digested into its lexeme.
-  Token(token::Token<'lex>),
+  Token(token::Any<'lex>),
   // A lexeme, from which a name can be inferred.
-  Lexeme(Lexeme),
+  Lexeme(Lexeme<rule::Any>),
 }
 
-impl Token<'_> {
+impl Expected<'_> {
   /// Converts this tokenish into a string that can be used in a diagnostic.
   pub(crate) fn for_user_diagnostic<'a>(
     &'a self,
@@ -266,28 +294,28 @@ impl Token<'_> {
       Self::Literal(lit) => yarn!("`{lit}`"),
       Self::Lexeme(lex) => lexeme_to_string(spec, *lex),
       Self::Token(tok) => match tok {
-        token::Token::Eof(..) => yarn!("<eof>"),
-        token::Token::Unexpected(span) => yarn!("`{}`", span.text(ctx)),
-        tok => lexeme_to_string(spec, tok.lexeme().unwrap()),
+        token::Any::Eof(..) => yarn!("<eof>"),
+        token::Any::Unexpected(span, ..) => yarn!("`{}`", span.text(ctx)),
+        tok => lexeme_to_string(spec, tok.lexeme().unwrap().any()),
       },
     }
   }
 }
 
-impl<'lex, S: AsRef<str> + ?Sized> From<&'lex S> for Token<'lex> {
+impl<'lex, S: AsRef<str> + ?Sized> From<&'lex S> for Expected<'lex> {
   fn from(value: &'lex S) -> Self {
     Self::Literal(value.as_ref())
   }
 }
 
-impl From<Lexeme> for Token<'_> {
-  fn from(value: Lexeme) -> Self {
-    Self::Lexeme(value)
+impl<'lex> From<token::Any<'lex>> for Expected<'lex> {
+  fn from(value: token::Any<'lex>) -> Self {
+    Self::Token(value)
   }
 }
 
-impl<'lex> From<token::Token<'lex>> for Token<'lex> {
-  fn from(value: token::Token<'lex>) -> Self {
-    Self::Token(value)
+impl<R> From<Lexeme<R>> for Expected<'_> {
+  fn from(value: Lexeme<R>) -> Self {
+    Self::Lexeme(value.any())
   }
 }

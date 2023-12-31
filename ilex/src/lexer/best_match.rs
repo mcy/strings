@@ -5,23 +5,19 @@ use byteyarn::Yarn;
 use byteyarn::YarnBox;
 use byteyarn::YarnRef;
 
-use crate::lexer::spec::Delimiter;
-use crate::lexer::spec::IdentRule;
-use crate::lexer::spec::Lexeme;
-use crate::lexer::spec::NumberRule;
-use crate::lexer::spec::QuotedRule;
-use crate::lexer::spec::Rule;
+use crate::lexer::rule;
 use crate::lexer::spec::Spec;
-use crate::spec::Escape;
+
+use super::Lexeme;
 
 /// A raw match from `Spec::best_match()`.
 pub struct Match<'a> {
   /// The prefix for the rule we matched.
   pub prefix: &'a str,
   /// The rule we matched.
-  pub rule: &'a Rule,
+  pub rule: &'a rule::Any,
   /// The lexeme of the rule we matched.
-  pub lexeme: Lexeme,
+  pub lexeme: Lexeme<rule::Any>,
   /// The length of the match; i.e., how many bytes we consume as a result.
   pub len: usize,
   /// Extra data that came out of doing a "complete" lexing step.
@@ -39,7 +35,8 @@ pub enum MatchData {
   /// Digit data, namely ranges of digits.
   Digits {
     blocks: Vec<Range<usize>>,
-    exp_block: Option<Range<usize>>,
+    // This is the start of the range, followed by just the digits.
+    exp_block: Option<(usize, Range<usize>)>,
   },
   /// Quote data, namely the "unquoted" range as well as the content and
   /// escapes.
@@ -63,9 +60,9 @@ impl Spec {
       .flat_map(|(k, v)| v.iter().map(move |v| (k, v)))
       .filter_map(|(prefix, action)| {
         let lexeme = action.lexeme;
-        let rule = self.find_rule(lexeme);
+        let rule = self.rule(lexeme);
         match rule {
-          Rule::Ident(ident) => {
+          rule::Any::Ident(ident) => {
             let (len, pre, suf) =
               take_ident(&mut { src }, ident, Some(action.prefix as usize))?;
             Some(Match {
@@ -79,7 +76,7 @@ impl Spec {
             })
           }
 
-          Rule::Keyword(..) => Some(Match {
+          rule::Any::Keyword(..) => Some(Match {
             prefix,
             rule,
             lexeme,
@@ -89,7 +86,7 @@ impl Spec {
             unexpected_eof: false,
           }),
 
-          Rule::Delimiter(delimiter) => {
+          rule::Any::Bracket(delimiter) => {
             let (open, data) = take_open_delim(&mut { src }, delimiter)?;
             Some(Match {
               prefix,
@@ -104,7 +101,7 @@ impl Spec {
             })
           }
 
-          Rule::LineComment(..) => Some(Match {
+          rule::Any::Comment(rule::Comment::Line(prefix)) => Some(Match {
             prefix,
             rule,
             lexeme,
@@ -114,8 +111,8 @@ impl Spec {
             unexpected_eof: false,
           }),
 
-          Rule::BlockComment(delimiter) => {
-            let (len, ok) = take_block_comment(&mut { src }, delimiter)?;
+          rule::Any::Comment(rule::Comment::Block(bracket)) => {
+            let (len, ok) = take_block_comment(&mut { src }, bracket)?;
             Some(Match {
               prefix,
               rule,
@@ -127,7 +124,7 @@ impl Spec {
             })
           }
 
-          Rule::Number(num) => {
+          rule::Any::Number(num) => {
             let (len, pre, suf, data) =
               take_number(&mut { src }, num, Some(action.prefix as usize))?;
             Some(Match {
@@ -141,7 +138,7 @@ impl Spec {
             })
           }
 
-          Rule::Quote(quote) => {
+          rule::Any::Quoted(quote) => {
             let (len, pre, suf, data, ok) =
               take_quote(&mut { src }, quote, Some(action.prefix as usize))?;
             Some(Match {
@@ -159,8 +156,7 @@ impl Spec {
       .filter(|m| m.len > 0)
       .max_by(|a, b| {
         // Comments always win.
-        let is_comment =
-          |c| matches!(c, &Rule::LineComment(..) | &Rule::BlockComment(..));
+        let is_comment = |c| matches!(c, &rule::Any::Comment(..));
         let comment_cmp = bool::cmp(&is_comment(a.rule), &is_comment(b.rule));
         if !comment_cmp.is_eq() {
           return comment_cmp;
@@ -176,7 +172,7 @@ impl Spec {
 /// of the affixes.
 fn take_ident(
   src: &mut &str,
-  rule: &IdentRule,
+  rule: &rule::Ident,
   prefix: Option<usize>,
 ) -> Option<(usize, usize, usize)> {
   let prefix_len = match prefix {
@@ -214,16 +210,16 @@ fn take_ident(
 /// unique "data" needed to construct the closer with `make_close_delim`.
 fn take_open_delim<'a>(
   src: &mut &'a str,
-  rule: &Delimiter,
+  rule: &rule::Bracket,
 ) -> Option<(usize, &'a str)> {
   let start = *src;
   match rule {
-    Delimiter::Paired(open, _) => {
+    rule::Bracket::Paired(open, _) => {
       let len = take(src, open)?;
       Some((len, ""))
     }
 
-    Delimiter::RustLike {
+    rule::Bracket::RustLike {
       repeating,
       open: (prefix, suffix),
       ..
@@ -240,7 +236,7 @@ fn take_open_delim<'a>(
       Some((len, data))
     }
 
-    Delimiter::CppLike {
+    rule::Bracket::CppLike {
       ident_rule,
       open: (prefix, suffix),
       ..
@@ -270,7 +266,7 @@ fn take_line_comment(src: &mut &str, prefix: &str) -> Option<usize> {
 /// successfully.
 fn take_block_comment(
   src: &mut &str,
-  delimiter: &Delimiter,
+  delimiter: &rule::Bracket,
 ) -> Option<(usize, bool)> {
   let start = *src;
   let (mut len, data) = take_open_delim(src, delimiter)?;
@@ -314,9 +310,9 @@ fn take_block_comment(
 /// each individual digit block.
 fn take_digits(
   src: &mut &str,
-  rule: &NumberRule,
+  rule: &rule::Number,
   radix: u8,
-  max_blocks: usize,
+  max_blocks: Range<u32>,
 ) -> Option<(usize, Vec<Range<usize>>)> {
   let mut digit_blocks = Vec::new();
   let mut digits = 0;
@@ -338,7 +334,7 @@ fn take_digits(
         return None;
       }
 
-      if digit_blocks.len() + 1 == max_blocks {
+      if digit_blocks.len() as u32 + 1 == max_blocks.end {
         break;
       }
       digit_blocks.push(block_start..len);
@@ -377,7 +373,7 @@ fn take_digits(
 /// length. Also, returns the relevant match data.
 fn take_number(
   src: &mut &str,
-  rule: &NumberRule,
+  rule: &rule::Number,
   prefix: Option<usize>,
 ) -> Option<(usize, usize, usize, MatchData)> {
   let prefix_len = match prefix {
@@ -388,7 +384,11 @@ fn take_number(
   let mut len = prefix_len;
 
   let (digits, mut blocks) =
-    take_digits(src, rule, rule.radix, rule.max_decimal_points as usize + 1)?;
+    take_digits(src, rule, rule.radix, rule.decimal_points.clone())?;
+  if (blocks.len() as u32) < rule.decimal_points.start {
+    return None;
+  }
+
   for block in &mut blocks {
     *block = len + block.start..len + block.end;
   }
@@ -396,6 +396,7 @@ fn take_number(
   len += digits;
 
   let exp_block = rule.exp.as_ref().and_then(|exp| {
+    let exp_start = len;
     match exp.prefixes.iter().filter_map(|pre| take(src, pre)).next() {
       Some(n) => len += n,
       None => return None,
@@ -407,13 +408,14 @@ fn take_number(
       len += n;
     }
 
-    let (digits, mut blocks) = take_digits(src, rule, exp.radix, 1)?;
+    let (digits, mut blocks) = take_digits(src, rule, exp.radix, 0..1)?;
     for block in &mut blocks {
       *block = len + block.start..len + block.end;
     }
 
     len += digits;
-    blocks.get(0).cloned()
+    let range = blocks.get(0).cloned();
+    range.map(|r| (exp_start, r))
   });
 
   let suffix_len = take_longest(src, &rule.affixes.suffixes)?;
@@ -427,14 +429,17 @@ fn take_number(
   ))
 }
 
-fn make_close_delim<'a>(rule: &'a Delimiter, data: &str) -> YarnBox<'a, str> {
+fn make_close_delim<'a>(
+  rule: &'a rule::Bracket,
+  data: &str,
+) -> YarnBox<'a, str> {
   match rule {
-    Delimiter::Paired(_, close) => close.as_ref().to_box(),
-    Delimiter::RustLike {
+    rule::Bracket::Paired(_, close) => close.as_ref().to_box(),
+    rule::Bracket::RustLike {
       close: (prefix, suffix),
       ..
     }
-    | Delimiter::CppLike {
+    | rule::Bracket::CppLike {
       close: (prefix, suffix),
       ..
     } => {
@@ -447,7 +452,7 @@ fn make_close_delim<'a>(rule: &'a Delimiter, data: &str) -> YarnBox<'a, str> {
 /// Also, returns the relevant match data.
 fn take_quote(
   src: &mut &str,
-  rule: &QuotedRule,
+  rule: &rule::Quoted,
   prefix: Option<usize>,
 ) -> Option<(usize, usize, usize, MatchData, bool)> {
   let start = *src;
@@ -457,14 +462,14 @@ fn take_quote(
   };
   let mut len = prefix_len;
 
-  let (open, close_data) = take_open_delim(src, &rule.delimiter)?;
+  let (open, close_data) = take_open_delim(src, &rule.bracket)?;
   len += open;
 
   // We want to implement nested comments, but we only need to find the
   // matching end delimiter for `rule`. So, as a simplifying assumption,
   // we assume that all comments we need to care about are exactly those
   // which match `rule`.
-  let close = make_close_delim(&rule.delimiter, close_data);
+  let close = make_close_delim(&rule.bracket, close_data);
 
   let uq_start = len;
   let mut chunk_start = len;
@@ -494,10 +499,10 @@ fn take_quote(
     let esc_start = len;
     len += take(src, esc)?;
     let value = match rule {
-      Escape::Invalid => Some(Err(esc_start..len)),
-      Escape::Literal(lit) => Some(Ok(*lit)),
+      rule::Escape::Invalid => Some(Err(esc_start..len)),
+      rule::Escape::Literal(lit) => Some(Ok(*lit)),
 
-      Escape::Fixed { char_count, parse } => 'fixed: {
+      rule::Escape::Fixed { char_count, parse } => 'fixed: {
         let arg_start = len;
         for _ in 0..*char_count {
           match src.chars().next() {
@@ -509,13 +514,13 @@ fn take_quote(
         Some(parse(&start[arg_start..len]).ok_or(esc_start..len))
       }
 
-      Escape::Delimited { delim, parse } => 'delim: {
-        let Some((open, data)) = take_open_delim(src, delim) else {
+      rule::Escape::Bracketed { bracket, parse } => 'delim: {
+        let Some((open, data)) = take_open_delim(src, bracket) else {
           break 'delim Some(Err(esc_start..len));
         };
 
         len += open;
-        let close = make_close_delim(delim, data);
+        let close = make_close_delim(bracket, data);
 
         let arg_start = len;
         let arg_end = loop {

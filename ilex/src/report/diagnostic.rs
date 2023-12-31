@@ -3,10 +3,10 @@ use std::mem;
 use std::panic;
 
 use crate::file::Context;
+use crate::file::Span;
 use crate::file::Spanned;
 use crate::report::render;
 use crate::report::Report;
-use crate::Span;
 
 /// A diagnostic that is being built up.
 ///

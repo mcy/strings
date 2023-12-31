@@ -1,57 +1,51 @@
-use ilex::spec::Escape;
-use ilex::spec::IdentRule;
-use ilex::spec::NumberExponent;
-use ilex::spec::NumberRule;
-use ilex::spec::QuotedRule;
-use ilex::spec::Rule;
-use ilex::testing;
-use ilex::testing::Content;
-use ilex::testing::LexemeExt;
+use ilex::rule::*;
+use ilex::token::testing::Matcher;
+use ilex::token::Content::Esc;
+use ilex::token::Content::Lit;
 
 mod util;
 
 ilex::spec! {
   struct Llvm {
-    comment: Rule::LineComment(";".into()),
+    comment: Comment = Comment::Line(";".into()),
 
-    parens: ('(', ')'),
-    brackets: ('[', ']'),
-    vector: ('<', '>'),
-    braces: ('{', '}'),
-    packed: ("<{", "}>"),
-    meta: ("!{", "}"),
+    parens: Bracket = ('(', ')'),
+    brackets: Bracket = ('[', ']'),
+    vector: Bracket = ('<', '>'),
+    braces: Bracket = ('{', '}'),
+    packed: Bracket = ("<{", "}>"),
+    meta: Bracket = ("!{", "}"),
 
-    comma: ',',
-    //colon: ':',
-    equal: '=',
-    star: '*',
-    times: 'x',
+    comma: Keyword = ',',
+    equal: Keyword = '=',
+    star: Keyword = '*',
+    times: Keyword = 'x',
 
-    br: "br",
-    call: "call",
-    icmp: "icmp",
-    icmp_eq: "eq",
-    ret: "ret",
-    unreachable: "unreachable",
+    br: Keyword = "br",
+    call: Keyword = "call",
+    icmp: Keyword = "icmp",
+    icmp_eq: Keyword = "eq",
+    ret: Keyword = "ret",
+    unreachable: Keyword = "unreachable",
 
-    constant: "constant",
-    declare: "declare",
-    define: "define",
-    global: "global",
+    constant: Keyword = "constant",
+    declare: Keyword = "declare",
+    define: Keyword = "define",
+    global: Keyword = "global",
 
-    label: "label",
-    null: "null",
-    ptr: "ptr",
-    int: NumberRule::new(10).with_prefix("i"),
-    void: "void",
+    label: Keyword = "label",
+    null: Keyword = "null",
+    ptr: Keyword = "ptr",
+    int: Number = Number::new(10).with_prefix("i"),
+    void: Keyword = "void",
 
-    private: "private",
-    unnamed_addr: "unnamed_addr",
-    nocapture: "nocapture",
-    nounwind: "nounwind",
+    private: Keyword = "private",
+    unnamed_addr: Keyword = "unnamed_addr",
+    nocapture: Keyword = "nocapture",
+    nounwind: Keyword = "nounwind",
 
     #[named]
-    string: QuotedRule::new('"')
+    string: Quoted = Quoted::new('"')
       .escape(
         "\\",
         Escape::Fixed {
@@ -62,21 +56,19 @@ ilex::spec! {
       .with_prefixes(["", "c"]),
 
     #[named("identifier")]
-    label_ident:
-    IdentRule::new()
+    label_ident: Ident = Ident::new()
       .ascii_only()
       .with_starts(".0123456789".chars())
       .with_suffix(":"),
 
     #[named("identifier")]
-    bare:
-      IdentRule::new()
-        .ascii_only()
-        .with_starts(".0123456789".chars())
-        .with_prefixes(["!", "@", "%"]),
+    bare: Ident = Ident::new()
+      .ascii_only()
+      .with_starts(".0123456789".chars())
+      .with_prefixes(["!", "@", "%"]),
 
     #[named("quoted identifier")]
-    quoted: QuotedRule::new('"')
+    quoted: Quoted = Quoted::new('"')
       .escape("\\", Escape::Fixed {
         char_count: 2,
         parse: Box::new(|hex| u32::from_str_radix(hex, 16).ok()),
@@ -84,13 +76,13 @@ ilex::spec! {
       .with_prefixes(["!", "@", "%"]),
 
     #[named("number")]
-    dec: NumberRule::new(10)
-      .max_decimal_points(1)
+    dec: Number = Number::new(10)
+      .decimal_points(0..2)
       .exponent_part(NumberExponent::new(10, ["e", "E"]))
       .with_prefixes(["", "-"]),
 
     #[named("number")]
-    hex: NumberRule::new(16).with_prefixes(["0x", "-0x"]),
+    hex: Number = Number::new(16).with_prefixes(["0x", "-0x"]),
   }
 }
 
@@ -134,171 +126,165 @@ fn llvm() {
     &vec![
       llvm
         .bare
-        .ident(".str")
+        .matcher(".str")
         .prefix("@")
         .comments(["; Declare the string constant as a global constant."]),
-      llvm.equal.keyword("="),
-      llvm.private.keyword("private"),
-      llvm.unnamed_addr.keyword("unnamed_addr"),
-      llvm.constant.keyword("constant"),
-      llvm.brackets.delimited(
-        "[",
-        "]",
+      llvm.equal.matcher("="),
+      llvm.private.matcher("private"),
+      llvm.unnamed_addr.matcher("unnamed_addr"),
+      llvm.constant.matcher("constant"),
+      llvm.brackets.matcher(
+        ("[", "]"),
         vec![
-          llvm.dec.number(10, ["13"]),
-          llvm.times.keyword("x"),
-          llvm.int.number(10, ["8"]).prefix("i"),
+          llvm.dec.matcher(10, ["13"]),
+          llvm.times.matcher("x"),
+          llvm.int.matcher(10, ["8"]).prefix("i"),
         ],
       ),
       llvm
         .string
-        .escaped(
-          "\"",
-          "\"",
+        .matcher(
+          ("\"", "\""),
           vec![
-            Content::Lit("hello world".into()),
-            Content::Esc("\\0A".into(), 0xa),
-            Content::Esc("\\00".into(), 0),
+            Lit("hello world".into()),
+            Esc("\\0A".into(), 0xa),
+            Esc("\\00".into(), 0),
           ],
         )
         .prefix("c"),
       //
       llvm
         .declare
-        .keyword("declare")
+        .matcher("declare")
         .comments(["; External declaration of the puts function"]),
-      llvm.int.number(10, ["32"]).prefix("i"),
+      llvm.int.matcher(10, ["32"]).prefix("i"),
       llvm
         .quoted
-        .quoted("\"", "\"", "non trivial name")
+        .matcher(("\"", "\""), ["non trivial name"])
         .prefix("@"),
-      llvm.parens.delimited(
-        "(",
-        ")",
-        vec![llvm.ptr.keyword("ptr"), llvm.nocapture.keyword("nocapture")],
+      llvm.parens.matcher(
+        ("(", ")"),
+        vec![llvm.ptr.matcher("ptr"), llvm.nocapture.matcher("nocapture")],
       ),
-      llvm.nounwind.keyword("nounwind"),
+      llvm.nounwind.matcher("nounwind"),
       //
       llvm
         .define
-        .keyword("define")
+        .matcher("define")
         .comments(["; Definition of main function"]),
-      llvm.int.number(10, ["32"]).prefix("i"),
-      llvm.bare.ident("main").prefix("@"),
-      llvm.parens.delimited(
-        "(",
-        ")",
+      llvm.int.matcher(10, ["32"]).prefix("i"),
+      llvm.bare.matcher("main").prefix("@"),
+      llvm.parens.matcher(
+        ("(", ")"),
         vec![
-          llvm.int.number(10, ["32"]).prefix("i"),
-          llvm.bare.ident("0").prefix("%"),
-          llvm.comma.keyword(","),
-          llvm.ptr.keyword("ptr"),
-          llvm.int.ident("1").prefix("%"),
+          llvm.int.matcher(10, ["32"]).prefix("i"),
+          llvm.bare.matcher("0").prefix("%"),
+          llvm.comma.matcher(","),
+          llvm.ptr.matcher("ptr"),
+          llvm.bare.matcher("1").prefix("%"),
         ],
       ),
-      llvm.braces.delimited(
-        "{",
-        "}",
+      llvm.braces.matcher(
+        ("{", "}"),
         vec![
-          llvm.call.keyword("call").comments([
+          llvm.call.matcher("call").comments([
             "; Call puts function to write out the string to stdout.",
           ]),
-          llvm.int.number(10, ["32"]).prefix("i"),
+          llvm.int.matcher(10, ["32"]).prefix("i"),
           llvm
             .quoted
-            .quoted("\"", "\"", "non trivial name")
+            .matcher(("\"", "\""), ["non trivial name"])
             .prefix("@"),
-          llvm.parens.delimited(
-            "(",
-            ")",
-            vec![llvm.ptr.keyword("ptr"), llvm.bare.ident(".str").prefix("@")],
+          llvm.parens.matcher(
+            ("(", ")"),
+            vec![
+              llvm.ptr.matcher("ptr"),
+              llvm.bare.matcher(".str").prefix("@"),
+            ],
           ),
           //
-          llvm.ret.keyword("ret"),
-          llvm.int.number(10, ["32"]).prefix("i"),
-          llvm.dec.number(10, ["0"]),
+          llvm.ret.matcher("ret"),
+          llvm.int.matcher(10, ["32"]).prefix("i"),
+          llvm.dec.matcher(10, ["0"]),
         ],
       ),
       //
       llvm
-        .meta
-        .ident("0")
+        .bare
+        .matcher("0")
         .prefix("!")
         .comments(["; Named metadata"]),
-      llvm.equal.keyword("="),
-      llvm.meta.delimited(
-        "!{",
-        "}",
+      llvm.equal.matcher("="),
+      llvm.meta.matcher(
+        ("!{", "}"),
         vec![
-          llvm.int.number(10, ["32"]).prefix("i"),
-          llvm.dec.number(10, ["42"]),
-          llvm.comma.keyword(","),
-          llvm.null.keyword("null"),
-          llvm.comma.keyword(","),
-          llvm.quoted.quoted("\"", "\"", "string").prefix("!"),
+          llvm.int.matcher(10, ["32"]).prefix("i"),
+          llvm.dec.matcher(10, ["42"]),
+          llvm.comma.matcher(","),
+          llvm.null.matcher("null"),
+          llvm.comma.matcher(","),
+          llvm.quoted.matcher(("\"", "\""), ["string"]).prefix("!"),
         ],
       ),
       //
-      llvm.bare.ident("foo").prefix("!"),
-      llvm.equal.keyword("="),
+      llvm.bare.matcher("foo").prefix("!"),
+      llvm.equal.matcher("="),
       llvm
         .meta
-        .delimited("!{", "}", vec![llvm.bare.ident("0").prefix("!")]),
+        .matcher(("!{", "}"), vec![llvm.bare.matcher("0").prefix("!")]),
       //
-      llvm.bare.ident("glb").prefix("@"),
-      llvm.equal.keyword("="),
-      llvm.global.keyword("global"),
-      llvm.int.number(10, ["8"]).prefix("i"),
-      llvm.dec.number(10, ["0"]),
+      llvm.bare.matcher("glb").prefix("@"),
+      llvm.equal.matcher("="),
+      llvm.global.matcher("global"),
+      llvm.int.matcher(10, ["8"]).prefix("i"),
+      llvm.dec.matcher(10, ["0"]),
       //
-      llvm.define.keyword("define"),
-      llvm.void.keyword("void"),
-      llvm.bare.ident("f").prefix("@"),
-      llvm.parens.delimited(
-        "(",
-        ")",
-        vec![llvm.ptr.keyword("ptr"), llvm.bare.ident("a").prefix("%")],
+      llvm.define.matcher("define"),
+      llvm.void.matcher("void"),
+      llvm.bare.matcher("f").prefix("@"),
+      llvm.parens.matcher(
+        ("(", ")"),
+        vec![llvm.ptr.matcher("ptr"), llvm.bare.matcher("a").prefix("%")],
       ),
-      llvm.braces.delimited(
-        "{",
-        "}",
+      llvm.braces.matcher(
+        ("{", "}"),
         vec![
-          llvm.bare.ident("c").prefix("%"),
-          llvm.equal.keyword("="),
-          llvm.icmp.keyword("icmp"),
-          llvm.icmp_eq.keyword("eq"),
-          llvm.ptr.keyword("ptr"),
-          llvm.bare.ident("a").prefix("%"),
-          llvm.comma.keyword(","),
-          llvm.bare.ident("glb").prefix("@"),
+          llvm.bare.matcher("c").prefix("%"),
+          llvm.equal.matcher("="),
+          llvm.icmp.matcher("icmp"),
+          llvm.icmp_eq.matcher("eq"),
+          llvm.ptr.matcher("ptr"),
+          llvm.bare.matcher("a").prefix("%"),
+          llvm.comma.matcher(","),
+          llvm.bare.matcher("glb").prefix("@"),
           //
-          llvm.br.keyword("br"),
-          llvm.int.number(10, ["1"]).prefix("i"),
-          llvm.bare.ident("c").prefix("%"),
-          llvm.comma.keyword(","),
-          llvm.label.keyword("label"),
-          llvm.bare.ident("BB_EXIT").prefix("%"),
-          llvm.comma.keyword(","),
-          llvm.label.keyword("label"),
-          llvm.bare.ident("BB_CONTINUE").prefix("%"),
+          llvm.br.matcher("br"),
+          llvm.int.matcher(10, ["1"]).prefix("i"),
+          llvm.bare.matcher("c").prefix("%"),
+          llvm.comma.matcher(","),
+          llvm.label.matcher("label"),
+          llvm.bare.matcher("BB_EXIT").prefix("%"),
+          llvm.comma.matcher(","),
+          llvm.label.matcher("label"),
+          llvm.bare.matcher("BB_CONTINUE").prefix("%"),
           //
           llvm
             .label_ident
-            .ident("BB_EXIT")
+            .matcher("BB_EXIT")
             .comments(["; escapes %a"])
             .suffix(":"),
-          llvm.call.keyword("call"),
-          llvm.void.keyword("void"),
-          llvm.bare.ident("exit").prefix("@"),
-          llvm.parens.delimited("(", ")", vec![]),
-          llvm.unreachable.keyword("unreachable"),
+          llvm.call.matcher("call"),
+          llvm.void.matcher("void"),
+          llvm.bare.matcher("exit").prefix("@"),
+          llvm.parens.matcher(("(", ")"), vec![]),
+          llvm.unreachable.matcher("unreachable"),
           //
-          llvm.label_ident.ident("BB_CONTINUE").suffix(":"),
-          llvm.ret.keyword("ret"),
-          llvm.void.keyword("void"),
+          llvm.label_ident.matcher("BB_CONTINUE").suffix(":"),
+          llvm.ret.matcher("ret"),
+          llvm.void.matcher("void"),
         ],
       ),
-      testing::Token::eof(),
+      Matcher::eof(),
     ],
   );
 }
