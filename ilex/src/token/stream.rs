@@ -42,8 +42,8 @@ impl fmt::Debug for Stream<'_> {
 
 /// A cursor over a piece of a `Stream`.
 ///
-/// This type is an iterator that yields [`Token`]s, but it can also be queried
-/// for more specific token kinds.
+/// This type is an iterator that yields [`Token`][crate::Token]s, but it can
+/// also be queried for more specific token kinds.
 #[derive(Copy, Clone)]
 pub struct Cursor<'lex> {
   spec: &'lex Spec,
@@ -179,9 +179,9 @@ impl fmt::Debug for Cursor<'_> {
       impl fmt::Debug for Selectable<'_> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
           if self.1 {
-            f.write_str("* ")?;
+            f.write_str(">")?;
           } else {
-            f.write_str("x ")?;
+            f.write_str("-")?;
           }
           fmt::Debug::fmt(&self.0, f)
         }
@@ -271,6 +271,7 @@ impl<'lex> Iterator for Cursor<'lex> {
         self.cursor += 1;
         token::Any::Number(token::Number {
           tok,
+          idx: 0,
           spec: self.spec,
         })
       }

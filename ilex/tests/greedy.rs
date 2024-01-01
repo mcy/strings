@@ -3,8 +3,6 @@
 use ilex::rule::*;
 use ilex::token::testing;
 
-mod util;
-
 #[test]
 fn greedy() {
   let mut spec = ilex::Spec::builder();
@@ -37,9 +35,13 @@ fn greedy() {
     R"cc(some c++)" )cc"
   "#;
 
-  util::drive(
-    &spec,
-    text,
+  let mut ctx = ilex::Context::new();
+  let tokens = ctx.new_file("test.file", text).lex(&spec).unwrap();
+  eprintln!("stream: {tokens:#?}");
+
+  testing::recognize_tokens(
+    &ctx,
+    tokens.cursor(),
     &[
       poison.matcher("poison"),
       ident.matcher("poisonous"),
@@ -50,5 +52,6 @@ fn greedy() {
       cpp_like.matcher(("R\"cc(", ")cc\""), ["some c++)\" "]),
       testing::Matcher::eof(),
     ],
-  );
+  )
+  .unwrap();
 }

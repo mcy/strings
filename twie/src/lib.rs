@@ -978,6 +978,9 @@ mod test {
 
     let trie = trie_set(&["", "a", "b", "ab"]);
     iter_eq(trie.longest_prefix("c"), &[""]);
+
+    let trie = trie_set(&["0", "00", "07"]);
+    iter_eq(trie.prefixes("0777"), &["0", "07"]);
   }
 
   #[test]

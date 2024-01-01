@@ -1,7 +1,7 @@
 //! Lexer testing helpers.
 //!
 //! This type provides testing-oriented matchers for matching on a
-//! [`TokenStream`].
+//! [`TokenStream`][`crate::token::Stream`].
 //!
 //! These matchers are intended for writing *tests*. To write a parser, you\
 //! should use [`Cursor`][crate::token::Cursor] instead.
@@ -23,6 +23,7 @@ use crate::lexer::Lexeme;
 use crate::token;
 use crate::token::Any;
 use crate::token::Cursor;
+use crate::token::Sign;
 
 /// Matches a token cursor against a list of token matchers.
 ///
@@ -32,7 +33,7 @@ pub fn recognize_tokens<'a>(
   ctx: &Context,
   stream: Cursor,
   matchers: impl IntoIterator<Item = &'a Matcher>,
-) -> Result<(), String> {
+) -> Result<(), impl fmt::Debug> {
   let mut state = MatchState {
     ctx,
     errors: String::new(),
@@ -40,10 +41,17 @@ pub fn recognize_tokens<'a>(
     error_count: 0,
   };
 
+  struct DebugBy(String);
+  impl fmt::Debug for DebugBy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      f.write_str(&self.0)
+    }
+  }
+
   zip_eq(&mut state, matchers, stream, |state, ours, theirs| {
     ours.recognizes(state, theirs, ctx)
   });
-  state.finish()
+  state.finish().map_err(DebugBy)
 }
 
 /// A matcher for a chunk of text from the input source.
@@ -145,16 +153,22 @@ enum Kind {
     suffix: Option<Text>,
   },
   Number {
-    radix: u8,
-    blocks: Vec<Text>,
-    exponent: Option<()>,
-    prefix: Option<Text>,
+    mant: NumberMatcher,
+    exps: Vec<NumberMatcher>,
     suffix: Option<Text>,
   },
   Delimited {
     delims: (Text, Text),
     tokens: Vec<Matcher>,
   },
+}
+
+#[derive(Debug)]
+struct NumberMatcher {
+  radix: u8,
+  sign: Option<(Sign, Text)>,
+  digits: Vec<Text>,
+  prefix: Option<Text>,
 }
 
 impl Lexeme<rule::Keyword> {
@@ -220,10 +234,13 @@ impl Lexeme<rule::Number> {
       span: Text::any(),
       comments: Vec::new(),
       kind: Kind::Number {
-        radix,
-        blocks: blocks.into_iter().map(Into::into).collect(),
-        exponent: None,
-        prefix: None,
+        mant: NumberMatcher {
+          radix,
+          sign: None,
+          digits: blocks.into_iter().map(Into::into).collect(),
+          prefix: None,
+        },
+        exps: Vec::new(),
         suffix: None,
       },
     }
@@ -274,11 +291,10 @@ impl Matcher {
 
   pub fn prefix(mut self, text: impl Into<Text>) -> Self {
     match &mut self.kind {
-      Kind::Ident { prefix, .. }
-      | Kind::Quoted { prefix, .. }
-      | Kind::Number { prefix, .. } => {
+      Kind::Ident { prefix, .. } | Kind::Quoted { prefix, .. } => {
         *prefix = Some(text.into());
       }
+      Kind::Number { mant, .. } => mant.prefix = Some(text.into()),
       _ => unreachable!(),
     }
 
@@ -292,6 +308,35 @@ impl Matcher {
       | Kind::Number { suffix, .. } => {
         *suffix = Some(text.into());
       }
+      _ => unreachable!(),
+    }
+
+    self
+  }
+
+  pub fn sign(mut self, value: Sign, text: impl Into<Text>) -> Self {
+    match &mut self.kind {
+      Kind::Number { mant, .. } => mant.sign = Some((value, text.into())),
+      _ => unreachable!(),
+    }
+
+    self
+  }
+
+  pub fn exponent<T: Into<Text>>(
+    mut self,
+    radix: u8,
+    delim: impl Into<Text>,
+    sign: Option<(Sign, Text)>,
+    blocks: impl IntoIterator<Item = T>,
+  ) -> Self {
+    match &mut self.kind {
+      Kind::Number { exps, .. } => exps.push(NumberMatcher {
+        radix,
+        sign,
+        digits: blocks.into_iter().map(Into::into).collect(),
+        prefix: Some(delim.into()),
+      }),
       _ => unreachable!(),
     }
 
@@ -367,28 +412,34 @@ impl Matcher {
           },
         );
       }
-      (
-        Kind::Number {
-          radix,
-          blocks,
-          exponent: _, // FIXME
-          prefix,
-          suffix,
-        },
-        Any::Number(tok),
-      ) => {
-        if radix != &tok.radix() {
-          state.error(f!(
-            "wrong number base; want {:?}, got {:?}",
-            radix,
-            tok.radix()
-          ));
-        }
-        state.match_options("prefix", prefix.as_ref(), tok.prefix());
-        state.match_options("suffix", suffix.as_ref(), tok.suffix());
-        zip_eq(state, blocks, tok.digit_blocks(), |state, t, s| {
-          state.match_spans("digit block", t, s);
+      (Kind::Number { mant, exps, suffix }, Any::Number(tok)) => {
+        let recognize =
+          |state: &mut MatchState, mch: &NumberMatcher, tok: token::Number| {
+            if mch.radix != tok.radix() {
+              state.error(f!(
+                "wrong number base; want {:?}, got {:?}",
+                mch.radix,
+                tok.radix()
+              ));
+            }
+            state.match_any_options(
+              "sign",
+              mch.sign.as_ref(),
+              tok.sign(),
+              |(s1, t), (sp, s2)| s1 == s2 && t.recognizes(*sp, state.ctx),
+            );
+            state.match_options("prefix", mch.prefix.as_ref(), tok.prefix());
+            zip_eq(state, &mch.digits, tok.digit_blocks(), |state, t, s| {
+              state.match_spans("digit block", t, s);
+            });
+          };
+
+        recognize(state, mant, tok);
+        zip_eq(state, exps, tok.exponents(), |state, t, s| {
+          recognize(state, t, s);
         });
+
+        state.match_options("suffix", suffix.as_ref(), tok.suffix());
       }
       (Kind::Delimited { delims, tokens }, Any::Bracket(tok)) => {
         state.match_spans("open delimiter", &delims.0, tok.open());
@@ -467,17 +518,8 @@ impl fmt::Debug for Matcher {
         opt_field(&mut d, "prefix", prefix);
         opt_field(&mut d, "suffix", suffix);
       }
-      Kind::Number {
-        radix,
-        blocks,
-        exponent,
-        prefix,
-        suffix,
-      } => {
-        d.field("radix", radix)
-          .field("blocks", blocks)
-          .field("exponent", exponent);
-        opt_field(&mut d, "prefix", prefix);
+      Kind::Number { mant, exps, suffix } => {
+        d.field("mant", mant).field("exps", exps);
         opt_field(&mut d, "suffix", suffix);
       }
       Kind::Delimited { delims, tokens } => {
@@ -536,6 +578,26 @@ impl MatchState<'_> {
     if !text
       .zip(span)
       .is_some_and(|(t, s)| t.recognizes(s, self.ctx))
+    {
+      self.error(f!("wrong {what}; want {:?}, got {:?}", text, span));
+    }
+  }
+
+  fn match_any_options<T: fmt::Debug, U: fmt::Debug>(
+    &mut self,
+    what: &str,
+    text: Option<T>,
+    span: Option<U>,
+    eq: impl FnOnce(&T, &U) -> bool,
+  ) {
+    if text.is_none() && span.is_none() {
+      return;
+    }
+
+    if !text
+      .as_ref()
+      .zip(span.as_ref())
+      .is_some_and(|(t, s)| eq(t, s))
     {
       self.error(f!("wrong {what}; want {:?}, got {:?}", text, span));
     }

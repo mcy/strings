@@ -40,7 +40,7 @@ use ilex::rule::Bracket;
 use ilex::rule::Quoted;
 use ilex::rule::Escape;
 use ilex::rule::Number;
-use ilex::rule::NumberExponent;
+use ilex::rule::Digits;
 
 // This is a spec builder. You give it rule definitions, and it produces
 // "lexemes", which are IDs for later recalling which rule a token was matched
@@ -109,8 +109,9 @@ let json = Json {
   // if you wanted. They can also have an "exponent", for parsing floats.
   number: spec.rule(
     Number::new(10)
-      .decimal_points(0..2)
-      .exponent_part(NumberExponent::new(10, ["e", "E"])),
+      .minus()
+      .point_limit(0..2)
+      .exponents(["e", "E"], Digits::new(10).plus().minus()),
   ),
 
   // Wrap it up and compile the spec.
@@ -126,7 +127,7 @@ use ilex::rule::Bracket;
 use ilex::rule::Quoted;
 use ilex::rule::Escape;
 use ilex::rule::Number;
-use ilex::rule::NumberExponent;
+use ilex::rule::Digits;
 
 ilex::spec! {
   struct Json {
@@ -160,8 +161,9 @@ ilex::spec! {
       ),
 
     #[named] number: Number = Number::new(10)
-      .decimal_points(0..2)
-      .exponent_part(NumberExponent::new(10, ["e", "E"])),
+      .minus()
+      .point_limit(0..2)
+      .exponents(["e", "E"], Digits::new(10).plus().minus()),
   }
 }
 
@@ -196,12 +198,14 @@ let my_lexeme = json.object;  // Etc.
 //! # }
 //! ```
 //!
-//! `tokens` here is a [`TokenStream`], which is a tree, since some tokens
+//! `tokens` here is a [`token::Stream`], which is a tree, since some tokens
 //! (delimiters key among them) can contain more tokens *within* them. This is
 //! as far as `ilex` will take you.
 //!
-//! The [`main()`] helps set up this boilerplate and handles generating error
+//! [`ice::handle()`] helps set up this boilerplate and handles generating error
 //! messages for ICEs.
+
+#![deny(rustdoc::broken_intra_doc_links)]
 
 use std::fmt;
 
@@ -224,6 +228,8 @@ pub use crate::{
   lexer::Lexeme,
   report::{error, warn},
   report::{Fatal, Report},
+  rule::Rule,
+  token::Token,
 };
 
 /// The error returned by [`TryFrom`] implementations in this crate.

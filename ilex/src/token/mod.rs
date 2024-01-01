@@ -1,7 +1,7 @@
 //! Token types.
 //!
 //! A token is created during lexing, and records information about a matched
-//! [`Rule`] (or failure to match).
+//! [`Rule`][crate::rule::Rule] (or failure to match).
 //!
 //! It is idiomatic to `use ilex::token;` and refer to types in this module with
 //! a `token` prefix. E.g., `token::Any`, `token::Ident`, and `token::Stream`.
@@ -12,19 +12,18 @@
 
 use std::fmt;
 use std::marker::PhantomData;
-use std::num::NonZeroU8;
 use std::ops::RangeBounds;
-
-use lexical::FromLexicalWithOptions;
-use lexical::ParseFloatOptions;
-use lexical::ParseIntegerOptions;
+use std::panic::Location;
 
 use num_traits::Bounded;
+use rustc_apfloat::ieee;
+use rustc_apfloat::Float;
 
 use crate::file::Context;
 use crate::file::Span;
 use crate::file::Spanned;
 use crate::lexer::rt;
+use crate::lexer::rt::DigitBlocks;
 use crate::lexer::rt::Kind;
 use crate::lexer::rule;
 use crate::lexer::spec::Spec;
@@ -213,10 +212,14 @@ impl fmt::Debug for Any<'_> {
       Self::Unexpected(span, ..) => write!(f, "token::Unexpected({span:?})"),
       Self::Eof(tok) => write!(f, "token::{tok:?}"),
       Self::Keyword(tok) => write!(f, "token::{tok:?}"),
-      Self::Bracket(tok) => write!(f, "token::{tok:?}"),
       Self::Ident(tok) => write!(f, "token::{tok:?}"),
       Self::Number(tok) => write!(f, "token::{tok:?}"),
       Self::Quoted(tok) => write!(f, "token::{tok:?}"),
+
+      Self::Bracket(tok) => {
+        f.write_str("token::")?;
+        fmt::Debug::fmt(tok, f)
+      }
     }
   }
 }
@@ -455,7 +458,7 @@ impl<'lex> Ident<'lex> {
     }
   }
 
-  /// Returns this token's prefix sigil span.
+  /// Returns this token's prefix.
   pub fn prefix(self) -> Option<Span> {
     self.tok.prefix
   }
@@ -465,7 +468,7 @@ impl<'lex> Ident<'lex> {
     self.prefix().is_some_and(|s| s.text(ctx) == expected)
   }
 
-  /// Returns this token's suffix sigil span.
+  /// Returns this token's suffix.
   pub fn suffix(&self) -> Option<Span> {
     self.tok.suffix
   }
@@ -537,7 +540,8 @@ impl Spanned for Ident<'_> {
 ///
 /// Note that this crate does not provide general number parsing services;
 /// parsing numbers is a complex and subtle undertaking, particularly when it
-/// comes to floats. For that, please consider using the [`lexical`] crate.
+/// comes to floats. For that, consider reading the source code of the
+/// `rustc_apfloat` library, or another softfloat library.
 ///
 /// However, we do provide parsing for a few common cases: decimal, binary,
 /// octal, and hexadecimal. For floats, this means that the radix of the
@@ -547,18 +551,227 @@ impl Spanned for Ident<'_> {
 #[derive(Copy, Clone)]
 pub struct Number<'lex> {
   tok: &'lex rt::Token,
+  idx: usize,
   spec: &'lex Spec,
 }
 
-/// An exponent from a [`Number`] literal.
-#[derive(Clone, Copy, Debug)]
-pub struct Exponent {
-  /// The sign on the exponent (a `+` or a `-`).
-  pub sign: Sign,
-  /// The span of just the exponent's value.
-  pub value: Span,
-  /// The exponent's full span.
-  pub span: Span,
+mod fp;
+
+impl<'lex> Number<'lex> {
+  /// Returns the radix that this number's digits were parsed in.
+  pub fn radix(self) -> u8 {
+    self.digit_rule().radix
+  }
+
+  /// Returns the sign of this number, if it had any.
+  pub fn sign(self) -> Option<(Span, Sign)> {
+    self.rt_blocks().sign
+  }
+
+  /// Returns the point-separated digit chunks of this number.
+  pub fn digit_blocks(self) -> impl Iterator<Item = Span> + 'lex {
+    self.digit_slice().iter().copied()
+  }
+
+  /// Returns the exponents of this number, if it any.
+  ///
+  /// Calling `exponents()` on any of the returned tokens will yield all
+  /// exponents that follow.
+  pub fn exponents(self) -> impl Iterator<Item = Number<'lex>> {
+    (self.idx..self.exponent_slice().len()).map(move |idx| Self {
+      tok: self.tok,
+      idx: idx + 1,
+      spec: self.spec,
+    })
+  }
+
+  /// Returns this token's prefix.
+  pub fn prefix(self) -> Option<Span> {
+    if self.idx > 0 {
+      return self.rt_blocks().prefix;
+    }
+
+    self.tok.prefix
+  }
+
+  /// Checks whether this identifier has a particular prefix.
+  pub fn has_prefix(&self, ctx: &Context, expected: &str) -> bool {
+    self.prefix().is_some_and(|s| s.text(ctx) == expected)
+  }
+
+  /// Returns this token's suffix.
+  pub fn suffix(&self) -> Option<Span> {
+    if self.idx > 0 {
+      // Exponent tokens never have a suffix.
+      return None;
+    }
+
+    self.tok.suffix
+  }
+
+  /// Checks whether this identifier has a particular prefix.
+  pub fn has_suffix(&self, ctx: &Context, expected: &str) -> bool {
+    self.suffix().is_some_and(|s| s.text(ctx) == expected)
+  }
+
+  /// Parses this token as an integer.
+  ///
+  /// More than one digit block, or any exponents, will be diagnosed as an
+  /// error.
+  ///
+  /// Parse failures become diagnostics, and an unspecified value is provided
+  /// for a failed integer.
+  #[track_caller]
+  pub fn to_int<N>(self, ctx: &Context, range: impl RangeBounds<N>) -> N
+  where
+    N: Bounded + PartialOrd + FromRadix + fmt::Display,
+  {
+    for extra in self.digit_blocks().skip(1) {
+      report::builtins().unexpected(
+        self.spec,
+        "extra digits",
+        self.lexeme().unwrap(),
+        extra,
+      );
+    }
+
+    for extra in self.exponents() {
+      report::builtins().unexpected(
+        self.spec,
+        "exponent",
+        self.lexeme().unwrap(),
+        extra,
+      );
+    }
+
+    self.to_ints(ctx, range).drain(..).next().unwrap()
+  }
+
+  /// Parses the blocks of this number as a sequence of integers; this ignores
+  /// any exponents that follow.
+  ///
+  /// Parse failures become diagnostics, and an unspecified value is provided
+  /// for a failed integer.
+  #[track_caller]
+  pub fn to_ints<N>(self, ctx: &Context, range: impl RangeBounds<N>) -> Vec<N>
+  where
+    N: Bounded + PartialOrd + FromRadix + fmt::Display,
+  {
+    let rule = self.rule().unwrap();
+    let radix = self.radix();
+    let here = Location::caller();
+
+    self
+      .digit_blocks()
+      .map(|span| {
+        let text = span.text(ctx);
+        let buf;
+        let text =
+          if !rule.separator.is_empty() && text.contains(&*rule.separator) {
+            buf = text.replace(&*rule.separator, "");
+            buf.as_str()
+          } else {
+            text
+          };
+
+        let mut value = N::from_radix(text, radix, &rule.separator);
+        if let Some((_, Sign::Neg)) = self.sign() {
+          value = value.and_then(N::checked_neg);
+        }
+
+        if value.is_none() || value.as_ref().is_some_and(|v| !range.contains(v))
+        {
+          report::builtins()
+            .literal_overflow(
+              self.spec(),
+              Any::from(self),
+              span,
+              &range,
+              &N::min_value(),
+              &N::max_value(),
+            )
+            .reported_at(here);
+        }
+
+        value.unwrap_or(N::max_value())
+      })
+      .collect()
+  }
+
+  /// Parses this token as a float.
+  ///
+  /// This function only supports four radix configurations: 10, 2, 8, and 16
+  /// for the mantissa, and 10 for the base. For a radix 10 mantissa, the
+  /// exponent base used is 10. For all other radices, the base used is 2.
+  ///
+  /// Any other combination will produce `Err`. It is highly recommended to
+  /// `unwrap()` the result, since a return value of `Exotic` is almost
+  /// certainly a bug.
+  ///
+  /// Parse failures become diagnostics, and a garbage value is provided for a
+  /// failed integer. Out-of-bounds integers are diagnosed but not modified.
+  #[track_caller]
+  pub fn to_f64(
+    self,
+    ctx: &Context,
+    range: impl RangeBounds<f64>,
+  ) -> Result<f64, Exotic> {
+    let soft = self.to_fp::<ieee::Double>(ctx, false)?;
+    let hard = f64::from_bits(soft.to_bits() as u64);
+
+    if !soft.is_finite() || !range.contains(&hard) {
+      use std::ops::Bound;
+      fn map<T, U, F: FnOnce(T) -> U>(b: Bound<T>, f: F) -> Bound<U> {
+        match b {
+          Bound::Unbounded => Bound::Unbounded,
+          Bound::Included(x) => Bound::Included(f(x)),
+          Bound::Excluded(x) => Bound::Excluded(f(x)),
+        }
+      }
+
+      report::builtins().literal_overflow(
+        self.spec(),
+        Any::from(self),
+        self,
+        &(
+          map(range.start_bound(), |f| format!("{f:?}")),
+          map(range.end_bound(), |f| format!("{f:?}")),
+        ),
+        &format_args!("{:?}", f64::MIN),
+        &format_args!("{:?}", f64::MAX),
+      );
+    }
+
+    Ok(hard)
+  }
+
+  fn digit_rule(self) -> &'lex rule::Digits {
+    let rule = self.rule().unwrap();
+    if self.idx == 0 {
+      &rule.mant
+    } else {
+      &rule.exps[self.rt_blocks().which_exp].1
+    }
+  }
+
+  fn digit_slice(self) -> &'lex [Span] {
+    &self.rt_blocks().blocks
+  }
+
+  fn exponent_slice(self) -> &'lex [DigitBlocks] {
+    match &self.tok.kind {
+      Kind::Number { exponents, .. } => exponents,
+      _ => panic!("non-rt::Kind::Number inside of Number"),
+    }
+  }
+
+  fn rt_blocks(&self) -> &'lex DigitBlocks {
+    match &self.tok.kind {
+      Kind::Number { digits, .. } if self.idx == 0 => digits,
+      Kind::Number { exponents, .. } => &exponents[self.idx - 1],
+      _ => panic!("non-rt::Kind::Number inside of Number"),
+    }
+  }
 }
 
 /// A sign for a [`Number`] literal.
@@ -586,227 +799,82 @@ impl fmt::Debug for Exotic {
   }
 }
 
-fn lexical_parse<N: FromLexicalWithOptions, const FMT: u128>(
-  s: &str,
-) -> Option<N>
-where
-  N::Options: Default,
-{
-  lexical::parse_with_options::<N, &str, FMT>(s, &Default::default()).ok()
+/// A base 2 integer type of portable size that can be parsed from any radix.
+pub trait FromRadix: Sized {
+  /// Parses a value from` data`, given it's in a particular radix.
+  ///
+  /// The result must be exact: truncation or rounding are not permitted.
+  /// Occurrences thereof must be signaled by returning `None`.
+  ///
+  /// The implementation may assume that `radix` is in `2..=16`, and that the
+  /// the only bytes that occur in `data` are `0..=9`, `a..=f`, and `A..=F`, as
+  /// would be implied by the value of `radix`; also, the byte sequence in
+  /// `sep` may appear, which should be ignored.
+  fn from_radix(data: &str, radix: u8, sep: &str) -> Option<Self>;
+
+  /// Equivalent to `std`'s [`checked_neg()`][i32::checked_neg()].
+  fn checked_neg(self) -> Option<Self>;
 }
 
-impl<'lex> Number<'lex> {
-  /// Parses the blocks of this number as a sequence of integers.
-  ///
-  /// This function will make a best effort to find a parser implementation for
-  /// the configured requirements of the underlying rule, but this may fail.
-  ///
-  /// In that case, it is recommended to use [`lexical`] directly to construct
-  /// what you want.
-  ///
-  /// Parse failures become diagnostics, and a garbage value is provided for a
-  /// failed integer. Out-of-bounds integers are diagnosed but not modified.
-  pub fn to_ints<N>(
-    self,
-    ctx: &Context,
-    range: impl RangeBounds<N>,
-  ) -> Result<Vec<N>, Exotic>
-  where
-    N: Bounded
-      + fmt::Display
-      + FromLexicalWithOptions<Options = ParseIntegerOptions>,
-  {
-    use lexical::format::NumberFormatBuilder as F;
+macro_rules! impl_radix {
+  ($($ty:ty,)*) => {$(
+    impl FromRadix for $ty {
+      fn from_radix(
+        mut data: &str,
+        radix: u8,
+        sep: &str,
+      ) -> Option<Self> {
+        let start = data;
+        let mut total: Self = 0;
+        let mut count = 0;
+        while !data.is_empty() {
+          if !sep.is_empty() {
+            if let Some(rest) = data.strip_prefix(sep) {
+              data = rest;
+              continue;
+            }
+          }
 
-    let rule = self.rule().unwrap();
-    let parser: fn(&str) -> Option<N> = match rule.radix {
-      2 => lexical_parse::<N, { F::binary() }>,
-      8 => lexical_parse::<N, { F::octal() }>,
-      16 => lexical_parse::<N, { F::hexadecimal() }>,
-      10 => lexical_parse::<N, { F::decimal() }>,
-      n => {
-        return Err(Exotic(format!(
-          "ilex does not support parsing integers in radix {n}"
-        )))
-      }
-    };
+          let next = data.chars().next().unwrap();
+          data = &data[next.len_utf8()..];
 
-    let vec = self
-      .digit_blocks()
-      .map(|span| {
-        let text = span.text(ctx);
-        let buf;
-        let text =
-          if !rule.separator.is_empty() && text.contains(&*rule.separator) {
-            buf = text.replace(&*rule.separator, "");
-            buf.as_str()
-          } else {
-            text
+          let digit = match next {
+            '0'..='9' => next as u8 - b'0',
+            'a'..='f' => next as u8 - b'a' + 10,
+            'A'..='F' => next as u8 - b'A' + 10,
+            _ => !0,
           };
 
-        let value = parser(text);
-        if value.is_none() || value.as_ref().is_some_and(|v| !range.contains(v))
-        {
-          report::builtins().literal_overflow(span, &range);
+          debug_assert!(
+            digit < radix,
+            "ilex: an invalid digit slipped past the lexer; this is a bug\ninvalid: {start:?}"
+          );
+
+          let Some(new_total) = total
+            .checked_mul(radix as Self)
+            .and_then(|i| i.checked_add(digit as Self)) else { return None };
+
+          total = new_total;
+          count += 1;
         }
 
-        value.unwrap_or(N::max_value())
-      })
-      .collect();
-    Ok(vec)
-  }
-
-  /// Parses this token as an integer.
-  ///
-  /// This function will make a best effort to find a parser implementation for
-  /// the configured requirements of the underlying rule, but this may fail.
-  ///
-  /// In that case, it is recommended to use [`lexical`] directly to construct
-  /// what you want.
-  ///
-  /// Parse failures become diagnostics, and a garbage value is provided for a
-  /// failed integer. Out-of-bounds integers are diagnosed but not modified.
-  pub fn to_int<N>(
-    self,
-    ctx: &Context,
-    range: impl RangeBounds<N>,
-  ) -> Result<N, Exotic>
-  where
-    N: Bounded
-      + fmt::Display
-      + FromLexicalWithOptions<Options = ParseIntegerOptions>,
-  {
-    Ok(self.to_ints(ctx, range)?.drain(..).next().unwrap())
-  }
-
-  /// Parses this token as a float.
-  ///
-  /// This function will make a best effort to find a parser implementation for
-  /// the configured requirements of the underlying rule, but this may fail.
-  ///
-  /// In that case, it is recommended to use [`lexical`] directly to construct
-  /// what you want.
-  ///
-  /// Parse failures become diagnostics, and a garbage value is provided for a
-  /// failed integer. Out-of-bounds integers are diagnosed but not modified.
-  pub fn to_float<N>(
-    self,
-    ctx: &Context,
-    range: impl RangeBounds<N>,
-  ) -> Result<N, Exotic>
-  where
-    N: Bounded
-      + fmt::Display
-      + FromLexicalWithOptions<Options = ParseFloatOptions>,
-  {
-    use lexical::format::NumberFormatBuilder as F;
-
-    let rule = self.rule().unwrap();
-    const TWO: Option<NonZeroU8> = NonZeroU8::new(2);
-    const TEN: Option<NonZeroU8> = NonZeroU8::new(10);
-    const BIN: u128 = F::new()
-      .radix(2)
-      .exponent_base(TWO)
-      .exponent_radix(TEN)
-      .build();
-    const OCT: u128 = F::new()
-      .radix(8)
-      .exponent_base(TWO)
-      .exponent_radix(TEN)
-      .build();
-    const HEX: u128 = F::new()
-      .radix(16)
-      .exponent_base(TWO)
-      .exponent_radix(TEN)
-      .build();
-
-    let parser: fn(&str) -> Option<N> =
-      match (rule.radix, rule.exp.as_ref().unwrap().radix) {
-        (2, 10) => lexical_parse::<N, BIN>,
-        (8, 10) => lexical_parse::<N, OCT>,
-        (16, 10) => lexical_parse::<N, HEX>,
-        (10, 10) => lexical_parse::<N, { F::from_radix(10) }>,
-        (n, m) => {
-          return Err(Exotic(format!(
-          "ilex does not support parsing floats with mant/exp radices {n}, {m}"
-        )))
+        if count == 0 {
+          return None;
         }
-      };
 
-    let text = self.text(ctx);
-    let mut buf;
-    let text = if (!rule.separator.is_empty()
-      && text.contains(&*rule.separator))
-      || self.exponent().is_some()
-    {
-      let mant = ctx.join(self.digit_blocks()).text(ctx);
-      buf = mant.replace(&*rule.separator, "");
-      if let Some(exp) = self.exponent() {
-        buf.push('e');
-        if exp.sign == Sign::Neg {
-          buf.push('-');
-        }
-        buf.push_str(&exp.value.text(ctx).replace(&*rule.separator, ""));
+        Some(total)
       }
-      buf.as_str()
-    } else {
-      text
-    };
-    dbg!(text);
 
-    let value = parser(text);
-    if value.is_none() || value.as_ref().is_some_and(|v| !range.contains(v)) {
-      report::builtins().literal_overflow(self, &range);
+      fn checked_neg(self) -> Option<Self> {
+        self.checked_neg()
+      }
     }
+  )*};
+}
 
-    Ok(value.unwrap_or(N::max_value()))
-  }
-
-  /// Returns the radix (or base) that this number's digits were parsed from.
-  pub fn radix(self) -> u8 {
-    self.rule().unwrap().radix
-  }
-
-  /// Returns the `.`-separated digit chunks of this number.
-  pub fn digit_blocks(self) -> impl Iterator<Item = Span> + 'lex {
-    self.digit_slice().iter().copied()
-  }
-
-  fn digit_slice(self) -> &'lex [Span] {
-    match &self.tok.kind {
-      Kind::Number { digit_blocks, .. } => digit_blocks,
-      _ => panic!("non-rt::Kind::Number inside of Number"),
-    }
-  }
-
-  /// Returns the exponent of this number, if it has one.
-  pub fn exponent(self) -> Option<Exponent> {
-    let Kind::Number { exponent, .. } = &self.tok.kind else {
-      panic!("non-rt::Kind::Number inside of Number")
-    };
-
-    *exponent
-  }
-
-  /// Returns this token's prefix sigil span.
-  pub fn prefix(self) -> Option<Span> {
-    self.tok.prefix
-  }
-
-  /// Checks whether this identifier has a particular prefix.
-  pub fn has_prefix(&self, ctx: &Context, expected: &str) -> bool {
-    self.prefix().is_some_and(|s| s.text(ctx) == expected)
-  }
-
-  /// Returns this token's suffix sigil span.
-  pub fn suffix(&self) -> Option<Span> {
-    self.tok.suffix
-  }
-
-  /// Checks whether this identifier has a particular prefix.
-  pub fn has_suffix(&self, ctx: &Context, expected: &str) -> bool {
-    self.suffix().is_some_and(|s| s.text(ctx) == expected)
-  }
+impl_radix! {
+  i8, i16, i32, i64, i128,
+  u8, u16, u32, u64, u128,
 }
 
 impl<'lex> Token<'lex> for Number<'lex> {
@@ -846,6 +914,10 @@ impl fmt::Debug for Number<'_> {
       .field("radix", &self.radix())
       .field("digits", &self.digit_slice());
 
+    if let Some(sign) = self.sign() {
+      f.field("sign", &sign);
+    }
+
     if let Some(prefix) = self.prefix() {
       f.field("prefix", &prefix);
     }
@@ -854,8 +926,8 @@ impl fmt::Debug for Number<'_> {
       f.field("suffix", &suffix);
     }
 
-    if let Some(exponent) = self.exponent() {
-      f.field("exponent", &exponent);
+    if let Some(exp) = self.exponents().next() {
+      f.field("exponent", &exp);
     }
 
     f.finish()
@@ -899,7 +971,7 @@ impl<'lex> Quoted<'lex> {
   /// There are two kinds of content: either a literal span of Unicode scalars
   /// (represented as a [`Span`] pointing to those characters) or a single
   /// escaped "code", which is an arbitrary `u32` value produced by a callback
-  /// in an [`Escape`][crate::spec::Escape].
+  /// in an [`Escape`][crate::rule::Escape].
   ///
   /// It is up to the user of the library to decode these two content types into
   /// strings. This is one way it could be done for a Unicode string (of
@@ -955,7 +1027,7 @@ impl<'lex> Quoted<'lex> {
     }
   }
 
-  /// Returns this token's prefix sigil span.
+  /// Returns this token's prefix.
   pub fn prefix(self) -> Option<Span> {
     self.tok.prefix
   }
@@ -965,7 +1037,7 @@ impl<'lex> Quoted<'lex> {
     self.prefix().is_some_and(|s| s.text(ctx) == expected)
   }
 
-  /// Returns this token's suffix sigil span.
+  /// Returns this token's suffix.
   pub fn suffix(self) -> Option<Span> {
     self.tok.suffix
   }
@@ -985,8 +1057,8 @@ pub enum Content<Span = self::Span> {
   /// A literal chunk, i.e. UTF-8 text directly from the source file.
   Lit(Span),
 
-  /// An escape sequence (which may be invalid, check your [`Report`]), and
-  /// the span that contained the original contents. E.g. something like
+  /// An escape sequence (which may be invalid, check your [`Report`][crate::Report]),
+  /// and the span that contained the original contents. E.g. something like
   /// `Esc("\\n", '\n' as u32)`.
   Esc(Span, u32),
 }

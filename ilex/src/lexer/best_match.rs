@@ -7,7 +7,9 @@ use byteyarn::YarnRef;
 
 use crate::lexer::rule;
 use crate::lexer::spec::Spec;
+use crate::token::Sign;
 
+use super::range_add;
 use super::Lexeme;
 
 /// A raw match from `Spec::best_match()`.
@@ -33,11 +35,7 @@ pub enum MatchData {
   /// Indicates that a close delimiter may be incoming.
   CloseDelim(Yarn),
   /// Digit data, namely ranges of digits.
-  Digits {
-    blocks: Vec<Range<usize>>,
-    // This is the start of the range, followed by just the digits.
-    exp_block: Option<(usize, Range<usize>)>,
-  },
+  Digits(Vec<DigitData>),
   /// Quote data, namely the "unquoted" range as well as the content and
   /// escapes.
   Quote {
@@ -45,6 +43,14 @@ pub enum MatchData {
     #[allow(clippy::type_complexity)]
     content: Vec<(Range<usize>, Option<Result<u32, Range<usize>>>)>,
   },
+}
+
+#[derive(Debug)]
+pub struct DigitData {
+  pub prefix: Range<usize>,
+  pub sign: Option<(Range<usize>, Sign)>,
+  pub blocks: Vec<Range<usize>>,
+  pub which_exp: usize,
 }
 
 impl Spec {
@@ -63,8 +69,11 @@ impl Spec {
         let rule = self.rule(lexeme);
         match rule {
           rule::Any::Ident(ident) => {
-            let (len, pre, suf) =
-              take_ident(&mut { src }, ident, Some(action.prefix as usize))?;
+            let (len, pre, suf) = take_ident(
+              &mut { src },
+              ident,
+              Some(action.prefix_len as usize),
+            )?;
             Some(Match {
               prefix,
               rule,
@@ -126,7 +135,7 @@ impl Spec {
 
           rule::Any::Number(num) => {
             let (len, pre, suf, data) =
-              take_number(&mut { src }, num, Some(action.prefix as usize))?;
+              take_number(&mut { src }, num, action.prefix_len as usize)?;
             Some(Match {
               prefix,
               rule,
@@ -139,8 +148,11 @@ impl Spec {
           }
 
           rule::Any::Quoted(quote) => {
-            let (len, pre, suf, data, ok) =
-              take_quote(&mut { src }, quote, Some(action.prefix as usize))?;
+            let (len, pre, suf, data, ok) = take_quote(
+              &mut { src },
+              quote,
+              Some(action.prefix_len as usize),
+            )?;
             Some(Match {
               prefix,
               rule,
@@ -173,14 +185,13 @@ impl Spec {
 fn take_ident(
   src: &mut &str,
   rule: &rule::Ident,
-  prefix: Option<usize>,
+  prefix_len: Option<usize>,
 ) -> Option<(usize, usize, usize)> {
-  let prefix_len = match prefix {
-    Some(idx) => take(src, &rule.affixes.prefixes[idx])?,
-    None => take_longest(src, &rule.affixes.prefixes)?,
-  };
+  let prefix_len = prefix_len
+    .or_else(|| take_longest(&mut { *src }, &rule.affixes.prefixes))?;
 
   let mut len = prefix_len;
+  *src = &src[len..];
 
   // Consume the largest prefix of "valid" characters for this value.
   for c in src.chars() {
@@ -310,41 +321,80 @@ fn take_block_comment(
 /// each individual digit block.
 fn take_digits(
   src: &mut &str,
+  prefix_len: usize,
   rule: &rule::Number,
-  radix: u8,
-  max_blocks: Range<u32>,
-) -> Option<(usize, Vec<Range<usize>>)> {
-  let mut digit_blocks = Vec::new();
-  let mut digits = 0;
-  let mut block_start = 0;
+  digits: &rule::Digits,
+  which_exp: usize,
+  is_mant: bool,
+) -> Option<(usize, DigitData)> {
+  let mut digit_data = DigitData {
+    prefix: 0..0,
+    sign: None,
+    blocks: Vec::new(),
+    which_exp,
+  };
+
+  let signs = digits.signs.iter().map(|(y, s)| (y, *s));
 
   let mut len = 0;
-  loop {
-    if let Some(n) = take(src, &rule.separator) {
+  if is_mant {
+    // This is the mantissa, so the sign is before the prefix, and `prefix_len`
+    // includes that.
+    if let Some((n, sign)) = take_longest_with(&mut { *src }, signs) {
+      digit_data.sign = Some((0..n, sign));
       len += n;
-      if n > 0 {
+    }
+
+    digit_data.prefix = len..prefix_len;
+    len = prefix_len;
+  } else {
+    // This is an exponent, so the sign is *after* the prefix, and `prefix_len`
+    // does not include that.
+    digit_data.prefix = len..prefix_len;
+    len = prefix_len;
+
+    if let Some((n, sign)) = take_longest_with(&mut { &src[len..] }, signs) {
+      digit_data.sign = Some((len..len + n, sign));
+      len += n;
+    }
+  }
+
+  // Now we can move on to parsing some digit blocks.
+  *src = &src[len..];
+
+  let mut digits_this_block = 0;
+  let mut block_start = len;
+  loop {
+    if !rule.separator.is_empty() {
+      if let Some(n) = take(src, &rule.separator) {
+        len += n;
         continue;
       }
     }
 
-    let Some(next) = src.chars().next() else { break };
-
-    if next == '.' {
-      if digits == 0 {
-        return None;
-      }
-
-      if digit_blocks.len() as u32 + 1 == max_blocks.end {
+    if let Some(n) = take(&mut { src }, &rule.point) {
+      // This corresponds to either a leading point (which can't happen due to
+      // how the spec is compiled) or a doubled point, e.g. `x..`. We undo
+      // taking the first point here, and a second one after we break out
+      // if necessary.
+      if digits_this_block == 0 {
         break;
       }
-      digit_blocks.push(block_start..len);
+      *src = &src[n..];
 
-      digits = 0;
-      len += take(src, next)?;
+      if digit_data.blocks.len() as u32 + 1 == digits.max_chunks {
+        break;
+      }
+
+      digit_data.blocks.push(block_start..len);
+
+      len += n;
+      digits_this_block = 0;
       block_start = len;
       continue;
     }
 
+    let Some(next) = src.chars().next() else { break };
     let digit = match next {
       '0'..='9' => next as u8 - b'0',
       'a'..='f' => next as u8 - b'a' + 10,
@@ -352,21 +402,29 @@ fn take_digits(
       _ => break,
     };
 
-    if digit >= radix {
+    if digit >= digits.radix {
       break;
     }
 
-    digits += 1;
+    digits_this_block += 1;
     len += take(src, next)?;
   }
 
-  if digits != 0 {
-    digit_blocks.push(block_start..len);
-  } else if digit_blocks.is_empty() {
+  if digits_this_block != 0 {
+    digit_data.blocks.push(block_start..len);
+  } else if digit_data.blocks.is_empty() {
+    return None;
+  } else {
+    // This means we parsed something like `1.2.`. We need to give back
+    // that extra dot.
+    len -= rule.point.len();
+  }
+
+  if (digit_data.blocks.len() as u32) < digits.min_chunks {
     return None;
   }
 
-  Some((len, digit_blocks))
+  Some((len, digit_data))
 }
 
 /// Lexes a number literal and returns its length, prefix length, and suffix
@@ -374,58 +432,45 @@ fn take_digits(
 fn take_number(
   src: &mut &str,
   rule: &rule::Number,
-  prefix: Option<usize>,
+  prefix_len: usize,
 ) -> Option<(usize, usize, usize, MatchData)> {
-  let prefix_len = match prefix {
-    Some(idx) => take(src, &rule.affixes.prefixes[idx])?,
-    None => take_longest(src, &rule.affixes.prefixes)?,
-  };
+  let (mut len, mant) =
+    take_digits(src, prefix_len, rule, &rule.mant, !0, true)?;
+  let prefix_len_without_sign = prefix_len
+    - mant
+      .sign
+      .as_ref()
+      .map(|(r, _)| r.end - r.start)
+      .unwrap_or(0);
 
-  let mut len = prefix_len;
+  let mut blocks = vec![mant];
+  while let Some((i, (prefix, exp))) = rule
+    .exps
+    .iter()
+    .enumerate()
+    .filter(|(_, (y, _))| src.starts_with(y.as_str()))
+    .max_by_key(|(_, (y, _))| y.len())
+  {
+    let (exp_len, mut exp) =
+      take_digits(src, prefix.len(), rule, exp, i, false)?;
+    exp.prefix = range_add(&exp.prefix, len);
+    exp.sign = exp.sign.map(|(r, s)| (range_add(&r, len), s));
+    for block in &mut exp.blocks {
+      *block = range_add(block, len);
+    }
 
-  let (digits, mut blocks) =
-    take_digits(src, rule, rule.radix, rule.decimal_points.clone())?;
-  if (blocks.len() as u32) < rule.decimal_points.start {
-    return None;
+    len += exp_len;
+    blocks.push(exp);
   }
-
-  for block in &mut blocks {
-    *block = len + block.start..len + block.end;
-  }
-
-  len += digits;
-
-  let exp_block = rule.exp.as_ref().and_then(|exp| {
-    let exp_start = len;
-    match exp.prefixes.iter().filter_map(|pre| take(src, pre)).next() {
-      Some(n) => len += n,
-      None => return None,
-    }
-
-    if let Some(n) = take(src, '+') {
-      len += n;
-    } else if let Some(n) = take(src, '-') {
-      len += n;
-    }
-
-    let (digits, mut blocks) = take_digits(src, rule, exp.radix, 0..1)?;
-    for block in &mut blocks {
-      *block = len + block.start..len + block.end;
-    }
-
-    len += digits;
-    let range = blocks.get(0).cloned();
-    range.map(|r| (exp_start, r))
-  });
 
   let suffix_len = take_longest(src, &rule.affixes.suffixes)?;
   len += suffix_len;
 
   Some((
     len,
-    prefix_len,
+    prefix_len_without_sign,
     suffix_len,
-    MatchData::Digits { blocks, exp_block },
+    MatchData::Digits(blocks),
   ))
 }
 
@@ -453,14 +498,13 @@ fn make_close_delim<'a>(
 fn take_quote(
   src: &mut &str,
   rule: &rule::Quoted,
-  prefix: Option<usize>,
+  prefix_len: Option<usize>,
 ) -> Option<(usize, usize, usize, MatchData, bool)> {
+  let prefix_len = prefix_len
+    .or_else(|| take_longest(&mut { *src }, &rule.affixes.prefixes))?;
   let start = *src;
-  let prefix_len = match prefix {
-    Some(idx) => take(src, &rule.affixes.prefixes[idx])?,
-    None => take_longest(src, &rule.affixes.prefixes)?,
-  };
   let mut len = prefix_len;
+  *src = &src[len..];
 
   let (open, close_data) = take_open_delim(src, &rule.bracket)?;
   len += open;
@@ -572,13 +616,19 @@ fn take_longest<'a, Y: Into<YarnRef<'a, str>>>(
   s: &mut &str,
   prefixes: impl IntoIterator<Item = Y>,
 ) -> Option<usize> {
-  let len = prefixes
-    .into_iter()
-    .map(Y::into)
-    .filter(|pre| s.starts_with(pre.as_ref()))
-    .map(YarnRef::len)
-    .max()?;
+  take_longest_with(s, prefixes.into_iter().map(|y| (y, ()))).map(|(n, _)| n)
+}
 
-  *s = &s[len..];
-  Some(len)
+fn take_longest_with<'a, Y: Into<YarnRef<'a, str>>, T>(
+  s: &mut &str,
+  prefixes: impl IntoIterator<Item = (Y, T)>,
+) -> Option<(usize, T)> {
+  let (pre, val) = prefixes
+    .into_iter()
+    .map(|(y, t)| (y.into(), t))
+    .filter(|(pre, _)| s.starts_with(pre.as_ref()))
+    .max_by_key(|(y, _)| y.len())?;
+
+  *s = &s[pre.len()..];
+  Some((pre.len(), val))
 }

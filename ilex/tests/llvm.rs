@@ -1,9 +1,8 @@
 use ilex::rule::*;
+use ilex::token::testing;
 use ilex::token::testing::Matcher;
 use ilex::token::Content::Esc;
 use ilex::token::Content::Lit;
-
-mod util;
 
 ilex::spec! {
   struct Llvm {
@@ -36,7 +35,7 @@ ilex::spec! {
     label: Keyword = "label",
     null: Keyword = "null",
     ptr: Keyword = "ptr",
-    int: Number = Number::new(10).with_prefix("i"),
+    int: Number = Number::new(10).prefix("i"),
     void: Keyword = "void",
 
     private: Keyword = "private",
@@ -53,19 +52,19 @@ ilex::spec! {
           parse: Box::new(|hex| u32::from_str_radix(hex, 16).ok()),
         },
       )
-      .with_prefixes(["", "c"]),
+      .prefixes(["", "c"]),
 
     #[named("identifier")]
     label_ident: Ident = Ident::new()
       .ascii_only()
-      .with_starts(".0123456789".chars())
-      .with_suffix(":"),
+      .extra_starts(".0123456789".chars())
+      .suffix(":"),
 
     #[named("identifier")]
     bare: Ident = Ident::new()
       .ascii_only()
-      .with_starts(".0123456789".chars())
-      .with_prefixes(["!", "@", "%"]),
+      .extra_starts(".0123456789".chars())
+      .prefixes(["!", "@", "%"]),
 
     #[named("quoted identifier")]
     quoted: Quoted = Quoted::new('"')
@@ -73,16 +72,16 @@ ilex::spec! {
         char_count: 2,
         parse: Box::new(|hex| u32::from_str_radix(hex, 16).ok()),
       })
-      .with_prefixes(["!", "@", "%"]),
+      .prefixes(["!", "@", "%"]),
 
     #[named("number")]
     dec: Number = Number::new(10)
-      .decimal_points(0..2)
-      .exponent_part(NumberExponent::new(10, ["e", "E"]))
-      .with_prefixes(["", "-"]),
+      .minus()
+      .point_limit(0..2)
+      .exponents(["e", "E"], Digits::new(10).plus().minus()),
 
     #[named("number")]
-    hex: Number = Number::new(16).with_prefixes(["0x", "-0x"]),
+    hex: Number = Number::new(16).minus().prefix("0x"),
   }
 }
 
@@ -119,10 +118,13 @@ fn llvm() {
       ret void
     }
   "#;
+  let mut ctx = ilex::Context::new();
+  let tokens = ctx.new_file("test.file", text).lex(llvm.spec()).unwrap();
+  eprintln!("stream: {tokens:#?}");
 
-  util::drive(
-    llvm.spec(),
-    text,
+  testing::recognize_tokens(
+    &ctx,
+    tokens.cursor(),
     &vec![
       llvm
         .bare
@@ -286,5 +288,6 @@ fn llvm() {
       ),
       Matcher::eof(),
     ],
-  );
+  )
+  .unwrap();
 }

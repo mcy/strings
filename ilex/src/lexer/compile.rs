@@ -14,20 +14,21 @@ pub struct Compiled {
 }
 
 /// An action to perform in response to matching a prefix.
+#[derive(Debug)]
 pub struct Action {
   /// The lexeme we should match on.
   pub lexeme: Lexeme<rule::Any>,
-  /// If the lexeme has prefixes, which prefix we chose as a result of choosing
-  /// this prefix.
-  pub prefix: u32,
+  /// How much of the actually matched prefix in the trie is actual skippable
+  /// prefix.
+  pub prefix_len: u32,
 }
 
 impl Compiled {
   fn add_lexeme(&mut self, key: Yarn, lexeme: Lexeme<rule::Any>) {
-    self
-      .trie
-      .get_or_insert_default(key)
-      .push(Action { lexeme, prefix: 0 });
+    self.trie.get_or_insert_default(key).push(Action {
+      lexeme,
+      prefix_len: 0,
+    });
   }
 
   fn add_action(&mut self, key: Yarn, action: Action) {
@@ -59,12 +60,12 @@ pub fn compile(builder: SpecBuilder) -> Spec {
       }
 
       rule::Any::Ident(rule) => {
-        for (i, prefix) in rule.affixes.prefixes.iter().enumerate() {
+        for prefix in &rule.affixes.prefixes {
           c.add_action(
             prefix.clone(),
             Action {
               lexeme,
-              prefix: i.try_into().unwrap(),
+              prefix_len: prefix.len() as u32,
             },
           );
         }
@@ -72,12 +73,12 @@ pub fn compile(builder: SpecBuilder) -> Spec {
 
       rule::Any::Quoted(rule) => {
         let (open, _) = make_delim_prefixes(&rule.bracket);
-        for (i, prefix) in rule.affixes.prefixes.iter().enumerate() {
+        for prefix in &rule.affixes.prefixes {
           c.add_action(
             Yarn::concat(&[prefix, &open]),
             Action {
               lexeme,
-              prefix: i.try_into().unwrap(),
+              prefix_len: prefix.len() as u32,
             },
           );
         }
@@ -85,10 +86,6 @@ pub fn compile(builder: SpecBuilder) -> Spec {
 
       rule::Any::Number(rule) => {
         const ALPHABET: &str = "0123456789abcdef";
-        assert!(
-          (2..=16).contains(&rule.radix),
-          "bases greater than 16 or smaller than 2 are not supported"
-        );
 
         // We need to include the digit. Notably, this happens to make things
         // like the classic C-style octal escapes work: if b.prefix is `0`,
@@ -98,31 +95,45 @@ pub fn compile(builder: SpecBuilder) -> Spec {
         //
         // However, this does mean that `08` matches as a decimal integer.
         // Hopefully users are writing good tests. :D
-        let mut insert_with_digit = |separator: &Yarn, digit: char| {
-          for (i, prefix) in rule.affixes.prefixes.iter().enumerate() {
-            c.add_action(
-              Yarn::concat(&[prefix, separator, &Yarn::from(digit)]),
-              Action {
-                lexeme,
-                prefix: i.try_into().unwrap(),
-              },
-            );
+        let mut insert_with_digit = |digit: char| {
+          for sign in rule
+            .mant
+            .signs
+            .iter()
+            .map(|(s, _)| s.as_str())
+            .chain(Some(""))
+          {
+            for prefix in &rule.affixes.prefixes {
+              c.add_action(
+                Yarn::concat(&[sign, prefix, &Yarn::from(digit)]),
+                Action {
+                  lexeme,
+                  prefix_len: (sign.len() + prefix.len()) as u32,
+                },
+              );
+
+              c.add_action(
+                Yarn::concat(&[
+                  sign,
+                  prefix,
+                  &rule.separator,
+                  &Yarn::from(digit),
+                ]),
+                Action {
+                  lexeme,
+                  prefix_len: (sign.len() + prefix.len()) as u32,
+                },
+              );
+            }
           }
         };
 
-        for lower in ALPHABET[..rule.radix as usize].chars() {
+        for lower in ALPHABET[..rule.mant.radix as usize].chars() {
           let upper = lower.to_ascii_uppercase();
 
-          insert_with_digit(Yarn::empty(), lower);
+          insert_with_digit(lower);
           if upper != lower {
-            insert_with_digit(Yarn::empty(), upper);
-          }
-
-          if !rule.separator.is_empty() {
-            insert_with_digit(&rule.separator, lower);
-            if upper != lower {
-              insert_with_digit(&rule.separator, upper);
-            }
+            insert_with_digit(upper);
           }
         }
       }

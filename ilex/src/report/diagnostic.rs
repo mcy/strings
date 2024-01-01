@@ -95,6 +95,17 @@ impl Diagnostic {
   ) -> Self {
     self.note(super::display_by(fmt))
   }
+
+  /// Updates the "reported at" information for this diagnostic.
+  ///
+  /// This information is only intended to be used for tool developers to
+  /// debug where diagnostics are being emitted.
+  pub fn reported_at(mut self, at: &'static panic::Location<'static>) -> Self {
+    if self.report.state.opts.show_report_locations {
+      self.info.reported_at = Some(at)
+    }
+    self
+  }
 }
 
 impl Drop for Diagnostic {

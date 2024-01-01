@@ -1,6 +1,9 @@
 //! Lexer specifications.
 
+use core::fmt;
 use std::marker::PhantomData;
+use std::ops::Add;
+use std::ops::Range;
 
 use crate::Never;
 
@@ -11,10 +14,10 @@ pub mod rule;
 pub mod spec;
 pub mod stringify;
 
-/// An ID for a lexeme that a [`Spec`] can capture.
+/// An ID for a lexeme that a [`Spec`][crate::Spec] can capture.
 ///
-/// Methods on [`SpecBuilder`] will return lexemes that can be used to
-/// distinguish what rule a [`Token`][crate::Token] came from.
+/// Methods on [`SpecBuilder`][crate::SpecBuilder] will return lexemes that can
+/// be used to distinguish what rule a [`Token`][crate::token::Token] came from.
 #[repr(transparent)]
 pub struct Lexeme<Rule> {
   id: u32,
@@ -67,3 +70,16 @@ impl<R> PartialEq<Lexeme<R>> for Lexeme<R> {
 }
 
 impl<R> Eq for Lexeme<R> {}
+
+impl<R> fmt::Debug for Lexeme<R> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "#{}", self.id)
+  }
+}
+
+fn range_add<T>(range: &Range<T>, offset: T) -> Range<T>
+where
+  T: Add<Output = T> + Copy,
+{
+  (range.start + offset)..(range.end + offset)
+}

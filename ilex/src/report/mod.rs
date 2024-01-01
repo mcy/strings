@@ -11,6 +11,7 @@ use std::io;
 use std::io::Write;
 use std::mem;
 use std::panic;
+use std::panic::Location;
 use std::process;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU32;
@@ -113,9 +114,10 @@ impl Report {
         kind: Some(diagnostic::Kind::Error),
         snippets: Vec::new(),
         notes: Vec::new(),
-        reported_at: Some(panic::Location::caller()),
+        reported_at: None,
       },
     }
+    .reported_at(Location::caller())
   }
 
   /// Like [`Report::error()`], but accepts a closure for generating the
@@ -138,9 +140,10 @@ impl Report {
         kind: Some(diagnostic::Kind::Warning),
         snippets: Vec::new(),
         notes: Vec::new(),
-        reported_at: Some(panic::Location::caller()),
+        reported_at: None,
       },
     }
+    .reported_at(Location::caller())
   }
 
   /// Like [`Report::warn()`], but accepts a closure for generating the
@@ -163,9 +166,10 @@ impl Report {
         kind: Some(diagnostic::Kind::Note),
         snippets: Vec::new(),
         notes: Vec::new(),
-        reported_at: Some(panic::Location::caller()),
+        reported_at: None,
       },
     }
+    .reported_at(Location::caller())
   }
 
   /// Like [`Report::note()`], but accepts a closure for generating the
