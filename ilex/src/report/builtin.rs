@@ -3,12 +3,12 @@
 use std::fmt;
 use std::ops::Bound;
 use std::ops::RangeBounds;
+use std::panic::Location;
 
 use format_args as f;
 
 use byteyarn::yarn;
 use byteyarn::YarnBox;
-use num_traits::Bounded;
 
 use crate::file::Context;
 use crate::file::Spanned;
@@ -38,6 +38,33 @@ pub fn builtins() -> Builtins {
 }
 
 impl Builtins {
+  /// Generates an "unexpected" diagnostic.
+  #[track_caller]
+  pub fn unexpected<'a, 'b>(
+    self,
+    spec: &Spec,
+    found: impl Into<Expected<'a>>,
+    unexpected_in: impl Into<Expected<'b>>,
+    at: impl Spanned,
+  ) -> Diagnostic {
+    self
+      .0
+      .in_context(|this, ctx| {
+        let found = found.into();
+
+        let diagnostic = this
+          .error(f!(
+            "unexpected {} in {}",
+            found.for_user_diagnostic(spec, ctx),
+            unexpected_in.into().for_user_diagnostic(spec, ctx),
+          ))
+          .at(at);
+
+        non_printable_note(ctx, found, diagnostic)
+      })
+      .reported_at(Location::caller())
+  }
+
   /// Generates an "expected one of these tokens but got something else"
   /// diagnostic.
   #[track_caller]
@@ -48,83 +75,104 @@ impl Builtins {
     found: impl Into<Expected<'b>>,
     at: impl Spanned,
   ) -> Diagnostic {
-    self.0.in_context(|this, ctx| {
-      let expected = expected.into_iter().map(Into::into).collect::<Vec<_>>();
-      let alts = disjunction_to_string(spec, ctx, &expected);
-      let found = found.into();
+    self
+      .0
+      .in_context(|this, ctx| {
+        let expected = expected.into_iter().map(Into::into).collect::<Vec<_>>();
+        let alts = disjunction_to_string(spec, ctx, &expected);
+        let found = found.into();
 
-      let diagnostic = this
-        .error(f!(
-          "expected {alts}, but found {}",
-          found.for_user_diagnostic(spec, ctx)
-        ))
-        .saying(at, f!("expected {alts}"));
+        let diagnostic = this
+          .error(f!(
+            "expected {alts}, but found {}",
+            found.for_user_diagnostic(spec, ctx)
+          ))
+          .saying(at, f!("expected {alts}"));
 
-      non_printable_note(ctx, found, diagnostic)
-    })
+        non_printable_note(ctx, found, diagnostic)
+      })
+      .reported_at(Location::caller())
   }
 
   /// Generates an "unclosed delimiter" diagnostic, for when a delimiter is
   /// not closed before the end of the input.
   #[track_caller]
-  pub fn unclosed_delimiter(
+  pub fn unclosed<'a>(
     self,
+    spec: &Spec,
+    what: impl Into<Expected<'a>>,
     open: impl Spanned,
     eof: impl Spanned,
   ) -> Diagnostic {
     self
       .0
-      .error("found an unclosed delimiter")
-      .remark(open, "opened here")
-      .saying(eof, "expected it to be closed here")
+      .in_context(|this, ctx| {
+        this
+          .error(f!(
+            "found an unclosed {}",
+            what.into().for_user_diagnostic(spec, ctx)
+          ))
+          .remark(open, "opened here")
+          .saying(eof, "expected it to be closed here")
+      })
+      .reported_at(Location::caller())
   }
 
   /// Generates an "invalid escape sequence" diagnostic, for when an
   /// [`Escape::Invalid`][crate::lexer::rule::Escape::Invalid] is encountered.
   #[track_caller]
   pub fn invalid_escape(self, at: impl Spanned) -> Diagnostic {
-    self.0.in_context(|this, ctx| {
-      let seq = at.text(ctx);
-      this
-        .error(f!("found an invalid escape sequence: `{seq}`"))
-        .saying(at, "invalid escape sequence")
-    })
+    self
+      .0
+      .in_context(|this, ctx| {
+        let seq = at.text(ctx);
+        this
+          .error(f!("found an invalid escape sequence: `{seq}`"))
+          .saying(at, "invalid escape sequence")
+      })
+      .reported_at(Location::caller())
   }
 
   /// Generates a "numeric literal overflowed" diagnostic.
   #[track_caller]
-  pub fn literal_overflow<N>(
+  pub fn literal_overflow<'a, N: fmt::Display>(
     self,
+    spec: &Spec,
+    what: impl Into<Expected<'a>>,
     at: impl Spanned,
     range: &impl RangeBounds<N>,
-  ) -> Diagnostic
-  where
-    N: Bounded + fmt::Debug,
-  {
-    let (x1, x2);
+    min: &dyn fmt::Display,
+    max: &dyn fmt::Display,
+  ) -> Diagnostic {
     let start = match range.start_bound() {
       Bound::Included(x) | Bound::Excluded(x) => x,
-      Bound::Unbounded => {
-        x1 = N::min_value();
-        &x1
-      }
+      Bound::Unbounded => min,
     };
+
     let end = match range.end_bound() {
       Bound::Included(x) | Bound::Excluded(x) => x,
-      Bound::Unbounded => {
-        x2 = N::max_value();
-        &x2
-      }
+      Bound::Unbounded => max,
     };
 
     let is_exc = matches!(range.start_bound(), Bound::Excluded(..));
     let is_inc = matches!(range.end_bound(), Bound::Included(..));
 
-    self.0.error("numeric literal overflowed").at(at).note(f!(
-      "expected value in the range {start:?}{}..{}{end:?}",
-      if is_exc { "<" } else { "" },
-      if is_inc { "=" } else { "" },
-    ))
+    self
+      .0
+      .in_context(|this, ctx| {
+        this
+          .error(f!(
+            "{} overflowed",
+            what.into().for_user_diagnostic(spec, ctx)
+          ))
+          .at(at)
+          .note(f!(
+            "expected value in the range {start}{}..{}{end}",
+            if is_exc { "<" } else { "" },
+            if is_inc { "=" } else { "" },
+          ))
+      })
+      .reported_at(Location::caller())
   }
 }
 
@@ -291,7 +339,7 @@ impl Expected<'_> {
   ) -> YarnBox<'a, str> {
     use crate::lexer::stringify::lexeme_to_string;
     match self {
-      Self::Literal(lit) => yarn!("`{lit}`"),
+      Self::Literal(lit) => YarnBox::new(lit),
       Self::Lexeme(lex) => lexeme_to_string(spec, *lex),
       Self::Token(tok) => match tok {
         token::Any::Eof(..) => yarn!("<eof>"),
@@ -302,9 +350,9 @@ impl Expected<'_> {
   }
 }
 
-impl<'lex, S: AsRef<str> + ?Sized> From<&'lex S> for Expected<'lex> {
-  fn from(value: &'lex S) -> Self {
-    Self::Literal(value.as_ref())
+impl<'lex> From<&'lex str> for Expected<'lex> {
+  fn from(value: &'lex str) -> Self {
+    Self::Literal(value)
   }
 }
 

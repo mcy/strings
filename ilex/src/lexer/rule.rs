@@ -3,6 +3,7 @@
 use core::fmt;
 use std::mem;
 use std::ops::Range;
+use std::ops::RangeBounds;
 
 use byteyarn::Yarn;
 use twie::Trie;
@@ -17,6 +18,8 @@ pub trait Rule: fmt::Debug + TryFrom<Any> + Into<Any> + 'static {
 
   fn try_from_ref(value: &Any) -> Result<&Self, WrongKind>;
 }
+
+pub use crate::token::Sign;
 
 /// Any of the possible rule types in a [`Spec`][crate::Spec].
 #[derive(Debug)]
@@ -212,29 +215,29 @@ impl Default for Affixes {
   }
 }
 
-macro_rules! with_affixes {
+macro_rules! affixes {
   () => {
     /// Adds a prefix for this rule.
     ///
     /// If *any* prefixes are added, this rule *must* start with one of them.
     /// To make prefixes optional, add `""` as a prefix.
-    pub fn with_prefix(self, prefix: impl Into<Yarn>) -> Self {
-      self.with_prefixes([prefix])
+    pub fn prefix(self, prefix: impl Into<Yarn>) -> Self {
+      self.prefixes([prefix])
     }
 
     /// Adds a suffix for this rule.
     ///
     /// If *any* suffixes are added, this rule *must* end with one of them.
     /// To make suffixes optional, add `""` as a suffix.
-    pub fn with_suffix(self, suffix: impl Into<Yarn>) -> Self {
-      self.with_suffixes([suffix])
+    pub fn suffix(self, suffix: impl Into<Yarn>) -> Self {
+      self.suffixes([suffix])
     }
 
     /// Adds prefixes for this rule.
     ///
     /// If *any* prefixes are added, this rule *must* start with one of them.
     /// To make prefixes optional, add `""` as a prefix.
-    pub fn with_prefixes<Y: Into<Yarn>>(
+    pub fn prefixes<Y: Into<Yarn>>(
       mut self,
       prefixes: impl IntoIterator<Item = Y>,
     ) -> Self {
@@ -252,7 +255,7 @@ macro_rules! with_affixes {
     ///
     /// If *any* suffixes are added, this rule *must* end with one of them.
     /// To make suffixes optional, add `""` as a suffix.
-    pub fn with_suffixes<Y: Into<Yarn>>(
+    pub fn suffixes<Y: Into<Yarn>>(
       mut self,
       suffixes: impl IntoIterator<Item = Y>,
     ) -> Self {
@@ -299,15 +302,15 @@ impl Ident {
   ///
   /// Start characters are any characters that can appear anywhere on an
   /// identifier, including the start.
-  pub fn with_start(self, c: char) -> Self {
-    self.with_starts([c])
+  pub fn extra_start(self, c: char) -> Self {
+    self.extra_starts([c])
   }
 
   /// Adds additional start characters for this rule.
   ///
   /// Start characters are any characters that can appear anywhere on an
   /// identifier, including the start.
-  pub fn with_starts(mut self, chars: impl IntoIterator<Item = char>) -> Self {
+  pub fn extra_starts(mut self, chars: impl IntoIterator<Item = char>) -> Self {
     self.extra_starts.extend(chars);
     self
   }
@@ -316,15 +319,15 @@ impl Ident {
   ///
   /// Continue characters are any characters that can appear anywhere on an
   /// identifier, except the start.
-  pub fn with_continue(self, c: char) -> Self {
-    self.with_continues([c])
+  pub fn extra_continue(self, c: char) -> Self {
+    self.extra_continues([c])
   }
 
   /// Adds additional continue characters for this rule.
   ///
   /// Continue characters are any characters that can appear anywhere on an
   /// identifier, except the start.
-  pub fn with_continues(
+  pub fn extra_continues(
     mut self,
     chars: impl IntoIterator<Item = char>,
   ) -> Self {
@@ -332,7 +335,7 @@ impl Ident {
     self
   }
 
-  with_affixes!();
+  affixes!();
 
   pub(super) fn is_valid_start(&self, c: char) -> bool {
     if !self.ascii_only && c.is_xid_start() {
@@ -501,7 +504,7 @@ impl Quoted {
       )
   }
 
-  with_affixes!();
+  affixes!();
 }
 
 impl Rule for Quoted {
@@ -608,35 +611,159 @@ impl<U: Into<u32>> From<U> for Escape {
 /// Numbers are things like `1`, `0xdeadbeef` and `3.14`.
 #[derive(Debug)]
 pub struct Number {
-  pub(crate) separator: Yarn,
-  pub(crate) radix: u8,
-  pub(crate) exp: Option<NumberExponent>,
+  pub(crate) mant: Digits,
+  pub(crate) exps: Vec<(Yarn, Digits)>,
 
-  pub(super) decimal_points: Range<u32>,
+  pub(crate) separator: Yarn,
+  pub(crate) point: Yarn,
   pub(super) affixes: Affixes,
 }
 
 impl Number {
-  /// Creates a new base, with the given radix (which must be between 2 and 16).
+  /// Creates a new rule with the given radix (which must be between 2 and 16).
   ///
-  /// For example, `Number::new(16)` creates a base for hexadecimal.
+  /// For example, `Number::new(16)` creates a rule for hexadecimal.
   pub fn new(radix: u8) -> Self {
+    assert!(
+      (2..=16).contains(&radix),
+      "radix must be within 2..=16, got {radix}"
+    );
+
+    Self::from_digits(Digits::new(radix))
+  }
+
+  /// Creates a new rule from a [`Digits`].
+  pub fn from_digits(digits: Digits) -> Self {
     Self {
-      radix,
+      mant: digits,
+      exps: Vec::new(),
       separator: "".into(),
-      decimal_points: 0..1,
-      exp: None,
+      point: ".".into(),
       affixes: Affixes::default(),
     }
   }
 
-  /// Adds a new separator type to this rule.
+  /// Sets the digit separator for this rule.
   ///
   /// A separator is a character that can occur within a number but which is
   /// ignored, like `_` in Rust or `'` in C++.
-  pub fn with_separator(mut self, x: impl Into<Yarn>) -> Self {
+  pub fn separator(mut self, x: impl Into<Yarn>) -> Self {
     self.separator = x.into();
     self
+  }
+
+  /// Sets the point (e.g. decimal point) for this rule.
+  ///
+  /// This defaults to `.`, but could be repurposed into, say, `/` for a
+  /// date literal
+  pub fn point(mut self, x: impl Into<Yarn>) -> Self {
+    self.point = x.into();
+    assert!(
+      !self.point.is_empty(),
+      "the point separator cannot be empty"
+    );
+    self
+  }
+
+  /// Adds a new kind of sign to this rule.
+  ///
+  /// Signs can appear in front of a block of digits and specify a [`Sign`]
+  /// value. If this is value represents the mantissa digits of a [`Number`],
+  /// it
+  pub fn sign(mut self, prefix: impl Into<Yarn>, value: Sign) -> Self {
+    self.mant = self.mant.sign(prefix, value);
+    self
+  }
+
+  /// Adds the plus sign with the usual meaning.
+  pub fn plus(self) -> Self {
+    self.sign('+', Sign::Pos)
+  }
+
+  /// Adds the mins sign with the usual meaning.
+  pub fn minus(self) -> Self {
+    self.sign('-', Sign::Neg)
+  }
+
+  /// Sets the maximum number of decimal points; defailts to `..=0`.
+  pub fn point_limit(mut self, range: Range<u32>) -> Self {
+    self.mant = self.mant.point_limit(range);
+    self
+  }
+
+  /// Sets the exponent part information, for e.g. scientific notation in
+  /// floating point numbers.
+  ///
+  /// `delim` is the character that introduces this type of exponent. A number
+  /// rule may have multiple kinds of exponents.
+  pub fn exponent(mut self, delim: impl Into<Yarn>, exp: Digits) -> Self {
+    self.exps.push((delim.into(), exp));
+    self
+  }
+
+  /// Convenience function for setting an exponent with many delimiters.
+  pub fn exponents<Y: Into<Yarn>>(
+    mut self,
+    delims: impl IntoIterator<Item = Y>,
+    exp: Digits,
+  ) -> Self {
+    for delim in delims {
+      self.exps.push((delim.into(), exp.clone()));
+    }
+    self
+  }
+
+  affixes!();
+}
+
+/// A digit chunk within a [`Number`].
+///
+/// This is used to describe the format of both mantissa of the number, and its
+/// exponents.
+#[derive(Debug, Clone)]
+pub struct Digits {
+  pub(crate) radix: u8,
+  pub(crate) signs: Vec<(Yarn, Sign)>,
+  pub(super) min_chunks: u32,
+  pub(super) max_chunks: u32,
+}
+
+impl Digits {
+  /// Creates a new base, with the given radix (which must be between 2 and 16).
+  ///
+  /// For example, `Number::new(16)` creates a base for hexadecimal.
+  pub fn new(radix: u8) -> Self {
+    assert!(
+      (2..=16).contains(&radix),
+      "radix must be within 2..=16, got {radix}"
+    );
+
+    Self {
+      radix,
+      signs: Vec::new(),
+      min_chunks: 1,
+      max_chunks: 1,
+    }
+  }
+
+  /// Adds a new kind of sign to this digit block.
+  ///
+  /// Signs can appear in front of a block of digits and specify a [`Sign`]
+  /// value. If this is value represents the mantissa digits of a [`Number`],
+  /// it
+  pub fn sign(mut self, prefix: impl Into<Yarn>, value: Sign) -> Self {
+    self.signs.push((prefix.into(), value));
+    self
+  }
+
+  /// Adds the plus sign with the usual meaning.
+  pub fn plus(self) -> Self {
+    self.sign('+', Sign::Pos)
+  }
+
+  /// Adds the mins sign with the usual meaning.
+  pub fn minus(self) -> Self {
+    self.sign('-', Sign::Neg)
   }
 
   /// Sets the maximum number of decimal points.
@@ -645,19 +772,20 @@ impl Number {
   ///
   /// It may also be set to higher values, which allows parsing of things that
   /// look like version strings, e.g. `1.0.0`.
-  pub fn decimal_points(mut self, range: Range<u32>) -> Self {
-    self.decimal_points = range;
+  pub fn point_limit(mut self, range: impl RangeBounds<u32>) -> Self {
+    self.min_chunks = match range.start_bound() {
+      std::ops::Bound::Included(&x) => x.saturating_add(1),
+      std::ops::Bound::Excluded(&x) => x.saturating_add(2),
+      std::ops::Bound::Unbounded => 1,
+    };
+    self.max_chunks = match range.end_bound() {
+      std::ops::Bound::Included(&x) => x.saturating_add(1),
+      std::ops::Bound::Excluded(&x) => x,
+      std::ops::Bound::Unbounded => u32::MAX,
+    };
+
     self
   }
-
-  /// Sets the exponent part information, for e.g. scientific notation in
-  /// floating point numbers.
-  pub fn exponent_part(mut self, exp: NumberExponent) -> Self {
-    self.exp = Some(exp);
-    self
-  }
-
-  with_affixes!();
 }
 
 impl Rule for Number {
@@ -690,32 +818,6 @@ impl TryFrom<Any> for Number {
         want: "Number",
         got: value.debug_name(),
       }),
-    }
-  }
-}
-
-/// An the exponent part of a [`Number`].
-///
-/// This specifies the `e-10` part of something like `1.5e-10`.
-#[derive(Debug)]
-pub struct NumberExponent {
-  pub(crate) radix: u8,
-  pub(super) prefixes: Vec<Yarn>,
-}
-
-impl NumberExponent {
-  /// Creates a new exponent, with the given radix (which must be between 2 and
-  /// 16) and prefix (which must be non-empty).
-  ///
-  /// For example, `NumberExponent::new(10, ["e", "E"])` creates a base for
-  /// classic scientific notation.
-  pub fn new<Y: Into<Yarn>>(
-    radix: u8,
-    prefixes: impl IntoIterator<Item = Y>,
-  ) -> Self {
-    Self {
-      radix,
-      prefixes: prefixes.into_iter().map(Y::into).collect(),
     }
   }
 }
@@ -761,7 +863,7 @@ impl TryFrom<Any> for Comment {
 }
 
 impl Rule for Never {
-  type Token<'lex> = Never;
+  type Token<'lex> = token::Eof<'lex>;
 
   fn try_from_ref(value: &Any) -> Result<&Self, WrongKind> {
     Err(WrongKind {

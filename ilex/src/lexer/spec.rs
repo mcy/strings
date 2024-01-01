@@ -28,19 +28,6 @@ impl Spec {
   ///
   /// Behavior given another spec's lexeme is unspecified.
   ///
-  /// ```
-  /// # use ilex::*;
-  /// let mut builder = Spec::builder();
-  /// let ident = builder.rule(rule::Ident::new().with_prefix("%"));
-  ///
-  /// let str = builder.rule(
-  ///   rule::Quoted::new('"')
-  ///     .with_prefix("r")
-  ///     .add_rust_escapes()
-  /// );
-  /// let spec = builder.compile();
-  /// ```
-  ///
   /// # Panics
   ///
   /// May panic if the given lexeme came from another spec.
@@ -78,12 +65,13 @@ impl SpecBuilder {
   ///
   /// ```
   /// # use ilex::*;
+  /// use ilex::rule;
   /// let mut builder = Spec::builder();
-  /// let ident = builder.rule(rule::Ident::new().with_prefix("%"));
+  /// let ident = builder.rule(rule::Ident::new().prefix("%"));
   ///
   /// let str = builder.rule(
   ///   rule::Quoted::new('"')
-  ///     .with_prefix("r")
+  ///     .prefix("r")
   ///     .add_rust_escapes()
   /// );
   /// let spec = builder.compile();

@@ -4,17 +4,16 @@ use std::fmt::Write;
 use ilex::report;
 use ilex::rule::*;
 use ilex::token;
+use ilex::token::testing;
 use ilex::token::testing::Matcher;
+use ilex::token::testing::Text;
 use ilex::token::Content as C;
 use ilex::token::Cursor;
-
-mod util;
 
 ilex::spec! {
   struct JsonSpec {
     comma: Keyword = ',',
     colon: Keyword = ':',
-    minus: Keyword = '-',
     true_: Keyword = "true",
     false_: Keyword = "false",
     null: Keyword = "null",
@@ -42,8 +41,9 @@ ilex::spec! {
       ),
 
     #[named] number: Number = Number::new(10)
-      .decimal_points(0..2)
-      .exponent_part(NumberExponent::new(10, ["e", "E"])),
+      .minus()
+      .point_limit(0..2)
+      .exponents(["e", "E"], Digits::new(10).plus().minus())
   }
 }
 
@@ -66,9 +66,13 @@ const SOME_JSON: &str = r#"
 fn check_tokens() {
   let json = JsonSpec::get();
 
-  util::drive(
-    json.spec(),
-    SOME_JSON,
+  let mut ctx = ilex::Context::new();
+  let tokens = ctx.new_file("<i>", SOME_JSON).lex(json.spec()).unwrap();
+  eprintln!("stream: {tokens:#?}");
+
+  testing::recognize_tokens(
+    &ctx,
+    tokens.cursor(),
     &vec![
       json.object.matcher(
         ("{", "}"),
@@ -109,13 +113,17 @@ fn check_tokens() {
           //
           json.string.matcher(('"', '"'), ["neg"]),
           json.colon.matcher(":"),
-          json.minus.matcher("-"),
-          json.number.matcher(10, ["42"]),
+          json.number.matcher(10, ["42"]).sign(Sign::Neg, "-"),
           json.comma.matcher(","),
           //
           json.string.matcher(('"', '"'), ["exp"]),
           json.colon.matcher(":"),
-          json.number.matcher(10, ["42"]), // TODO...
+          json.number.matcher(10, ["42"]).exponent(
+            10,
+            "e",
+            Some((Sign::Pos, Text::from("+"))),
+            ["42"],
+          ),
           json.comma.matcher(","),
           //
           json.string.matcher(('"', '"'), ["nest"]),
@@ -150,7 +158,8 @@ fn check_tokens() {
       ),
       Matcher::eof(),
     ],
-  );
+  )
+  .unwrap();
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -214,7 +223,7 @@ fn parse(data: &str) -> Result<Json, impl fmt::Debug> {
 
   let mut ctx = ilex::Context::new();
   let stream = ctx
-    .new_file("<input>", data)
+    .new_file("<i>", data)
     .lex(json.spec())
     .map_err(|e| Error(e.to_string()))?;
   let value = parse0(&ctx, json, &mut stream.cursor());
@@ -241,14 +250,8 @@ fn parse0(ctx: &ilex::Context, json: &JsonSpec, cursor: &mut Cursor) -> Json {
     .case(json.string, |str: token::Quoted, _| {
       Json::Str(quote2str(ctx, str))
     })
-    .case(json.minus, |_, cursor| {
-      let Some(num) = cursor.take(json.number) else {
-        return Json::Null
-      };
-      Json::Num(-num.to_float::<f64>(ctx, ..).unwrap())
-    })
     .case(json.number, |num: token::Number, _| {
-      Json::Num(num.to_float(ctx, ..).unwrap())
+      Json::Num(num.to_f64(ctx, ..).unwrap())
     })
     .case(json.array, |array: token::Bracket, _| {
       let mut trailing = None;
