@@ -135,7 +135,7 @@ impl Builtins {
 
   /// Generates a "numeric literal overflowed" diagnostic.
   #[track_caller]
-  pub fn literal_overflow<'a, N: fmt::Display>(
+  pub fn literal_out_of_range<'a, N: fmt::Display>(
     self,
     spec: &Spec,
     what: impl Into<Expected<'a>>,
@@ -162,7 +162,7 @@ impl Builtins {
       .in_context(|this, ctx| {
         this
           .error(f!(
-            "{} overflowed",
+            "{} literal out of range",
             what.into().for_user_diagnostic(spec, ctx)
           ))
           .at(at)
@@ -356,9 +356,9 @@ impl<'lex> From<&'lex str> for Expected<'lex> {
   }
 }
 
-impl<'lex> From<token::Any<'lex>> for Expected<'lex> {
-  fn from(value: token::Any<'lex>) -> Self {
-    Self::Token(value)
+impl<'lex, T: token::Token<'lex>> From<T> for Expected<'lex> {
+  fn from(value: T) -> Self {
+    Self::Token(value.into())
   }
 }
 

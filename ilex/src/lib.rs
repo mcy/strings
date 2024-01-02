@@ -212,6 +212,7 @@ use std::fmt;
 mod file;
 mod lexer;
 
+pub mod fp;
 pub mod ice;
 pub mod report;
 pub mod token;
