@@ -41,7 +41,7 @@ ilex::spec! {
         },
       ),
 
-    #[named] number: Number = Number::new(10)
+    #[named] number: Digital = Digital::new(10)
       .minus()
       .point_limit(0..2)
       .exponents(["e", "E"], Digits::new(10).plus().minus())
@@ -251,7 +251,7 @@ fn parse0(ctx: &ilex::Context, json: &JsonSpec, cursor: &mut Cursor) -> Json {
     .case(json.string, |str: token::Quoted, _| {
       Json::Str(quote2str(ctx, str))
     })
-    .case(json.number, |num: token::Number, _| {
+    .case(json.number, |num: token::Digital, _| {
       Json::Num(num.to_float::<Fp64>(ctx, ..).unwrap().to_hard())
     })
     .case(json.array, |array: token::Bracket, _| {

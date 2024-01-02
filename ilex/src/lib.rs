@@ -39,7 +39,7 @@ use ilex::rule::Keyword;
 use ilex::rule::Bracket;
 use ilex::rule::Quoted;
 use ilex::rule::Escape;
-use ilex::rule::Number;
+use ilex::rule::Digital;
 use ilex::rule::Digits;
 
 // This is a spec builder. You give it rule definitions, and it produces
@@ -60,7 +60,7 @@ struct Json {
   array: Lexeme<Bracket>,
   object: Lexeme<Bracket>,
   string: Lexeme<Quoted>,
-  number: Lexeme<Number>,
+  number: Lexeme<Digital>,
 
   spec: ilex::Spec,
 }
@@ -103,12 +103,12 @@ let json = Json {
       ),
   ),
 
-  // A number rule is just that, a number! Numbers are of a specified base
-  // (so you'll need separate rules for your 123 and 0xbeef), and can have
-  // arbitrary numbers of decimal points: you could lex something like 1.0.0
-  // if you wanted. They can also have an "exponent", for parsing floats.
+  // A digital rule is something that, resembles a number! Digitals are of a
+  // specific radix (so you'll need separate rules for your 123 and 0xbeef), and
+  // can have arbitrary numbers of decimal points: you could lex something like
+  // 1.0.0 if you wanted. They can also "exponents", for lexing floats.
   number: spec.rule(
-    Number::new(10)
+    Digital::new(10)
       .minus()
       .point_limit(0..2)
       .exponents(["e", "E"], Digits::new(10).plus().minus()),
@@ -126,7 +126,7 @@ use ilex::rule::Keyword;
 use ilex::rule::Bracket;
 use ilex::rule::Quoted;
 use ilex::rule::Escape;
-use ilex::rule::Number;
+use ilex::rule::Digital;
 use ilex::rule::Digits;
 
 ilex::spec! {
@@ -160,7 +160,7 @@ ilex::spec! {
         },
       ),
 
-    #[named] number: Number = Number::new(10)
+    #[named] number: Digital = Digital::new(10)
       .minus()
       .point_limit(0..2)
       .exponents(["e", "E"], Digits::new(10).plus().minus()),

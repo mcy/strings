@@ -35,7 +35,7 @@ ilex::spec! {
     label: Keyword = "label",
     null: Keyword = "null",
     ptr: Keyword = "ptr",
-    int: Number = Number::new(10).prefix("i"),
+    int: Digital = Digital::new(10).prefix("i"),
     void: Keyword = "void",
 
     private: Keyword = "private",
@@ -75,13 +75,13 @@ ilex::spec! {
       .prefixes(["!", "@", "%"]),
 
     #[named("number")]
-    dec: Number = Number::new(10)
+    dec: Digital = Digital::new(10)
       .minus()
       .point_limit(0..2)
       .exponents(["e", "E"], Digits::new(10).plus().minus()),
 
     #[named("number")]
-    hex: Number = Number::new(16).minus().prefix("0x"),
+    hex: Digital = Digital::new(16).minus().prefix("0x"),
   }
 }
 

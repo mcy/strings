@@ -133,9 +133,9 @@ impl Spec {
             })
           }
 
-          rule::Any::Number(num) => {
+          rule::Any::Digital(num) => {
             let (len, pre, suf, data) =
-              take_number(&mut { src }, num, action.prefix_len as usize)?;
+              take_digital(&mut { src }, num, action.prefix_len as usize)?;
             Some(Match {
               prefix,
               rule,
@@ -322,7 +322,7 @@ fn take_block_comment(
 fn take_digits(
   src: &mut &str,
   prefix_len: usize,
-  rule: &rule::Number,
+  rule: &rule::Digital,
   digits: &rule::Digits,
   which_exp: usize,
   is_mant: bool,
@@ -427,11 +427,11 @@ fn take_digits(
   Some((len, digit_data))
 }
 
-/// Lexes a number literal and returns its length, prefix length, and suffix
+/// Lexes a digital literal and returns its length, prefix length, and suffix
 /// length. Also, returns the relevant match data.
-fn take_number(
+fn take_digital(
   src: &mut &str,
-  rule: &rule::Number,
+  rule: &rule::Digital,
   prefix_len: usize,
 ) -> Option<(usize, usize, usize, MatchData)> {
   let (mut len, mant) =
@@ -461,6 +461,10 @@ fn take_number(
 
     len += exp_len;
     blocks.push(exp);
+
+    if blocks.len() as u32 + 1 >= rule.max_exps {
+      break;
+    }
   }
 
   let suffix_len = take_longest(src, &rule.affixes.suffixes)?;

@@ -48,7 +48,7 @@ pub fn lexeme_to_string(
     rule::Any::Quoted(tok) => {
       yarn!("{}string", sigils_to_string(&tok.affixes))
     }
-    rule::Any::Number(tok) => {
+    rule::Any::Digital(tok) => {
       yarn!("{}number", sigils_to_string(&tok.affixes))
     }
   }

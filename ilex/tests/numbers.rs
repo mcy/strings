@@ -9,7 +9,7 @@ ilex::spec! {
     comma: Keyword = ',',
 
     #[named("decimal number")]
-    dec: Number = Number::new(10)
+    dec: Digital = Digital::new(10)
       .separator('_')
       .plus().minus()
       .point_limit(0..2)
@@ -17,7 +17,7 @@ ilex::spec! {
       .exponent("^", Digits::new(16).plus().minus()),
 
     #[named("binary number")]
-    bin: Number = Number::new(2)
+    bin: Digital = Digital::new(2)
       .separator('_')
       .plus().minus()
       .point_limit(0..2)
@@ -25,7 +25,7 @@ ilex::spec! {
       .prefixes(["0b", "0B", "%"]),
 
     #[named("octal number")]
-    oct: Number = Number::new(8)
+    oct: Digital = Digital::new(8)
       .separator('_')
       .plus().minus()
       .point_limit(0..2)
@@ -33,7 +33,7 @@ ilex::spec! {
       .prefixes(["0o", "0O", "0"]),
 
     #[named("hexadecimal number")]
-    hex: Number = Number::new(16)
+    hex: Digital = Digital::new(16)
       .separator('_')
       .plus().minus()
       .point_limit(0..2)
@@ -41,7 +41,7 @@ ilex::spec! {
       .prefixes(["0x", "0X", "$"]),
 
     #[named("quatrenary number")]
-    qua: Number = Number::new(4)
+    qua: Digital = Digital::new(4)
       .separator('_')
       .plus().minus()
       .point_limit(0..2)

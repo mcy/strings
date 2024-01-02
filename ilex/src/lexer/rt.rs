@@ -50,7 +50,7 @@ pub enum Kind {
     open: Span,
     close: Span,
   },
-  Number {
+  Digital {
     digits: DigitBlocks,
     exponents: Vec<DigitBlocks>,
   },
@@ -66,7 +66,7 @@ pub enum Kind {
 pub struct DigitBlocks {
   pub span: Option<Span>,
   pub prefix: Option<Span>,
-  pub sign: Option<(Span, Sign)>,
+  pub sign: Option<(Sign, Span)>,
   pub blocks: Vec<Span>,
   pub which_exp: usize,
 }
@@ -304,7 +304,7 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
         });
       }
 
-      rule::Any::Number(_) => {
+      rule::Any::Digital(_) => {
         let blocks = match best_match.data {
           Some(MatchData::Digits(blocks)) => blocks,
           _ => unreachable!(),
@@ -324,14 +324,14 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
 
         let (mant, exps) = blocks.split_first().unwrap();
         let tok = Token {
-          kind: Kind::Number {
+          kind: Kind::Digital {
             digits: DigitBlocks {
               span: None,
               prefix: None,
               sign: mant
                 .sign
                 .as_ref()
-                .map(|(r, s)| (self.mksp(range_add(r, start)), *s)),
+                .map(|(r, s)| (*s, self.mksp(range_add(r, start)))),
               blocks: mant
                 .blocks
                 .iter()
@@ -350,7 +350,7 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
                 sign: exp
                   .sign
                   .as_ref()
-                  .map(|(r, s)| (self.mksp(range_add(r, start)), *s)),
+                  .map(|(r, s)| (*s, self.mksp(range_add(r, start)))),
                 blocks: exp
                   .blocks
                   .iter()

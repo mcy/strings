@@ -87,7 +87,7 @@ pub enum Any<'lex> {
   Keyword(Keyword<'lex>),
   Bracket(Bracket<'lex>),
   Ident(Ident<'lex>),
-  Number(Number<'lex>),
+  Digital(Digital<'lex>),
   Quoted(Quoted<'lex>),
 }
 
@@ -101,7 +101,7 @@ impl<'lex> Token<'lex> for Any<'lex> {
       Self::Bracket(tok) => tok.lexeme().map(Lexeme::any),
       Self::Keyword(tok) => tok.lexeme().map(Lexeme::any),
       Self::Ident(tok) => tok.lexeme().map(Lexeme::any),
-      Self::Number(tok) => tok.lexeme().map(Lexeme::any),
+      Self::Digital(tok) => tok.lexeme().map(Lexeme::any),
       Self::Quoted(tok) => tok.lexeme().map(Lexeme::any),
     }
   }
@@ -113,7 +113,7 @@ impl<'lex> Token<'lex> for Any<'lex> {
       Self::Bracket(tok) => tok.spec,
       Self::Keyword(tok) => tok.spec,
       Self::Ident(tok) => tok.spec,
-      Self::Number(tok) => tok.spec,
+      Self::Digital(tok) => tok.spec,
       Self::Quoted(tok) => tok.spec,
     }
   }
@@ -133,7 +133,7 @@ impl<'lex> Any<'lex> {
       Any::Keyword(_) => "Keyword",
       Any::Bracket(_) => "Bracket",
       Any::Ident(_) => "Ident",
-      Any::Number(_) => "Number",
+      Any::Digital(_) => "Digital",
       Any::Quoted(_) => "Quoted",
     }
   }
@@ -182,12 +182,12 @@ impl<'lex> Any<'lex> {
     }
   }
 
-  /// Converts this token into a [`Number`] if it is one.
-  pub fn number(self) -> Result<Number<'lex>, WrongKind> {
+  /// Converts this token into a [`Digital`] if it is one.
+  pub fn digital(self) -> Result<Digital<'lex>, WrongKind> {
     match self {
-      Self::Number(tok) => Ok(tok),
+      Self::Digital(tok) => Ok(tok),
       _ => Err(WrongKind {
-        want: "Number",
+        want: "Digital",
         got: self.debug_name(),
       }),
     }
@@ -212,7 +212,7 @@ impl fmt::Debug for Any<'_> {
       Self::Eof(tok) => write!(f, "token::{tok:?}"),
       Self::Keyword(tok) => write!(f, "token::{tok:?}"),
       Self::Ident(tok) => write!(f, "token::{tok:?}"),
-      Self::Number(tok) => write!(f, "token::{tok:?}"),
+      Self::Digital(tok) => write!(f, "token::{tok:?}"),
       Self::Quoted(tok) => write!(f, "token::{tok:?}"),
 
       Self::Bracket(tok) => {
@@ -232,7 +232,7 @@ impl Spanned for Any<'_> {
       Self::Bracket(tok) => tok.span(ctx),
       Self::Ident(tok) => tok.span(ctx),
       Self::Quoted(tok) => tok.span(ctx),
-      Self::Number(tok) => tok.span(ctx),
+      Self::Digital(tok) => tok.span(ctx),
     }
   }
 }
@@ -548,33 +548,48 @@ impl Spanned for Ident<'_> {
 /// decimal, and the base of the exponent is 10 (for decimal) or 2 (for the
 /// others).
 #[derive(Copy, Clone)]
-pub struct Number<'lex> {
+pub struct Digital<'lex> {
   tok: &'lex rt::Token,
   idx: usize,
   spec: &'lex Spec,
 }
 
-impl<'lex> Number<'lex> {
-  /// Returns the radix that this number's digits were parsed in.
+impl<'lex> Digital<'lex> {
+  /// Returns the radix that this digital literal's digits were parsed in.
   pub fn radix(self) -> u8 {
     self.digit_rule().radix
   }
 
-  /// Returns the sign of this number, if it had any.
-  pub fn sign(self) -> Option<(Span, Sign)> {
-    self.rt_blocks().sign
+  /// Returns the leading sign of this digital literal, if it had any.
+  pub fn sign(self) -> Option<Sign> {
+    self.rt_blocks().sign.map(|(s, _)| s)
   }
 
-  /// Returns the point-separated digit chunks of this number.
+  /// Checks if there was an explicit positive sign.
+  pub fn is_positive(self) -> bool {
+    self.sign() == Some(Sign::Pos)
+  }
+
+  /// Checks if there was an explicit positive sign.
+  pub fn is_negative(self) -> bool {
+    self.sign() == Some(Sign::Neg)
+  }
+
+  /// Returns the span corresponding to [`Digital::sign()`].
+  pub fn sign_span(self) -> Option<Span> {
+    self.rt_blocks().sign.map(|(_, sp)| sp)
+  }
+
+  /// Returns the point-separated digit chunks of this digital literal.
   pub fn digit_blocks(self) -> impl Iterator<Item = Span> + 'lex {
     self.digit_slice().iter().copied()
   }
 
-  /// Returns the exponents of this number, if it any.
+  /// Returns the exponents of this digital literal, if it any.
   ///
   /// Calling `exponents()` on any of the returned tokens will yield all
   /// exponents that follow.
-  pub fn exponents(self) -> impl Iterator<Item = Number<'lex>> {
+  pub fn exponents(self) -> impl Iterator<Item = Digital<'lex>> {
     (self.idx..self.exponent_slice().len()).map(move |idx| Self {
       tok: self.tok,
       idx: idx + 1,
@@ -644,8 +659,8 @@ impl<'lex> Number<'lex> {
     self.to_ints(ctx, range).drain(..).next().unwrap()
   }
 
-  /// Parses the blocks of this number as a sequence of integers; this ignores
-  /// any exponents that follow.
+  /// Parses the blocks of this digital literal as a sequence of integers;
+  /// this ignores any exponents that follow.
   ///
   /// Parse failures become diagnostics, and an unspecified value is provided
   /// for a failed integer.
@@ -672,7 +687,7 @@ impl<'lex> Number<'lex> {
           };
 
         let mut value = N::from_radix(text, radix, &rule.separator);
-        if let Some((_, Sign::Neg)) = self.sign() {
+        if self.is_negative() {
           value = value.and_then(N::checked_neg);
         }
 
@@ -732,7 +747,7 @@ impl<'lex> Number<'lex> {
   /// Parses this token as a float, with no rounding. `Fp` can be any of the
   /// float types defined in [`token::fp`][crate::fp].
   ///
-  /// This function is like [`Number::to_float()`], except that it also
+  /// This function is like [`Digital::to_float()`], except that it also
   /// generates a diagnostic if rounding while converting to base 2.
   #[track_caller]
   pub fn to_float_exact<Fp: fp::Parse>(
@@ -771,21 +786,21 @@ impl<'lex> Number<'lex> {
 
   fn exponent_slice(self) -> &'lex [DigitBlocks] {
     match &self.tok.kind {
-      Kind::Number { exponents, .. } => exponents,
-      _ => panic!("non-rt::Kind::Number inside of Number"),
+      Kind::Digital { exponents, .. } => exponents,
+      _ => panic!("non-rt::Kind::Digital inside of Digital"),
     }
   }
 
   fn rt_blocks(&self) -> &'lex DigitBlocks {
     match &self.tok.kind {
-      Kind::Number { digits, .. } if self.idx == 0 => digits,
-      Kind::Number { exponents, .. } => &exponents[self.idx - 1],
-      _ => panic!("non-rt::Kind::Number inside of Number"),
+      Kind::Digital { digits, .. } if self.idx == 0 => digits,
+      Kind::Digital { exponents, .. } => &exponents[self.idx - 1],
+      _ => panic!("non-rt::Kind::Digital inside of Digital"),
     }
   }
 }
 
-/// A sign for a [`Number`] literal.
+/// A sign for a [`Digital`] literal.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Sign {
   Pos,
@@ -876,8 +891,8 @@ impl_radix! {
   u8, u16, u32, u64, u128,
 }
 
-impl<'lex> Token<'lex> for Number<'lex> {
-  type Rule = rule::Number;
+impl<'lex> Token<'lex> for Digital<'lex> {
+  type Rule = rule::Digital;
 
   fn spec(self) -> &'lex Spec {
     self.spec
@@ -893,22 +908,22 @@ impl<'lex> Token<'lex> for Number<'lex> {
   }
 }
 
-impl<'lex> From<Number<'lex>> for Any<'lex> {
-  fn from(value: Number<'lex>) -> Self {
-    Any::Number(value)
+impl<'lex> From<Digital<'lex>> for Any<'lex> {
+  fn from(value: Digital<'lex>) -> Self {
+    Any::Digital(value)
   }
 }
 
-impl<'lex> TryFrom<Any<'lex>> for Number<'lex> {
+impl<'lex> TryFrom<Any<'lex>> for Digital<'lex> {
   type Error = WrongKind;
   fn try_from(value: Any<'lex>) -> Result<Self, Self::Error> {
-    value.number()
+    value.digital()
   }
 }
 
-impl fmt::Debug for Number<'_> {
+impl fmt::Debug for Digital<'_> {
   fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-    let mut f = f.debug_struct("Number");
+    let mut f = f.debug_struct("Digital");
     f.field("span", &self.tok.span)
       .field("radix", &self.radix())
       .field("digits", &self.digit_slice());
@@ -933,7 +948,7 @@ impl fmt::Debug for Number<'_> {
   }
 }
 
-impl Spanned for Number<'_> {
+impl Spanned for Digital<'_> {
   fn span(&self, _ctx: &Context) -> Span {
     self.tok.span
   }

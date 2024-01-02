@@ -20,8 +20,8 @@ use rustc_apfloat::StatusAnd;
 use crate::file::Context;
 use crate::file::Spanned;
 use crate::report;
+use crate::token::Digital;
 use crate::token::FromRadix;
-use crate::token::Number;
 use crate::token::Sign;
 use crate::token::Token;
 
@@ -447,7 +447,7 @@ define_fp! {
   }
 }
 
-/// Returned by some [`Number`] functions if `ilex` does not have compiled
+/// Returned by some [`Digital`] functions if `ilex` does not have compiled
 /// support for a particular parsing operation; if `Exotic` is returned, no
 /// diagnostics will be emitted (although it almost certainly indicates a bug).
 #[derive(Clone, PartialEq, Eq)]
@@ -459,7 +459,7 @@ impl fmt::Debug for Exotic {
   }
 }
 
-impl Number<'_> {
+impl Digital<'_> {
   #[track_caller]
   pub(crate) fn parse_fp<Fp: Parse>(
     self,
@@ -571,17 +571,15 @@ impl Number<'_> {
             .saturating_add(digit as i64);
         }
 
-        if matches!(exp.sign(), Some((_, Sign::Neg))) {
+        if exp.is_negative() {
           e = -e;
         }
       }
 
-      let is_neg = matches!(self.sign(), Some((_, Sign::Neg)));
-
       'build: {
         // Ignore the exponent if we are zero.
         if !saw_sig_digit {
-          break 'build Fp::__from_mant_and_exp(is_neg, 0, 0);
+          break 'build Fp::__from_mant_and_exp(self.is_negative(), 0, 0);
         };
 
         let exp_adjustment =
@@ -589,7 +587,7 @@ impl Number<'_> {
         e = e.saturating_add(exp_adjustment);
 
         m >>= bit_pos.max(0);
-        let mut value = Fp::__from_mant_and_exp(is_neg, m, e);
+        let mut value = Fp::__from_mant_and_exp(self.is_negative(), m, e);
         if loss {
           value.status |= Status::INEXACT
         }
@@ -597,10 +595,13 @@ impl Number<'_> {
         value
       }
     } else {
-      fn has_ordinary_sign(ctx: &Context, tok: &Number) -> bool {
+      fn has_ordinary_sign(ctx: &Context, tok: &Digital) -> bool {
         tok.sign().is_none()
-          || tok.sign().is_some_and(|(sp, s)| {
-            matches!((sp.text(ctx), s), ("+", Sign::Pos) | ("-", Sign::Neg))
+          || tok.sign().is_some_and(|s| {
+            matches!(
+              (tok.sign_span().unwrap().text(ctx), s),
+              ("+", Sign::Pos) | ("-", Sign::Neg)
+            )
           })
       }
 
@@ -627,41 +628,12 @@ impl Number<'_> {
       } else {
         // Since the fast paths have failed us, we need to construct a suitable
         // string to plug into the parser.
-        use std::fmt::Write;
-
-        fn process_fraction<'a>(
-          mut frac: &'a str,
-          sep: &str,
-        ) -> (&'a str, usize) {
-          let mut leading_zeros = 0;
-          loop {
-            let start_len = frac.len();
-            while let Some(f) = frac.strip_prefix('0') {
-              frac = f;
-              leading_zeros += 1;
-            }
-            while let Some(f) = frac.strip_suffix('0') {
-              frac = f;
-            }
-
-            if !sep.is_empty() {
-              while let Some(f) = frac.strip_prefix(sep) {
-                frac = f;
-              }
-              while let Some(f) = frac.strip_suffix(sep) {
-                frac = f;
-              }
-            }
-
-            if frac.len() == start_len {
-              return (frac, leading_zeros);
-            }
-          }
-        }
 
         let buf = (|| {
+          use std::fmt::Write;
+
           let mut buf = String::with_capacity(self.text(ctx).len());
-          if let Some((_, Sign::Neg)) = self.sign() {
+          if self.is_negative() {
             buf.push('-');
           }
 
@@ -672,11 +644,36 @@ impl Number<'_> {
           );
 
           if let Some(frac) = frac {
-            let (frac, leading) =
-              process_fraction(frac.text(ctx), &rule.separator);
+            let sep = rule.separator.as_str();
+            let mut frac = frac.text(ctx);
+            let mut lz = 0;
+            loop {
+              let start_len = frac.len();
+              while let Some(f) = frac.strip_prefix('0') {
+                frac = f;
+                lz += 1;
+              }
+              while let Some(f) = frac.strip_suffix('0') {
+                frac = f;
+              }
+
+              if !sep.is_empty() {
+                while let Some(f) = frac.strip_prefix(sep) {
+                  frac = f;
+                }
+                while let Some(f) = frac.strip_suffix(sep) {
+                  frac = f;
+                }
+              }
+
+              if frac.len() == start_len {
+                break;
+              }
+            }
+
             let _ = write!(
               buf,
-              ".{:0<leading$}{}",
+              ".{:0<lz$}{}",
               "",
               u64::from_radix(frac, 10, &rule.separator)?,
             );
@@ -687,7 +684,7 @@ impl Number<'_> {
               buf,
               "e{}{}",
               match exp.sign() {
-                Some((_, Sign::Neg)) => '-',
+                Some(Sign::Neg) => '-',
                 _ => '+',
               },
               u64::from_radix(
