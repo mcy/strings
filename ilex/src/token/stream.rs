@@ -269,9 +269,9 @@ impl<'lex> Iterator for Cursor<'lex> {
         })
       }
 
-      Kind::Number { .. } => {
+      Kind::Digital { .. } => {
         self.cursor += 1;
-        token::Any::Number(token::Number {
+        token::Any::Digital(token::Digital {
           tok,
           idx: 0,
           spec: self.spec,

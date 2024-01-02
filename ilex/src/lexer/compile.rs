@@ -84,7 +84,7 @@ pub fn compile(builder: SpecBuilder) -> Spec {
         }
       }
 
-      rule::Any::Number(rule) => {
+      rule::Any::Digital(rule) => {
         const ALPHABET: &str = "0123456789abcdef";
 
         // We need to include the digit. Notably, this happens to make things

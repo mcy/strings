@@ -152,9 +152,9 @@ enum Kind {
     prefix: Option<Text>,
     suffix: Option<Text>,
   },
-  Number {
-    mant: NumberMatcher,
-    exps: Vec<NumberMatcher>,
+  Digital {
+    mant: DigitalMatcher,
+    exps: Vec<DigitalMatcher>,
     suffix: Option<Text>,
   },
   Delimited {
@@ -164,7 +164,7 @@ enum Kind {
 }
 
 #[derive(Debug)]
-struct NumberMatcher {
+struct DigitalMatcher {
   radix: u8,
   sign: Option<(Sign, Text)>,
   digits: Vec<Text>,
@@ -223,7 +223,7 @@ impl Lexeme<rule::Quoted> {
   }
 }
 
-impl Lexeme<rule::Number> {
+impl Lexeme<rule::Digital> {
   pub fn matcher<B, T>(self, radix: u8, blocks: B) -> Matcher
   where
     B: IntoIterator<Item = T>,
@@ -233,8 +233,8 @@ impl Lexeme<rule::Number> {
       which: Some(self.any()),
       span: Text::any(),
       comments: Vec::new(),
-      kind: Kind::Number {
-        mant: NumberMatcher {
+      kind: Kind::Digital {
+        mant: DigitalMatcher {
           radix,
           sign: None,
           digits: blocks.into_iter().map(Into::into).collect(),
@@ -294,7 +294,7 @@ impl Matcher {
       Kind::Ident { prefix, .. } | Kind::Quoted { prefix, .. } => {
         *prefix = Some(text.into());
       }
-      Kind::Number { mant, .. } => mant.prefix = Some(text.into()),
+      Kind::Digital { mant, .. } => mant.prefix = Some(text.into()),
       _ => unreachable!(),
     }
 
@@ -305,7 +305,7 @@ impl Matcher {
     match &mut self.kind {
       Kind::Ident { suffix, .. }
       | Kind::Quoted { suffix, .. }
-      | Kind::Number { suffix, .. } => {
+      | Kind::Digital { suffix, .. } => {
         *suffix = Some(text.into());
       }
       _ => unreachable!(),
@@ -316,7 +316,7 @@ impl Matcher {
 
   pub fn sign(mut self, value: Sign, text: impl Into<Text>) -> Self {
     match &mut self.kind {
-      Kind::Number { mant, .. } => mant.sign = Some((value, text.into())),
+      Kind::Digital { mant, .. } => mant.sign = Some((value, text.into())),
       _ => unreachable!(),
     }
 
@@ -331,7 +331,7 @@ impl Matcher {
     blocks: impl IntoIterator<Item = T>,
   ) -> Self {
     match &mut self.kind {
-      Kind::Number { exps, .. } => exps.push(NumberMatcher {
+      Kind::Digital { exps, .. } => exps.push(DigitalMatcher {
         radix,
         sign,
         digits: blocks.into_iter().map(Into::into).collect(),
@@ -412,27 +412,33 @@ impl Matcher {
           },
         );
       }
-      (Kind::Number { mant, exps, suffix }, Any::Number(tok)) => {
-        let recognize =
-          |state: &mut MatchState, mch: &NumberMatcher, tok: token::Number| {
-            if mch.radix != tok.radix() {
-              state.error(f!(
-                "wrong number base; want {:?}, got {:?}",
-                mch.radix,
-                tok.radix()
-              ));
-            }
-            state.match_any_options(
-              "sign",
-              mch.sign.as_ref(),
-              tok.sign(),
-              |(s1, t), (sp, s2)| s1 == s2 && t.recognizes(*sp, state.ctx),
-            );
-            state.match_options("prefix", mch.prefix.as_ref(), tok.prefix());
-            zip_eq(state, &mch.digits, tok.digit_blocks(), |state, t, s| {
-              state.match_spans("digit block", t, s);
-            });
-          };
+      (Kind::Digital { mant, exps, suffix }, Any::Digital(tok)) => {
+        let recognize = |state: &mut MatchState,
+                         mch: &DigitalMatcher,
+                         tok: token::Digital| {
+          if mch.radix != tok.radix() {
+            state.error(f!(
+              "wrong radix; want {:?}, got {:?}",
+              mch.radix,
+              tok.radix()
+            ));
+          }
+          state.match_any_options(
+            "sign",
+            mch.sign.as_ref().map(|(s, _)| s),
+            tok.sign(),
+            |&a, b| a == b,
+          );
+          state.match_options(
+            "sign span",
+            mch.sign.as_ref().map(|(_, sp)| sp),
+            tok.sign_span(),
+          );
+          state.match_options("prefix", mch.prefix.as_ref(), tok.prefix());
+          zip_eq(state, &mch.digits, tok.digit_blocks(), |state, t, s| {
+            state.match_spans("digit block", t, s);
+          });
+        };
 
         recognize(state, mant, tok);
         zip_eq(state, exps, tok.exponents(), |state, t, s| {
@@ -485,7 +491,7 @@ impl fmt::Debug for Matcher {
       Kind::Keyword => "Keyword",
       Kind::Ident { .. } => "Ident",
       Kind::Quoted { .. } => "Quoted",
-      Kind::Number { .. } => "Number",
+      Kind::Digital { .. } => "Digital",
       Kind::Delimited { .. } => "Delimited",
     };
 
@@ -518,7 +524,7 @@ impl fmt::Debug for Matcher {
         opt_field(&mut d, "prefix", prefix);
         opt_field(&mut d, "suffix", suffix);
       }
-      Kind::Number { mant, exps, suffix } => {
+      Kind::Digital { mant, exps, suffix } => {
         d.field("mant", mant).field("exps", exps);
         opt_field(&mut d, "suffix", suffix);
       }

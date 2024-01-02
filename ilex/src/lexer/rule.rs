@@ -29,7 +29,7 @@ pub enum Any {
   Ident(Ident),
   Quoted(Quoted),
   Comment(Comment),
-  Number(Number),
+  Digital(Digital),
 }
 
 impl Any {
@@ -39,7 +39,7 @@ impl Any {
       Any::Keyword(_) => "Keyword",
       Any::Bracket(_) => "Bracket",
       Any::Ident(_) => "Ident",
-      Any::Number(_) => "Number",
+      Any::Digital(_) => "Digital",
       Any::Quoted(_) => "Quoted",
       Any::Comment(_) => "Comment",
     }
@@ -606,23 +606,26 @@ impl<U: Into<u32>> From<U> for Escape {
   }
 }
 
-/// A number rule.
+/// A digital literal rule.
 ///
-/// Numbers are things like `1`, `0xdeadbeef` and `3.14`.
+/// Digital tokens are things that resemble numbers `1`, `0xdeadbeef` and `3.14`.
+/// However, this rule can be used to parse other things, like LLVM's integer
+/// types `i32`, version numbers like `v1.0.2`, and more.
 #[derive(Debug)]
-pub struct Number {
+pub struct Digital {
   pub(crate) mant: Digits,
   pub(crate) exps: Vec<(Yarn, Digits)>,
+  pub(super) max_exps: u32,
 
   pub(crate) separator: Yarn,
   pub(crate) point: Yarn,
   pub(super) affixes: Affixes,
 }
 
-impl Number {
+impl Digital {
   /// Creates a new rule with the given radix (which must be between 2 and 16).
   ///
-  /// For example, `Number::new(16)` creates a rule for hexadecimal.
+  /// For example, `Digital::new(16)` creates a rule for hexadecimal.
   pub fn new(radix: u8) -> Self {
     assert!(
       (2..=16).contains(&radix),
@@ -637,6 +640,7 @@ impl Number {
     Self {
       mant: digits,
       exps: Vec::new(),
+      max_exps: 1,
       separator: "".into(),
       point: ".".into(),
       affixes: Affixes::default(),
@@ -668,7 +672,7 @@ impl Number {
   /// Adds a new kind of sign to this rule.
   ///
   /// Signs can appear in front of a block of digits and specify a [`Sign`]
-  /// value. If this is value represents the mantissa digits of a [`Number`],
+  /// value. If this is value represents the mantissa digits of a [`Digital`],
   /// it
   pub fn sign(mut self, prefix: impl Into<Yarn>, value: Sign) -> Self {
     self.mant = self.mant.sign(prefix, value);
@@ -694,8 +698,11 @@ impl Number {
   /// Sets the exponent part information, for e.g. scientific notation in
   /// floating point numbers.
   ///
-  /// `delim` is the character that introduces this type of exponent. A number
+  /// `delim` is the character that introduces this type of exponent. A digital
   /// rule may have multiple kinds of exponents.
+  ///
+  /// A digital rule can have multiple exponents, and a corresponding token
+  /// can have multiple exponents in sequence, if that is configured.
   pub fn exponent(mut self, delim: impl Into<Yarn>, exp: Digits) -> Self {
     self.exps.push((delim.into(), exp));
     self
@@ -713,13 +720,23 @@ impl Number {
     self
   }
 
+  /// Sets the maximum number of exponents a token matched from this rule can
+  /// have.
+  ///
+  /// Defaults to 1 (although if there are *no* configured exponent rules, it
+  /// will never have one).
+  pub fn max_exponents(mut self, limit: u32) -> Self {
+    self.max_exps = limit;
+    self
+  }
+
   affixes!();
 }
 
-/// A digit chunk within a [`Number`].
+/// A digit chunk within a [`Digital`].
 ///
-/// This is used to describe the format of both mantissa of the number, and its
-/// exponents.
+/// This is used to describe the format of both main chunk of digits
+/// (the mantissa), and its exponents.
 #[derive(Debug, Clone)]
 pub struct Digits {
   pub(crate) radix: u8,
@@ -731,7 +748,7 @@ pub struct Digits {
 impl Digits {
   /// Creates a new base, with the given radix (which must be between 2 and 16).
   ///
-  /// For example, `Number::new(16)` creates a base for hexadecimal.
+  /// For example, `Digital::new(16)` creates a base for hexadecimal.
   pub fn new(radix: u8) -> Self {
     assert!(
       (2..=16).contains(&radix),
@@ -749,7 +766,7 @@ impl Digits {
   /// Adds a new kind of sign to this digit block.
   ///
   /// Signs can appear in front of a block of digits and specify a [`Sign`]
-  /// value. If this is value represents the mantissa digits of a [`Number`],
+  /// value. If this is value represents the mantissa digits of a [`Digital`],
   /// it
   pub fn sign(mut self, prefix: impl Into<Yarn>, value: Sign) -> Self {
     self.signs.push((prefix.into(), value));
@@ -788,34 +805,34 @@ impl Digits {
   }
 }
 
-impl Rule for Number {
-  type Token<'lex> = token::Number<'lex>;
+impl Rule for Digital {
+  type Token<'lex> = token::Digital<'lex>;
 
   fn try_from_ref(value: &Any) -> Result<&Self, WrongKind> {
     match value {
-      Any::Number(rule) => Ok(rule),
+      Any::Digital(rule) => Ok(rule),
       _ => Err(WrongKind {
-        want: "Number",
+        want: "Digital",
         got: value.debug_name(),
       }),
     }
   }
 }
 
-impl From<Number> for Any {
-  fn from(value: Number) -> Self {
-    Any::Number(value)
+impl From<Digital> for Any {
+  fn from(value: Digital) -> Self {
+    Any::Digital(value)
   }
 }
 
-impl TryFrom<Any> for Number {
+impl TryFrom<Any> for Digital {
   type Error = WrongKind;
 
   fn try_from(value: Any) -> Result<Self, Self::Error> {
     match value {
-      Any::Number(rule) => Ok(rule),
+      Any::Digital(rule) => Ok(rule),
       _ => Err(WrongKind {
-        want: "Number",
+        want: "Digital",
         got: value.debug_name(),
       }),
     }
