@@ -84,6 +84,7 @@ impl<'lex> Cursor<'lex> {
   }
 
   /// Checks whether this cursor is empty, and if not, emits a diagnostic.
+  #[track_caller]
   pub fn expect_finished(&self) {
     if let Some(next) = self.peek_any() {
       report::builtins().expected(self.spec, [Lexeme::eof()], next, self.end());
@@ -96,6 +97,7 @@ impl<'lex> Cursor<'lex> {
   ///
   /// If matching fails, returns `None` and generates a diagnostic. (The
   /// token is still consumed.)
+  #[track_caller]
   pub fn take<R: Rule>(&mut self, lexeme: Lexeme<R>) -> Option<R::Token<'lex>> {
     switch::switch().case(lexeme, |t, _| t).take(self)
   }
@@ -353,6 +355,7 @@ pub mod switch {
     ///
     /// If matching fails, returns `None` and generates a diagnostic. (The
     /// token is still consumed.)
+    #[track_caller]
     pub fn take<'lex, T>(&mut self, cursor: &mut Cursor<'lex>) -> Option<T>
     where
       X: Impl<'lex, T>,

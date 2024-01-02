@@ -16,12 +16,11 @@ use std::ops::RangeBounds;
 use std::panic::Location;
 
 use num_traits::Bounded;
-use rustc_apfloat::ieee;
-use rustc_apfloat::Float;
 
 use crate::file::Context;
 use crate::file::Span;
 use crate::file::Spanned;
+use crate::fp;
 use crate::lexer::rt;
 use crate::lexer::rt::DigitBlocks;
 use crate::lexer::rt::Kind;
@@ -555,8 +554,6 @@ pub struct Number<'lex> {
   spec: &'lex Spec,
 }
 
-mod fp;
-
 impl<'lex> Number<'lex> {
   /// Returns the radix that this number's digits were parsed in.
   pub fn radix(self) -> u8 {
@@ -682,7 +679,7 @@ impl<'lex> Number<'lex> {
         if value.is_none() || value.as_ref().is_some_and(|v| !range.contains(v))
         {
           report::builtins()
-            .literal_overflow(
+            .literal_out_of_range(
               self.spec(),
               Any::from(self),
               span,
@@ -698,51 +695,65 @@ impl<'lex> Number<'lex> {
       .collect()
   }
 
-  /// Parses this token as a float.
+  /// Parses this token as a float. `Fp` can be any of the float types defined
+  /// in [`ilex::fp`][crate::fp].
   ///
-  /// This function only supports four radix configurations: 10, 2, 8, and 16
-  /// for the mantissa, and 10 for the base. For a radix 10 mantissa, the
-  /// exponent base used is 10. For all other radices, the base used is 2.
+  /// This function supports floats with a mantissa radix that is either 10 or
+  /// a power of two. In the former case, the base for the exponent is 10;
+  /// otherwise, it is 2.
   ///
-  /// Any other combination will produce `Err`. It is highly recommended to
+  /// Any other radix will produce `Err`. It is highly recommended to
   /// `unwrap()` the result, since a return value of `Exotic` is almost
   /// certainly a bug.
   ///
-  /// Parse failures become diagnostics, and a garbage value is provided for a
-  /// failed integer. Out-of-bounds integers are diagnosed but not modified.
+  /// Parse failures and overflow to infinity will generate diagnostics.
   #[track_caller]
-  pub fn to_f64(
+  pub fn to_float<Fp: fp::Parse>(
     self,
     ctx: &Context,
-    range: impl RangeBounds<f64>,
-  ) -> Result<f64, Exotic> {
-    let soft = self.to_fp::<ieee::Double>(ctx, false)?;
-    let hard = f64::from_bits(soft.to_bits() as u64);
+    range: impl RangeBounds<Fp>,
+  ) -> Result<Fp, fp::Exotic> {
+    let fp: Fp = self.parse_fp(ctx, false)?;
 
-    if !soft.is_finite() || !range.contains(&hard) {
-      use std::ops::Bound;
-      fn map<T, U, F: FnOnce(T) -> U>(b: Bound<T>, f: F) -> Bound<U> {
-        match b {
-          Bound::Unbounded => Bound::Unbounded,
-          Bound::Included(x) => Bound::Included(f(x)),
-          Bound::Excluded(x) => Bound::Excluded(f(x)),
-        }
-      }
-
-      report::builtins().literal_overflow(
+    if !fp.__is_finite() || !range.contains(&fp) {
+      report::builtins().literal_out_of_range(
         self.spec(),
-        Any::from(self),
         self,
-        &(
-          map(range.start_bound(), |f| format!("{f:?}")),
-          map(range.end_bound(), |f| format!("{f:?}")),
-        ),
-        &format_args!("{:?}", f64::MIN),
-        &format_args!("{:?}", f64::MAX),
+        self,
+        &range,
+        &Fp::__min(),
+        &Fp::__max(),
       );
     }
 
-    Ok(hard)
+    Ok(fp)
+  }
+
+  /// Parses this token as a float, with no rounding. `Fp` can be any of the
+  /// float types defined in [`token::fp`][crate::fp].
+  ///
+  /// This function is like [`Number::to_float()`], except that it also
+  /// generates a diagnostic if rounding while converting to base 2.
+  #[track_caller]
+  pub fn to_float_exact<Fp: fp::Parse>(
+    self,
+    ctx: &Context,
+    range: impl RangeBounds<Fp>,
+  ) -> Result<Fp, fp::Exotic> {
+    let fp: Fp = self.parse_fp(ctx, true)?;
+
+    if !fp.__is_finite() || !range.contains(&fp) {
+      report::builtins().literal_out_of_range(
+        self.spec(),
+        self,
+        self,
+        &range,
+        &Fp::__min(),
+        &Fp::__max(),
+      );
+    }
+
+    Ok(fp)
   }
 
   fn digit_rule(self) -> &'lex rule::Digits {
@@ -784,18 +795,6 @@ pub enum Sign {
 impl Default for Sign {
   fn default() -> Self {
     Self::Pos
-  }
-}
-
-/// Returned by some [`Number`] functions if `ilex` does not have compiled
-/// support for a particular parsing operation; if `Exotic` is returned, no
-/// diagnostics will be emitted (although it almost certainly indicates a bug).
-#[derive(Clone, PartialEq, Eq)]
-pub struct Exotic(String);
-
-impl fmt::Debug for Exotic {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str(&self.0)
   }
 }
 

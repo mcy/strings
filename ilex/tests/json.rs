@@ -1,6 +1,7 @@
 use core::fmt;
 use std::fmt::Write;
 
+use ilex::fp::Fp64;
 use ilex::report;
 use ilex::rule::*;
 use ilex::token;
@@ -251,7 +252,7 @@ fn parse0(ctx: &ilex::Context, json: &JsonSpec, cursor: &mut Cursor) -> Json {
       Json::Str(quote2str(ctx, str))
     })
     .case(json.number, |num: token::Number, _| {
-      Json::Num(num.to_f64(ctx, ..).unwrap())
+      Json::Num(num.to_float::<Fp64>(ctx, ..).unwrap().to_hard())
     })
     .case(json.array, |array: token::Bracket, _| {
       let mut trailing = None;
