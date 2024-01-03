@@ -178,8 +178,14 @@ impl Spec {
           return comment_cmp;
         }
 
-        usize::cmp(&a.len, &b.len)
-          .then(usize::cmp(&a.prefix.len(), &b.prefix.len()))
+        // Prefer rules that didn't see an unexpected EOF, so false is greater
+        // here.
+        bool::cmp(&a.unexpected_eof, &b.unexpected_eof)
+          .reverse()
+          .then(
+            usize::cmp(&a.len, &b.len)
+              .then(usize::cmp(&a.prefix.len(), &b.prefix.len())),
+          )
       })
   }
 }
