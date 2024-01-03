@@ -257,15 +257,10 @@ pub struct Never(Void);
 enum Void {}
 
 impl Never {
-  /// Materializes a `Never` by panicking.
-  #[track_caller]
-  pub fn unreachable() -> Self {
-    unreachable!()
-  }
-
   /// Constructs any value from a `Never`, which cannot be constructed in a
   /// well-formed program.
-  pub fn from_nothing_anything(self) -> ! {
+  #[allow(clippy::wrong_self_convention)]
+  fn from_nothing_anything(self) -> ! {
     match self.0 {}
   }
 }
