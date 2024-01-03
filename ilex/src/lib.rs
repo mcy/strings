@@ -191,10 +191,11 @@ let my_lexeme = json.object;  // Etc.
 //! // Set up a source context. This tracks all of the source files
 //! // we're working with (so source spans can be tiny indices).
 //! let mut ctx = ilex::Context::new();
+//! let report = ctx.new_report();
 //!
 //! // Read a file from disk, and lex it with the `json` spec from above.
-//! let file = ctx.open_file("my_cool_file.json").unwrap();
-//! let tokens = file.lex(Json::get().spec());
+//! let file = ctx.open_file("my_cool_file.json", &report).unwrap();
+//! let tokens = file.lex(Json::get().spec(), &report);
 //! # }
 //! ```
 //!

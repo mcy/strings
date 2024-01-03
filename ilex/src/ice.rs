@@ -35,10 +35,11 @@ use crate::report::Report;
 ///
 /// fn main() {
 ///   let mut ctx = ilex::Context::new();
-/// # report::install(ctx.new_report_with(report::Options {
+///   let report = ctx.new_report();
+/// # let report = ctx.new_report_with(report::Options {
 /// #   color: true,
 /// #   show_report_locations: false,
-/// # }));
+/// # });
 ///
 ///   let opts = ice::Options {
 ///     what_panicked: Some("my test".to_string()),
@@ -47,7 +48,7 @@ use crate::report::Report;
 ///     ..ice::Options::default()
 ///   };
 ///
-///   let result = ice::handle(&mut ctx, opts, |ctx| {
+///   let result = ice::handle(&mut ctx, &report, opts, |ctx| {
 ///     // Business logic that may panic.
 ///     compile(ctx)
 ///   });

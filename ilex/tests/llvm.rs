@@ -52,19 +52,19 @@ ilex::spec! {
       )
       .prefixes(["", "c"]),
 
-    #[named("identifier")]
+    #[named = "identifier"]
     label_ident: Ident = Ident::new()
       .ascii_only()
       .extra_starts(".0123456789".chars())
       .suffix(":"),
 
-    #[named("identifier")]
+    #[named = "identifier"]
     bare: Ident = Ident::new()
       .ascii_only()
       .extra_starts(".0123456789".chars())
       .prefixes(["!", "@", "%"]),
 
-    #[named("quoted identifier")]
+    #[named = "quoted identifier"]
     quoted: Quoted = Quoted::new('"')
       .escape("\\", Escape::Fixed {
         char_count: 2,
@@ -72,13 +72,13 @@ ilex::spec! {
       })
       .prefixes(["!", "@", "%"]),
 
-    #[named("number")]
+    #[named = "number"]
     dec: Digital = Digital::new(10)
       .minus()
       .point_limit(0..2)
       .exponents(["e", "E"], Digits::new(10).plus().minus()),
 
-    #[named("number")]
+    #[named = "number"]
     hex: Digital = Digital::new(16).minus().prefix("0x"),
   }
 }

@@ -109,12 +109,55 @@ impl SpecBuilder {
   }
 }
 
+/// Generates a lexer spec struct.
+///
+/// This macro generates the type of struct described in the
+/// [crate documentation][crate].
+///
+/// The syntax is as follows:
+///
+/// ```
+/// use ilex::rule;
+///
+/// ilex::spec! {
+///   /// My cool spec.
+///   struct MySpec {
+///     dollar: rule::Keyword = "$",
+///   }
+/// }
+/// ```
+///
+/// The thing after the field name must be a [`Rule`] type, and the thing after
+/// the `=` must be any value that is `Into<ThatRule>`. If a rule is annotated
+/// with `#[named]`, it will be passed to [`SpecBuilder::named_rule()`], with
+/// the field name as the name. You can specify a custom name by writing
+/// `#[named = "some name"]`.
+///
+/// This will generate a struct `MySpec` with the following impl:
+///
+/// ```
+/// # use ilex::Spec;
+/// # struct MySpec;
+/// # fn norun(_: i32) {
+/// impl MySpec {
+///   /// Gets the global instance of this spec.
+///   pub fn get() -> &'static Self {
+///     todo!()
+///   }
+///
+///   /// Gets the actual compiled spec.
+///   pub fn spec(&self) -> &Spec {
+///     todo!()
+///   }
+/// }
+/// # }
+/// ```
 #[macro_export]
 macro_rules! spec {
   (
     $(#[$meta:meta])*
     $vis:vis struct $name:ident {$(
-      $(#[$modifier:ident $(($arg:expr))?])? $rule:ident: $ty:ty = $expr:expr
+      $(#[$modifier:ident $(= $arg:expr)?])? $rule:ident: $ty:ty = $expr:expr
     ),* $(,)?}
   ) => {
     $(#[$meta])*
