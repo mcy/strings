@@ -220,19 +220,20 @@ pub mod report;
 pub mod testing;
 pub mod token;
 
-pub use byteyarn;
-
 #[cfg(not(test))]
-pub use crate::{
-  file::Context,
-  file::{File, FileMut},
-  file::{Span, Spanned},
-  lexer::rule,
-  lexer::spec::{Spec, SpecBuilder},
-  lexer::Lexeme,
-  report::{Fatal, Report},
-  rule::Rule,
-  token::Token,
+pub use {
+  crate::{
+    file::Context,
+    file::{File, FileMut},
+    file::{Span, Spanned},
+    lexer::rule,
+    lexer::spec::{Spec, SpecBuilder},
+    lexer::Lexeme,
+    report::{Fatal, Report},
+    rule::Rule,
+    token::Token,
+  },
+  byteyarn::Yarn,
 };
 
 /// The error returned by [`TryFrom`] implementations in this crate.
