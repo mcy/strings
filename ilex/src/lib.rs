@@ -215,6 +215,7 @@ mod lexer;
 pub mod fp;
 pub mod ice;
 pub mod report;
+pub mod testing;
 pub mod token;
 
 pub use byteyarn;

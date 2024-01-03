@@ -4,10 +4,9 @@ use std::fmt::Write;
 use ilex::fp::Fp64;
 use ilex::report;
 use ilex::rule::*;
+use ilex::testing::DigitalMatcher;
+use ilex::testing::Matcher;
 use ilex::token;
-use ilex::token::testing;
-use ilex::token::testing::Matcher;
-use ilex::token::testing::Text;
 use ilex::token::Content as C;
 use ilex::token::Cursor;
 
@@ -71,96 +70,96 @@ fn check_tokens() {
   let tokens = ctx.new_file("<i>", SOME_JSON).lex(json.spec()).unwrap();
   eprintln!("stream: {tokens:#?}");
 
-  testing::recognize_tokens(
-    &ctx,
-    tokens.cursor(),
-    &vec![
-      json.object.matcher(
-        ("{", "}"),
-        vec![
-          json.string.matcher(('"', '"'), ["keywords"]),
-          json.colon.matcher(":"),
-          json.array.matcher(
-            ("[", "]"),
-            vec![
-              json.null.matcher("null"),
-              json.comma.matcher(","),
-              json.true_.matcher("true"),
-              json.comma.matcher(","),
-              json.false_.matcher("false"),
-            ],
-          ),
-          json.comma.matcher(","),
-          //
-          json.string.matcher(('"', '"'), ["string"]),
-          json.colon.matcher(":"),
-          json.string.matcher(('"', '"'), ["abcdefg"]),
-          json.comma.matcher(","),
-          //
-          json.string.matcher(('"', '"'), ["number"]),
-          json.colon.matcher(":"),
-          json.number.matcher(10, ["42"]),
-          json.comma.matcher(","),
-          //
-          json.string.matcher(('"', '"'), ["int"]),
-          json.colon.matcher(":"),
-          json.number.matcher(10, ["42", "0"]),
-          json.comma.matcher(","),
-          //
-          json.string.matcher(('"', '"'), ["frac"]),
-          json.colon.matcher(":"),
-          json.number.matcher(10, ["0", "42"]),
-          json.comma.matcher(","),
-          //
-          json.string.matcher(('"', '"'), ["neg"]),
-          json.colon.matcher(":"),
-          json.number.matcher(10, ["42"]).sign(Sign::Neg, "-"),
-          json.comma.matcher(","),
-          //
-          json.string.matcher(('"', '"'), ["exp"]),
-          json.colon.matcher(":"),
-          json.number.matcher(10, ["42"]).exponent(
-            10,
-            "e",
-            Some((Sign::Pos, Text::from("+"))),
-            ["42"],
-          ),
-          json.comma.matcher(","),
-          //
-          json.string.matcher(('"', '"'), ["nest"]),
-          json.colon.matcher(":"),
-          json.object.matcher(
-            ("{", "}"),
-            vec![
-              json.string.matcher(
-                ('"', '"'),
-                [C::lit("escapes"), C::esc_char(r"\n", '\n')],
-              ),
-              json.colon.matcher(":"),
-              json.string.matcher(
-                ('"', '"'),
-                [
-                  C::esc_char("\\\"", '\"'),
-                  C::esc_char(r"\\", '\\'),
-                  C::esc_char(r"\/", '/'),
-                  C::esc(r"\b", 0x8),
-                  C::esc(r"\f", 0xc),
-                  C::esc_char(r"\n", '\n'),
-                  C::esc_char(r"\t", '\t'),
-                  C::esc_char(r"\r", '\r'),
-                  C::esc(r"\u0000", 0x0000),
-                  C::esc(r"\u1234", 0x1234),
-                  C::esc(r"\uffff", 0xffff),
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
-      Matcher::eof(),
-    ],
-  )
-  .unwrap();
+  Matcher::new()
+    .then2(
+      json.object,
+      ("{", "}"),
+      Matcher::new()
+        .then2(json.string, ('"', '"'), ["keywords"])
+        .then1(json.colon, ":")
+        .then2(
+          json.array,
+          ("[", "]"),
+          Matcher::new()
+            .then1(json.null, "null")
+            .then1(json.comma, ",")
+            .then1(json.true_, "true")
+            .then1(json.comma, ",")
+            .then1(json.false_, "false"),
+        )
+        .then1(json.comma, ",")
+        //
+        .then2(json.string, ('"', '"'), ["string"])
+        .then1(json.colon, ":")
+        .then2(json.string, ('"', '"'), ["abcdefg"])
+        .then1(json.comma, ",")
+        //
+        .then2(json.string, ('"', '"'), ["number"])
+        .then1(json.colon, ":")
+        .then2(json.number, 10, ["42"])
+        .then1(json.comma, ",")
+        //
+        .then2(json.string, ('"', '"'), ["int"])
+        .then1(json.colon, ":")
+        .then2(json.number, 10, ["42", "0"])
+        .then1(json.comma, ",")
+        //
+        .then2(json.string, ('"', '"'), ["frac"])
+        .then1(json.colon, ":")
+        .then2(json.number, 10, ["0", "42"])
+        .then1(json.comma, ",")
+        //
+        .then2(json.string, ('"', '"'), ["neg"])
+        .then1(json.colon, ":")
+        .then1(
+          json.number,
+          DigitalMatcher::new(10, ["42"]).sign_span(Sign::Neg, "-"),
+        )
+        .then1(json.comma, ",")
+        //
+        .then2(json.string, ('"', '"'), ["exp"])
+        .then1(json.colon, ":")
+        .then1(
+          json.number,
+          DigitalMatcher::new(10, ["42"])
+            .exp(10, "e", ["42"])
+            .sign_span(Sign::Pos, "+"),
+        )
+        .then1(json.comma, ",")
+        //
+        .then2(json.string, ('"', '"'), ["nest"])
+        .then1(json.colon, ":")
+        .then2(
+          json.object,
+          ("{", "}"),
+          Matcher::new()
+            .then2(
+              json.string,
+              ('"', '"'),
+              [C::lit("escapes"), C::esc_char(r"\n", '\n')],
+            )
+            .then1(json.colon, ":")
+            .then2(
+              json.string,
+              ('"', '"'),
+              [
+                C::esc_char("\\\"", '\"'),
+                C::esc_char(r"\\", '\\'),
+                C::esc_char(r"\/", '/'),
+                C::esc(r"\b", 0x8),
+                C::esc(r"\f", 0xc),
+                C::esc_char(r"\n", '\n'),
+                C::esc_char(r"\t", '\t'),
+                C::esc_char(r"\r", '\r'),
+                C::esc(r"\u0000", 0x0000),
+                C::esc(r"\u1234", 0x1234),
+                C::esc(r"\uffff", 0xffff),
+              ],
+            ),
+        ),
+    )
+    .eof()
+    .assert_matches(&ctx, &tokens);
 }
 
 #[derive(Clone, Debug, PartialEq)]
