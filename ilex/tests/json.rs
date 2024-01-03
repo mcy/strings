@@ -2,7 +2,7 @@ use core::fmt;
 use std::fmt::Write;
 
 use ilex::fp::Fp64;
-use ilex::report;
+use ilex::report::Report;
 use ilex::rule::*;
 use ilex::testing::DigitalMatcher;
 use ilex::testing::Matcher;
@@ -65,9 +65,13 @@ const SOME_JSON: &str = r#"
 #[test]
 fn check_tokens() {
   let json = JsonSpec::get();
-
   let mut ctx = ilex::Context::new();
-  let tokens = ctx.new_file("<i>", SOME_JSON).lex(json.spec()).unwrap();
+  let _u = ctx.use_for_debugging_spans();
+  let report = ctx.new_report();
+  let tokens = ctx
+    .new_file("<i>", SOME_JSON)
+    .lex(json.spec(), &report)
+    .unwrap();
   eprintln!("stream: {tokens:#?}");
 
   Matcher::new()
@@ -222,18 +226,22 @@ fn parse(data: &str) -> Result<Json, impl fmt::Debug> {
   let json = JsonSpec::get();
 
   let mut ctx = ilex::Context::new();
+  let report = ctx.new_report();
   let stream = ctx
     .new_file("<i>", data)
-    .lex(json.spec())
+    .lex(json.spec(), &report)
     .map_err(|e| Error(e.to_string()))?;
-  let value = parse0(&ctx, json, &mut stream.cursor());
+  let value = parse0(&ctx, &report, json, &mut stream.cursor());
 
-  report::current()
-    .fatal_or(value)
-    .map_err(|e| Error(e.to_string()))
+  report.fatal_or(value).map_err(|e| Error(e.to_string()))
 }
 
-fn parse0(ctx: &ilex::Context, json: &JsonSpec, cursor: &mut Cursor) -> Json {
+fn parse0(
+  ctx: &ilex::Context,
+  report: &Report,
+  json: &JsonSpec,
+  cursor: &mut Cursor,
+) -> Json {
   fn quote2str(ctx: &ilex::Context, str: token::Quoted) -> String {
     // This is sloppy about surrogates but this is just an example.
     str.to_utf8(ctx, |code, buf| {
@@ -251,13 +259,13 @@ fn parse0(ctx: &ilex::Context, json: &JsonSpec, cursor: &mut Cursor) -> Json {
       Json::Str(quote2str(ctx, str))
     })
     .case(json.number, |num: token::Digital, _| {
-      Json::Num(num.to_float::<Fp64>(ctx, ..).unwrap().to_hard())
+      Json::Num(num.to_float::<Fp64>(ctx, .., report).unwrap().to_hard())
     })
     .case(json.array, |array: token::Bracket, _| {
       let mut trailing = None;
       let vec = array
         .contents()
-        .delimited(json.comma, |c| Some(parse0(ctx, json, c)))
+        .delimited(json.comma, |c| Some(parse0(ctx, report, json, c)))
         .map(|(e, c)| {
           trailing = c;
           e
@@ -265,7 +273,8 @@ fn parse0(ctx: &ilex::Context, json: &JsonSpec, cursor: &mut Cursor) -> Json {
         .collect();
 
       if let Some(comma) = trailing {
-        ilex::error("trailing commas are not allowed in JSON")
+        report
+          .error("trailing commas are not allowed in JSON")
           .saying(comma, "remove this comma");
       }
 
@@ -277,11 +286,11 @@ fn parse0(ctx: &ilex::Context, json: &JsonSpec, cursor: &mut Cursor) -> Json {
         .contents()
         .delimited(json.comma, |c| {
           let key = c
-            .take(json.string)
+            .take(json.string, report)
             .map(|q| quote2str(ctx, q))
             .unwrap_or("😢".into());
-          c.take(json.colon);
-          let value = parse0(ctx, json, c);
+          c.take(json.colon, report);
+          let value = parse0(ctx, report, json, c);
           Some((key, value))
         })
         .map(|(e, c)| {
@@ -291,12 +300,13 @@ fn parse0(ctx: &ilex::Context, json: &JsonSpec, cursor: &mut Cursor) -> Json {
         .collect();
 
       if let Some(comma) = trailing {
-        ilex::error("trailing commas are not allowed in JSON")
+        report
+          .error("trailing commas are not allowed in JSON")
           .saying(comma, "remove this comma");
       }
 
       Json::Obj(vec)
     })
-    .take(cursor)
+    .take(cursor, report)
     .unwrap_or(Json::Null)
 }

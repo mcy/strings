@@ -1,5 +1,4 @@
 use ilex::fp::Fp64;
-use ilex::report;
 use ilex::rule::*;
 use ilex::token;
 use ilex::Lexeme;
@@ -75,7 +74,11 @@ fn numbers() {
   "#;
 
   let mut ctx = ilex::Context::new();
-  let tokens = ctx.new_file("test.file", text).lex(lex.spec()).unwrap();
+  let report = ctx.new_report();
+  let tokens = ctx
+    .new_file("test.file", text)
+    .lex(lex.spec(), &report)
+    .unwrap();
   eprintln!("stream: {tokens:#?}");
 
   let mut cursor = tokens.cursor();
@@ -84,9 +87,9 @@ fn numbers() {
       let value = token::switch()
         .case(Lexeme::eof(), |_, _| Err(false))
         .cases([lex.dec, lex.bin, lex.oct, lex.hex, lex.qua], |num, _| {
-          Ok(num.to_float::<Fp64>(&ctx, ..).unwrap())
+          Ok(num.to_float::<Fp64>(&ctx, .., &report).unwrap())
         })
-        .take(cursor);
+        .take(cursor, &report);
       match value {
         None => {
           cursor.back_up(1);
@@ -99,8 +102,8 @@ fn numbers() {
     })
     .map(|(v, _)| v)
     .collect::<Vec<_>>();
-  cursor.expect_finished();
-  report::current().fatal_or(()).unwrap();
+  cursor.expect_finished(&report);
+  report.fatal_or(()).unwrap();
 
   assert_eq!(
     numbers,

@@ -16,22 +16,21 @@ use camino::Utf8PathBuf;
 use crate::file::File;
 use crate::file::FileMut;
 use crate::file::Span;
+use crate::file::CTX_FOR_SPAN_DEBUG;
 use crate::report;
 use crate::report::Fatal;
 use crate::report::Report;
 
 pub type Offset = u32;
 
-/// A source context, which tracks various source file information,
-/// including spans and comments.
+/// A source context, which tracks source files.
+///
+/// A `Context` contains the full text of all the loaded source files, which
+/// [`Span`]s ultimately refer to. Most [`Span`] operations need their
+/// corresponding `Context` available.
 pub struct Context {
   state: *const UnsafeCell<State>,
   ctx_id: u32,
-
-  /// This holds onto the old report that this context pushed out when it
-  /// was created, if any (this only matters if multiple contexts co-exist on
-  /// a thread).
-  prev_report: Option<report::Installation>,
 }
 
 #[derive(Default)]
@@ -66,7 +65,11 @@ impl Default for Context {
   }
 }
 
+unsafe impl Send for Context {}
+unsafe impl Sync for Context {}
+
 impl Context {
+  /// Creates a new source context.
   pub fn new() -> Self {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let ctx_id = COUNTER.fetch_add(1, Relaxed);
@@ -80,15 +83,40 @@ impl Context {
     // after moving the box into the hashmap.
     let state = &contexts.get(&ctx_id).unwrap().0 as *const UnsafeCell<State>;
 
-    let mut ctx = Self {
-      state,
-      ctx_id,
-      prev_report: None,
-    };
+    Self { state, ctx_id }
+  }
 
-    ctx.prev_report = Some(report::install(ctx.new_report()));
+  /// Sets this thread to use this [`Context`] in `fmt::Debug`.
+  ///
+  /// By default, `dbg!(some_span)` produces a string like `"<elided>"`, since
+  /// spans do not know what context they came from. This function sets a thread
+  /// local that `<Span as fmt::Debug>` looks at when printing; this is useful
+  /// for when dumping e.g. an AST when debugging.
+  ///
+  /// Returns an RAII type that undoes the effects of this function when leaving
+  /// scope, so that if the caller also called this function, it doesn't get
+  /// clobbered.
+  #[must_use = "Context::use_for_debugging_spans() returns an RAII object"]
+  pub fn use_for_debugging_spans(&self) -> impl Drop {
+    struct Replacer(Option<u32>);
+    impl Drop for Replacer {
+      fn drop(&mut self) {
+        CTX_FOR_SPAN_DEBUG.with(|v| v.set(self.0))
+      }
+    }
 
-    ctx
+    Replacer(CTX_FOR_SPAN_DEBUG.with(|v| v.replace(Some(self.ctx_id))))
+  }
+
+  /// Creates a new [`Report`] based on this context.
+  pub fn new_report(&self) -> Report {
+    Report::new(self, Default::default())
+  }
+
+  /// Creates a new [`Report`] based on this context, with the specified
+  /// options.
+  pub fn new_report_with(&self, options: report::Options) -> Report {
+    Report::new(self, options)
   }
 
   fn state(&self) -> &State {
@@ -112,33 +140,26 @@ impl Context {
     self.file_mut(idx).unwrap()
   }
 
-  /// Creates a new report based on this context.
-  pub fn new_report(&self) -> Report {
-    Report::new(self, Default::default())
-  }
-
-  pub fn new_report_with(&self, options: report::Options) -> Report {
-    Report::new(self, options)
-  }
-
-  /// Adds a new file to this source context from the file system.
+  /// Adds a new file to this source context by opening `name` and reading it
+  /// from the file system.
   pub fn open_file(
     &mut self,
     name: impl Into<Utf8PathBuf>,
+    report: &Report,
   ) -> Result<FileMut, Fatal> {
     let name = name.into();
 
     let bytes = match fs::read(&name) {
       Ok(bytes) => bytes,
       Err(e) => {
-        report::error(f!("could not open input file `{name}`: {e}"));
-        return report::current().fatal();
+        report.error(f!("could not open input file `{name}`: {e}"));
+        return report.fatal();
       }
     };
 
     let Ok(utf8) = String::from_utf8(bytes) else {
-      report::error("input file `{name}` was not valid UTF-8");
-      return report::current().fatal();
+      report.error("input file `{name}` was not valid UTF-8");
+      return report.fatal();
     };
 
     Ok(self.new_file(name, utf8))
@@ -185,7 +206,6 @@ impl Context {
         ManuallyDrop::new(Context {
           state: &bx.0,
           ctx_id,
-          prev_report: None,
         })
       });
 
@@ -207,11 +227,6 @@ impl Context {
     &self,
     span: Span,
   ) -> (Option<Range<usize>>, usize) {
-    assert_eq!(
-      span.ctx, self.ctx_id,
-      "attempted to resolve span from another context"
-    );
-
     if span.is_synthetic() {
       return (None, !0);
     }
@@ -227,20 +242,10 @@ impl Context {
   }
 
   pub(crate) fn lookup_synthetic(&self, span: Span) -> &str {
-    assert_eq!(
-      span.ctx, self.ctx_id,
-      "attempted to look up comments of span from another context"
-    );
-
     &self.state().synthetics[span.index()]
   }
 
   pub(crate) fn lookup_comments(&self, span: Span) -> &[Span] {
-    assert_eq!(
-      span.ctx, self.ctx_id,
-      "attempted to look up comments of span from another context"
-    );
-
     self
       .state()
       .comments
@@ -250,15 +255,6 @@ impl Context {
   }
 
   pub(crate) fn add_comment(&mut self, span: Span, comment: Span) {
-    assert_eq!(
-      span.ctx, self.ctx_id,
-      "attempted to attach comment to span from another context"
-    );
-    assert_eq!(
-      comment.ctx, self.ctx_id,
-      "attempted to attach comment span from another context"
-    );
-
     self.mutate(|state| {
       state.comments.entry(span.start).or_default().push(comment)
     });
@@ -289,7 +285,6 @@ impl Context {
     let span = Span {
       start: self.state().ranges.len() as i32,
       end: -1,
-      ctx: self.ctx_id(),
     };
 
     self.mutate(|state| {
@@ -310,7 +305,6 @@ impl Context {
     let span = Span {
       start: !self.state().synthetics.len() as i32,
       end: -1,
-      ctx: self.ctx_id(),
     };
 
     self.mutate(|state| state.synthetics.push(text));
@@ -334,11 +328,6 @@ impl Context {
     let mut best = None;
 
     for span in spans {
-      assert_eq!(
-        span.ctx, self.ctx_id,
-        "attempted to join span from another context"
-      );
-
       let (range, f) = self.lookup_range(span);
       let range = range.expect("attempted to join synthetic span");
 
@@ -367,7 +356,6 @@ impl Context {
     let mut span = Span {
       start: best.start,
       end: best.end,
-      ctx: self.ctx_id,
     };
 
     if span.end == span.start {

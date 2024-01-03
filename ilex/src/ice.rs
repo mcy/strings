@@ -14,7 +14,6 @@ use std::sync::Mutex;
 use std::thread;
 
 use crate::file::Context;
-use crate::report;
 use crate::report::Fatal;
 use crate::report::Report;
 
@@ -61,6 +60,7 @@ use crate::report::Report;
 #[allow(clippy::needless_doctest_main)]
 pub fn handle<R, Cb>(
   ctx: &mut Context,
+  report: &Report,
   options: Options,
   callback: Cb,
 ) -> Result<R, Fatal>
@@ -71,13 +71,9 @@ where
   static ICE: Mutex<Option<Ice>> = Mutex::new(None);
 
   let options2 = options.clone();
-  let hook = panic::take_hook();
   panic::set_hook(Box::new(move |panic| {
-    // Only generate ICEs in threads that have a report, i.e., threads that
-    // belong to the compiler directly and not some library's worker pool.
-    if report::try_current().is_none() {
-      return hook(panic);
-    };
+    // We currently generate ICEs from any thread. It may be useful to mark
+    // threads that will catch their panics? Unclear.
 
     // Generate an ICE and save it for later, if this panic actually makes it
     // out to the main function.
@@ -94,12 +90,12 @@ where
       .unwrap()
       .take()
       .unwrap_or_else(|| Ice::with_no_context(options));
-    ice.report(report::current());
+    ice.report(report);
   }
 
   // We have to do this here, and not in, say, the panic hook, because we want
   // the report to be silently dropped.
-  let _ignored = report::current().finish(io::stderr());
+  let _ignored = report.write_out(io::stderr());
 
   result.unwrap_or_else(|e| panic::resume_unwind(e))
 }
@@ -189,15 +185,15 @@ impl Ice {
   }
 
   /// Dumps this ICE into a report.
-  pub fn report(self, report: Report) {
+  pub fn report(self, report: &Report) {
     use format_args as f;
 
-    report.clone().error(f!(
+    report.error(f!(
       "internal compiler error: {}",
       self.what.as_deref().unwrap_or("unknown panic")
     ));
 
-    report.clone().note(f!(
+    report.note(f!(
       "{} unexpectedly panicked. this is a bug",
       self
         .options
@@ -207,11 +203,11 @@ impl Ice {
     ));
 
     if let Some(at) = self.options.report_bugs_at {
-      report.clone().note(f!("please file a bug at: {at}"));
+      report.note(f!("please file a bug at: {at}"));
     }
 
     for note in self.options.extra_notes {
-      report.clone().note(f!("{note}"));
+      report.note(f!("{note}"));
     }
 
     if let Some(bt) = self.why {
@@ -222,7 +218,7 @@ impl Ice {
         Some((thread, _)) => report
           .clone()
           .note(f!("thread \"{thread}\" panicked\n{bt}")),
-        None => report.clone().note(f!("backtrace:\n{bt}")),
+        None => report.note(f!("backtrace:\n{bt}")),
       };
     }
   }

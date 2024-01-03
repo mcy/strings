@@ -1,5 +1,6 @@
 //! Source code file management.
 
+use std::cell::Cell;
 use std::fmt;
 use std::fmt::Write;
 use std::iter;
@@ -13,6 +14,7 @@ use camino::Utf8Path;
 use crate::lexer::rt;
 use crate::lexer::spec::Spec;
 use crate::report::Fatal;
+use crate::report::Report;
 use crate::token;
 use crate::Never;
 
@@ -29,17 +31,17 @@ pub struct File<'ctx> {
 
 impl<'ctx> File<'ctx> {
   /// Returns the name of this file, as a path.
-  pub fn name(&self) -> &'ctx Utf8Path {
+  pub fn path(&self) -> &'ctx Utf8Path {
     let (path, _) = self.ctx.lookup_file(self.idx);
     path
   }
 
-  /// Returns the contents of this file, as text.
+  /// Returns the textual contents of this file.
   pub fn text(&self) -> &'ctx str {
     self.text
   }
 
-  /// Returns the contents of this file, as text.
+  /// Returns the [`Context`] that owns this file.
   pub fn context(&self) -> &'ctx Context {
     self.ctx
   }
@@ -59,35 +61,40 @@ pub struct FileMut<'ctx> {
 
 impl<'ctx> FileMut<'ctx> {
   /// Returns the name of this file, as a path.
-  pub fn name(&self) -> &Utf8Path {
+  pub fn path(&self) -> &Utf8Path {
     let (path, _) = self.ctx.lookup_file(self.idx);
     path
   }
 
-  /// Returns the contents of this file, as text.
+  /// Returns the textual contents of this file.
   pub fn text(&self) -> &str {
     let (_, text) = self.ctx.lookup_file(self.idx);
     text
   }
 
-  /// Returns the context that owns this file.
+  /// Returns the [`Context`] that owns this file.
   pub fn context(&self) -> &Context {
     self.ctx
   }
 
-  /// Returns the context that owns this file.
+  /// Like [`FileMut::context()`], but returns a mutable reference.
   pub fn context_mut(&mut self) -> &mut Context {
     self.ctx
   }
 
-  /// Returns the context that owns this file.
+  /// Like [`FileMut::context()`], but consumes `self` and returns a longer
+  /// lived mutable reference.
   pub fn into_context(self) -> &'ctx mut Context {
     self.ctx
   }
 
-  /// Parses the file wrapped by this context and generates a token stream.
-  pub fn lex(self, spec: &Spec) -> Result<token::Stream, Fatal> {
-    rt::lex(self, spec)
+  /// Tokenizes the this file according to `spec` and generates a token stream.
+  pub fn lex<'spec>(
+    self,
+    spec: &'spec Spec,
+    report: &Report,
+  ) -> Result<token::Stream<'spec>, Fatal> {
+    rt::lex(self, report, spec)
   }
 
   /// Creates a new span with the given range.
@@ -116,9 +123,6 @@ pub struct Span {
   /// Otherwise, it is a "fused" span. The end span is never synthetic; only
   /// non-synthetic spans can be joined.
   end: i32,
-
-  // Token from the context that created this span.
-  ctx: u32,
 }
 
 impl Span {
@@ -135,7 +139,6 @@ impl Span {
     let end = Span {
       start: self.end,
       end: -1,
-      ctx: self.ctx,
     };
 
     assert!(
@@ -150,20 +153,22 @@ impl Span {
   ///
   /// # Panics
   ///
-  /// May panic if this span isn't owned by `ctx`.
+  /// May panic if this span is not owned by `ctx` (or it may produce an
+  /// unexpected result).
   pub fn file(self, ctx: &Context) -> File {
     let (_, idx) = ctx.lookup_range(self);
     ctx.file(idx).unwrap()
   }
 
-  /// Gets the byte range for this node.
+  /// Gets the byte range for this span.
   ///
-  /// Returns `None` if `node` returns a synthetic span; note that the contents
+  /// Returns `None` if this is a synthetic span; note that the contents
   /// of such a span can still be obtained with [`Span::text()`].
   ///
   /// # Panics
   ///
-  /// May panic if this span isn't owned by `ctx`.
+  /// May panic if this span is not owned by `ctx` (or it may produce an
+  /// unexpected result).
   pub fn range(self, ctx: &Context) -> Option<Range<usize>> {
     ctx.lookup_range(self).0
   }
@@ -172,7 +177,8 @@ impl Span {
   ///
   /// # Panics
   ///
-  /// May panic if this span isn't owned by `ctx`.
+  /// May panic if this span is not owned by `ctx` (or it may produce an
+  /// unexpected result).
   pub fn text(self, ctx: &Context) -> &str {
     if let (Some(range), file) = ctx.lookup_range(self) {
       let (_, text) = ctx.lookup_file(file);
@@ -186,7 +192,8 @@ impl Span {
   ///
   /// # Panics
   ///
-  /// Panics if `node` produces a span that isn't owned by this context.
+  /// May panic if this span is not owned by `ctx` (or it may produce an
+  /// unexpected result).
   pub fn comments(self, ctx: &Context) -> Comments {
     Comments {
       slice: ctx.lookup_comments(self),
@@ -198,24 +205,11 @@ impl Span {
   ///
   /// # Panics
   ///
-  /// Panics if `node` produces a span that isn't owned by this context.
+  /// May panic if this span is not owned by `ctx` (or it may produce an
+  /// unexpected result).
   pub fn append_comment(self, ctx: &mut Context, text: impl Into<Yarn>) {
     let span = ctx.new_synthetic_span(text.into());
     self.append_comment_span(ctx, span);
-  }
-
-  /// Looks up this span's context and runs the given callback on it.
-  ///
-  /// The callback is run unconditionally, but, if this span's context has gone
-  /// out of scope, the callback will be passed `None`.
-  ///
-  /// This function is very, very slow, since it hits a global mutex. Try to
-  /// avoid having to call it.
-  pub fn find_my_context<R>(
-    self,
-    callback: impl FnOnce(Option<&Context>) -> R,
-  ) -> R {
-    Context::find_and_run(self.ctx, callback)
   }
 
   /// Sets the comment associated with a given span. The comment must itself
@@ -233,39 +227,49 @@ impl Span {
   }
 }
 
+thread_local! {
+  static CTX_FOR_SPAN_DEBUG: Cell<Option<u32>> = Cell::new(None);
+}
+
 impl fmt::Debug for Span {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    self.find_my_context(|ctx| match ctx {
-      None => f.write_str("<expired>"),
-      Some(ctx) => {
-        let text = self.text(ctx);
-        write!(f, "`")?;
-        for c in text.chars() {
-          if ('\x20'..'\x7e').contains(&c) {
-            f.write_char(c)?;
-          } else {
-            write!(f, "<U+{:X}>", c as u32)?;
+    CTX_FOR_SPAN_DEBUG.with(|id| {
+      let Some(id) = id.get() else {
+        return f.write_str("<elided>")
+      };
+
+      Context::find_and_run(id, |ctx| match ctx {
+        None => f.write_str("<expired>"),
+        Some(ctx) => {
+          let text = self.text(ctx);
+          write!(f, "`")?;
+          for c in text.chars() {
+            if ('\x20'..'\x7e').contains(&c) {
+              f.write_char(c)?;
+            } else {
+              write!(f, "<U+{:X}>", c as u32)?;
+            }
+          }
+          write!(f, "` @ ")?;
+
+          match self.range(ctx) {
+            Some(range) => write!(f, "{}[{range:?}]", self.file(ctx).path()),
+            None => f.write_str("n/a"),
           }
         }
-        write!(f, "` @ ")?;
-
-        match self.range(ctx) {
-          Some(range) => write!(f, "{}[{range:?}]", self.file(ctx).name()),
-          None => f.write_str("n/a"),
-        }
-      }
+      })
     })
   }
 }
 
-/// An iterator over the comment spans attached to a span.
+/// An iterator over the comment spans attached to a [`Span`].
 pub struct Comments<'ctx> {
   slice: &'ctx [Span],
   ctx: &'ctx Context,
 }
 
 impl<'ctx> Comments<'ctx> {
-  /// Adapts this iterator to return just the text contents of each span.
+  /// Adapts this iterator to return just the text contents of each [`Span`].
   pub fn as_strings(&self) -> impl Iterator<Item = &'ctx str> {
     self.slice.iter().map(|span| span.text(self.ctx))
   }

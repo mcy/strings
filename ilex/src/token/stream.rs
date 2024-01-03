@@ -9,7 +9,7 @@ use crate::lexer::rt::Kind;
 use crate::lexer::rule::Rule;
 use crate::lexer::spec::Spec;
 use crate::lexer::Lexeme;
-use crate::report;
+use crate::report::Report;
 use crate::token;
 
 #[cfg(doc)]
@@ -94,9 +94,11 @@ impl<'lex> Cursor<'lex> {
 
   /// Checks whether this cursor is empty, and if not, emits a diagnostic.
   #[track_caller]
-  pub fn expect_finished(&self) {
+  pub fn expect_finished(&self, report: &Report) {
     if let Some(next) = self.peek_any() {
-      report::builtins().expected(self.spec, [Lexeme::eof()], next, self.end());
+      report
+        .builtins()
+        .expected(self.spec, [Lexeme::eof()], next, self.end());
     }
   }
 
@@ -107,8 +109,12 @@ impl<'lex> Cursor<'lex> {
   /// If matching fails, returns `None` and generates a diagnostic. (The
   /// token is still consumed.)
   #[track_caller]
-  pub fn take<R: Rule>(&mut self, lexeme: Lexeme<R>) -> Option<R::Token<'lex>> {
-    switch::switch().case(lexeme, |t, _| t).take(self)
+  pub fn take<R: Rule>(
+    &mut self,
+    lexeme: Lexeme<R>,
+    report: &Report,
+  ) -> Option<R::Token<'lex>> {
+    switch::switch().case(lexeme, |t, _| t).take(self, report)
   }
 
   /// Takes the next token from `cursor` and matches it against this switch.
@@ -296,7 +302,7 @@ pub mod switch {
   use crate::lexer::rule;
   use crate::lexer::rule::Rule;
   use crate::lexer::Lexeme;
-  use crate::report;
+  use crate::report::Report;
   use crate::token::Any;
   use crate::token::Token;
 
@@ -365,12 +371,16 @@ pub mod switch {
     /// If matching fails, returns `None` and generates a diagnostic. (The
     /// token is still consumed.)
     #[track_caller]
-    pub fn take<'lex, T>(&mut self, cursor: &mut Cursor<'lex>) -> Option<T>
+    pub fn take<'lex, T>(
+      &mut self,
+      cursor: &mut Cursor<'lex>,
+      report: &Report,
+    ) -> Option<T>
     where
       X: Impl<'lex, T>,
     {
       let Some(next) = cursor.next() else {
-        report::builtins().expected(
+        report.builtins().expected(
           cursor.spec,
           self.0.lexemes(0),
           Lexeme::eof(),
@@ -384,7 +394,9 @@ pub mod switch {
         return Some(found);
       }
 
-      report::builtins().expected(cursor.spec, self.0.lexemes(0), next, next);
+      report
+        .builtins()
+        .expected(cursor.spec, self.0.lexemes(0), next, next);
       None
     }
 

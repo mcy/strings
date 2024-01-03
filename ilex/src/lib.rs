@@ -228,7 +228,6 @@ pub use crate::{
   lexer::rule,
   lexer::spec::{Spec, SpecBuilder},
   lexer::Lexeme,
-  report::{error, warn},
   report::{Fatal, Report},
   rule::Rule,
   token::Token,
