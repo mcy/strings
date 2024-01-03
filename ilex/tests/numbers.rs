@@ -7,7 +7,7 @@ ilex::spec! {
   struct Numbers {
     comma: Keyword = ',',
 
-    #[named("decimal number")]
+    #[named = "decimal number"]
     dec: Digital = Digital::new(10)
       .separator('_')
       .plus().minus()
@@ -15,7 +15,7 @@ ilex::spec! {
       .exponents(["e", "E"], Digits::new(10).plus().minus())
       .exponent("^", Digits::new(16).plus().minus()),
 
-    #[named("binary number")]
+    #[named = "binary number"]
     bin: Digital = Digital::new(2)
       .separator('_')
       .plus().minus()
@@ -23,7 +23,7 @@ ilex::spec! {
       .exponent("2", Digits::new(10).plus().minus())
       .prefixes(["0b", "0B", "%"]),
 
-    #[named("octal number")]
+    #[named = "octal number"]
     oct: Digital = Digital::new(8)
       .separator('_')
       .plus().minus()
@@ -31,7 +31,7 @@ ilex::spec! {
       .exponents(["p", "P"], Digits::new(10).plus().minus())
       .prefixes(["0o", "0O", "0"]),
 
-    #[named("hexadecimal number")]
+    #[named = "hexadecimal number"]
     hex: Digital = Digital::new(16)
       .separator('_')
       .plus().minus()
@@ -39,7 +39,7 @@ ilex::spec! {
       .exponents(["p", "P"], Digits::new(10).plus().minus())
       .prefixes(["0x", "0X", "$"]),
 
-    #[named("quatrenary number")]
+    #[named = "quatrenary number"]
     qua: Digital = Digital::new(4)
       .separator('_')
       .plus().minus()
