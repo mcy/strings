@@ -5,7 +5,6 @@ use std::panic;
 use crate::file::Context;
 use crate::file::Span;
 use crate::file::Spanned;
-use crate::report::render;
 use crate::report::Report;
 
 /// A diagnostic that is being built up.
@@ -110,6 +109,9 @@ impl Diagnostic {
 
 impl Drop for Diagnostic {
   fn drop(&mut self) {
-    render::insert_diagnostic(&mut self.report, mem::take(&mut self.info));
+    self
+      .report
+      .state
+      .insert_diagnostic(mem::take(&mut self.info));
   }
 }

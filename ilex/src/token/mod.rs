@@ -27,7 +27,7 @@ use crate::lexer::rt::Kind;
 use crate::lexer::rule;
 use crate::lexer::spec::Spec;
 use crate::lexer::Lexeme;
-use crate::report;
+use crate::report::Report;
 use crate::Never;
 use crate::WrongKind;
 
@@ -633,12 +633,17 @@ impl<'lex> Digital<'lex> {
   /// Parse failures become diagnostics, and an unspecified value is provided
   /// for a failed integer.
   #[track_caller]
-  pub fn to_int<N>(self, ctx: &Context, range: impl RangeBounds<N>) -> N
+  pub fn to_int<N>(
+    self,
+    ctx: &Context,
+    range: impl RangeBounds<N>,
+    report: &Report,
+  ) -> N
   where
     N: Bounded + PartialOrd + FromRadix + fmt::Display,
   {
     for extra in self.digit_blocks().skip(1) {
-      report::builtins().unexpected(
+      report.builtins().unexpected(
         self.spec,
         "extra digits",
         self.lexeme().unwrap(),
@@ -647,7 +652,7 @@ impl<'lex> Digital<'lex> {
     }
 
     for extra in self.exponents() {
-      report::builtins().unexpected(
+      report.builtins().unexpected(
         self.spec,
         "exponent",
         self.lexeme().unwrap(),
@@ -655,7 +660,7 @@ impl<'lex> Digital<'lex> {
       );
     }
 
-    self.to_ints(ctx, range).drain(..).next().unwrap()
+    self.to_ints(ctx, range, report).drain(..).next().unwrap()
   }
 
   /// Parses the blocks of this digital literal as a sequence of integers;
@@ -664,7 +669,12 @@ impl<'lex> Digital<'lex> {
   /// Parse failures become diagnostics, and an unspecified value is provided
   /// for a failed integer.
   #[track_caller]
-  pub fn to_ints<N>(self, ctx: &Context, range: impl RangeBounds<N>) -> Vec<N>
+  pub fn to_ints<N>(
+    self,
+    ctx: &Context,
+    range: impl RangeBounds<N>,
+    report: &Report,
+  ) -> Vec<N>
   where
     N: Bounded + PartialOrd + FromRadix + fmt::Display,
   {
@@ -692,7 +702,8 @@ impl<'lex> Digital<'lex> {
 
         if value.is_none() || value.as_ref().is_some_and(|v| !range.contains(v))
         {
-          report::builtins()
+          report
+            .builtins()
             .literal_out_of_range(
               self.spec(),
               Any::from(self),
@@ -726,11 +737,12 @@ impl<'lex> Digital<'lex> {
     self,
     ctx: &Context,
     range: impl RangeBounds<Fp>,
+    report: &Report,
   ) -> Result<Fp, fp::Exotic> {
-    let fp: Fp = self.parse_fp(ctx, false)?;
+    let fp: Fp = self.parse_fp(ctx, report, false)?;
 
     if !fp.__is_finite() || !range.contains(&fp) {
-      report::builtins().literal_out_of_range(
+      report.builtins().literal_out_of_range(
         self.spec(),
         self,
         self,
@@ -753,11 +765,12 @@ impl<'lex> Digital<'lex> {
     self,
     ctx: &Context,
     range: impl RangeBounds<Fp>,
+    report: &Report,
   ) -> Result<Fp, fp::Exotic> {
-    let fp: Fp = self.parse_fp(ctx, true)?;
+    let fp: Fp = self.parse_fp(ctx, report, true)?;
 
     if !fp.__is_finite() || !range.contains(&fp) {
-      report::builtins().literal_out_of_range(
+      report.builtins().literal_out_of_range(
         self.spec(),
         self,
         self,

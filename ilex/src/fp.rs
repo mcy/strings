@@ -19,7 +19,7 @@ use rustc_apfloat::StatusAnd;
 
 use crate::file::Context;
 use crate::file::Spanned;
-use crate::report;
+use crate::report::Report;
 use crate::token::Digital;
 use crate::token::FromRadix;
 use crate::token::Sign;
@@ -464,6 +464,7 @@ impl Digital<'_> {
   pub(crate) fn parse_fp<Fp: Parse>(
     self,
     ctx: &Context,
+    report: &Report,
     exact: bool,
   ) -> Result<Fp, Exotic> {
     let rule = self.rule().unwrap();
@@ -472,7 +473,7 @@ impl Digital<'_> {
     let int = digits.next();
     let frac = digits.next();
     for extra in digits {
-      report::builtins().unexpected(
+      report.builtins().unexpected(
         self.spec(),
         "extra digits",
         self.lexeme().unwrap(),
@@ -484,7 +485,7 @@ impl Digital<'_> {
     let exp = exps.next();
     if let Some(exp) = exp {
       for extra in exp.digit_blocks().skip(1) {
-        report::builtins().unexpected(
+        report.builtins().unexpected(
           self.spec(),
           "extra digits",
           self.lexeme().unwrap(),
@@ -494,7 +495,7 @@ impl Digital<'_> {
     }
 
     for extra in exps {
-      report::builtins().unexpected(
+      report.builtins().unexpected(
         self.spec(),
         "extra exponent",
         self.lexeme().unwrap(),
@@ -703,7 +704,8 @@ impl Digital<'_> {
     };
 
     if exact && result.status.contains(Status::INEXACT) {
-      report::error("value cannot be represented as an IEEE754 number exactly")
+      report
+        .error("value cannot be represented as an IEEE754 number exactly")
         .saying(self, "this number would be rounded");
     }
 

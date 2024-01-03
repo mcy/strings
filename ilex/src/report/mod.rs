@@ -1,76 +1,56 @@
-//! Error printing facilities.
+//! Diagnostics and error reports.
 //!
-//! These functions are used to simplify the display of various errors to
-//! the user.
+//! This module contains types for generating an *error report*: a collection of
+//! diagnostics that describe why an operation failed in detail. Diagnostics
+//! are basically fancy compiler errors: they use [`Span`]s to present faulty
+//! input in context.
+//!
+//! The [`Report`] type is a reference-counted list of diagnostics, which is
+//! typically passed by reference into functions, but can be copied to simplify
+//! lifetimes, since it's reference-counted.
 
 use std::backtrace::Backtrace;
 use std::cell::Cell;
-use std::cell::RefCell;
 use std::fmt;
 use std::io;
 use std::io::Write;
-use std::mem;
 use std::panic;
 use std::panic::Location;
 use std::process;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::AtomicU32;
-use std::sync::atomic::Ordering::SeqCst;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::thread;
 
 use crate::file::Context;
+#[cfg(doc)]
+use crate::file::Span;
 
 mod builtin;
 mod diagnostic;
 mod render;
 
-pub use builtin::builtins;
 pub use builtin::Builtins;
 pub use builtin::Expected;
 pub use diagnostic::Diagnostic;
+use diagnostic::Kind;
 
-/// Adds a new error to [`report::current()`][current].
-#[track_caller]
-pub fn error(message: impl fmt::Display) -> Diagnostic {
-  current().error(message)
-}
-
-/// Adds a new warning to [`report::current()`][current].
-#[track_caller]
-pub fn warn(message: impl fmt::Display) -> Diagnostic {
-  current().warn(message)
-}
-
-/// Adds a new top-level note to [`report::current()`][current].
-#[track_caller]
-pub fn note(message: impl fmt::Display) -> Diagnostic {
-  current().note(message)
-}
-
-/// A collection of errors that may built up over the course of an operation.
+/// A collection of errors can may built up over the course of an operation.
+///
+/// To construct a report, see [`Context::new_report()`]. The context that
+/// constructs a report is the only one whose [`Span`]s should be passed into
+/// it; doing otherwise will result in unspecified output (or probably a panic).
 #[derive(Clone)]
 pub struct Report {
-  id: u32,
   ctx: u32,
-  state: Arc<State>,
-}
-
-struct State {
-  opts: Options,
-  has_error: AtomicBool,
-  next_id: AtomicU32,
-  sorted_diagnostics: Mutex<Vec<diagnostic::Info>>,
-  recent_diagnostics: Mutex<Vec<(u32, diagnostic::Info)>>,
+  state: Arc<render::State>,
 }
 
 /// Options for a [`Report`].
 pub struct Options {
-  /// Whether to color the output.
+  /// Whether to color the output when rendered.
   pub color: bool,
-  /// Whether to add a note to each diagnostic showing where it was
-  /// reported.
+  /// Whether to add a note to each diagnostic showing where in the source
+  /// code it was reported. `ilex` makes a best-case effort to ensure this
+  /// location is in *your* code.
   pub show_report_locations: bool,
 }
 
@@ -84,86 +64,77 @@ impl Default for Options {
 }
 
 impl Report {
-  /// Creates a report with the given options for rendering.
-  pub(crate) fn new(ctx: &Context, opts: Options) -> Self {
-    Self {
-      id: 0,
-      ctx: ctx.ctx_id(),
-      state: Arc::new(State {
-        opts,
-        has_error: AtomicBool::new(false),
-        next_id: AtomicU32::new(1),
-        sorted_diagnostics: Default::default(),
-        recent_diagnostics: Default::default(),
-      }),
-    }
-  }
-
   /// Returns a wrapper for accessing commonly-used, built-in message types.
-  pub fn builtins(self) -> Builtins {
-    Builtins(self)
+  ///
+  /// See [`Builtins`].
+  pub fn builtins(&self) -> Builtins {
+    Builtins(self.clone())
   }
 
   /// Adds a new error to this report.
+  ///
+  /// The returned [`Diagnostic`] object can be used to add spans, notes, and
+  /// remarks, to generate a richer diagnostic.
   #[track_caller]
-  pub fn error(self, message: impl fmt::Display) -> Diagnostic {
-    Diagnostic {
-      report: self,
-      info: diagnostic::Info {
-        message: message.to_string(),
-        kind: Some(diagnostic::Kind::Error),
-        snippets: Vec::new(),
-        notes: Vec::new(),
-        reported_at: None,
-      },
-    }
-    .reported_at(Location::caller())
+  pub fn error(&self, message: impl fmt::Display) -> Diagnostic {
+    self.new_diagnostic(Kind::Error, message.to_string())
   }
 
   /// Like [`Report::error()`], but accepts a closure for generating the
   /// diagnostic message.
   #[track_caller]
   pub fn error_by(
-    self,
+    &self,
     fmt: impl FnOnce(&mut fmt::Formatter) -> fmt::Result,
   ) -> Diagnostic {
-    self.error(display_by(fmt))
+    self.new_diagnostic(Kind::Error, display_by(fmt).to_string())
   }
 
   /// Adds a new warning to this report.
+  ///
+  /// The returned [`Diagnostic`] object can be used to add spans, notes, and
+  /// remarks, to generate a richer diagnostic.
   #[track_caller]
-  pub fn warn(self, message: impl fmt::Display) -> Diagnostic {
-    Diagnostic {
-      report: self,
-      info: diagnostic::Info {
-        message: message.to_string(),
-        kind: Some(diagnostic::Kind::Warning),
-        snippets: Vec::new(),
-        notes: Vec::new(),
-        reported_at: None,
-      },
-    }
-    .reported_at(Location::caller())
+  pub fn warn(&self, message: impl fmt::Display) -> Diagnostic {
+    self.new_diagnostic(Kind::Warning, message.to_string())
   }
 
   /// Like [`Report::warn()`], but accepts a closure for generating the
   /// diagnostic message.
   #[track_caller]
   pub fn warn_by(
-    self,
+    &self,
     fmt: impl FnOnce(&mut fmt::Formatter) -> fmt::Result,
   ) -> Diagnostic {
-    self.warn(display_by(fmt))
+    self.new_diagnostic(Kind::Warning, display_by(fmt).to_string())
   }
 
   /// Adds a new top-level note to this report.
+  ///
+  /// The returned [`Diagnostic`] object can be used to add spans, notes, and
+  /// remarks, to generate a richer diagnostic.
   #[track_caller]
-  pub fn note(self, message: impl fmt::Display) -> Diagnostic {
+  pub fn note(&self, message: impl fmt::Display) -> Diagnostic {
+    self.new_diagnostic(Kind::Note, message.to_string())
+  }
+
+  /// Like [`Report::note()`], but accepts a closure for generating the
+  /// diagnostic message.
+  #[track_caller]
+  pub fn note_by(
+    &self,
+    fmt: impl FnOnce(&mut fmt::Formatter) -> fmt::Result,
+  ) -> Diagnostic {
+    self.new_diagnostic(Kind::Note, display_by(fmt).to_string())
+  }
+
+  #[track_caller]
+  fn new_diagnostic(&self, kind: Kind, message: String) -> Diagnostic {
     Diagnostic {
-      report: self,
+      report: self.clone(),
       info: diagnostic::Info {
-        message: message.to_string(),
-        kind: Some(diagnostic::Kind::Note),
+        message,
+        kind: Some(kind),
         snippets: Vec::new(),
         notes: Vec::new(),
         reported_at: None,
@@ -172,28 +143,20 @@ impl Report {
     .reported_at(Location::caller())
   }
 
-  /// Like [`Report::note()`], but accepts a closure for generating the
-  /// diagnostic message.
-  #[track_caller]
-  pub fn note_by(
-    self,
-    fmt: impl FnOnce(&mut fmt::Formatter) -> fmt::Result,
-  ) -> Diagnostic {
-    self.warn(display_by(fmt))
+  /// Returns a [`Fatal`] regardless of whether this report contains any errors.
+  pub fn fatal<T>(&self) -> Result<T, Fatal> {
+    Err(Fatal(self.clone()))
   }
 
-  /// Returns a `Fatal` regardless of whether this report contains any errors.
-  pub fn fatal<T>(self) -> Result<T, Fatal> {
-    Err(Fatal(self))
-  }
-
-  /// If this report contains any errors, return s `Err(Fatal)`; otherwise,
-  /// it returns `Ok(ok)`.
+  /// If this report contains any errors, returns [`Err(Fatal)`][Fatal];
+  /// otherwise, it returns `Ok(ok)`.
   ///
   /// This is a useful function for completing some operation that could have
   /// generated error diagnostics.
-  pub fn fatal_or<T>(self, ok: T) -> Result<T, Fatal> {
-    if !self.state.has_error.load(SeqCst) {
+  ///
+  /// See [`Fatal`].
+  pub fn fatal_or<T>(&self, ok: T) -> Result<T, Fatal> {
+    if !self.state.has_error() {
       return Ok(ok);
     }
 
@@ -201,25 +164,34 @@ impl Report {
   }
 
   /// Collates all of the "unsorted diagnostics" into the "sorted diagnostics",
-  /// sorting them by thread id. This ensures that all diagnostics coming from
-  /// a particular thread are together.
+  /// sorting them by thread id.
+  ///
+  /// This ensures that all diagnostics coming from a particular thread are
+  /// together.
   pub fn collate(&self) {
-    render::collate(self)
+    self.state.collate()
   }
 
-  /// Consumes this `Report` and dumps its diagnostics to `sink`.
-  pub fn finish(self, sink: impl io::Write) -> io::Result<()> {
-    self.in_context(|this, ctx| render::finish(this, ctx, sink))
+  /// Writes out the contents of this diagnostic to `sink`.
+  pub fn write_out(&self, sink: impl io::Write) -> io::Result<()> {
+    self.in_context(|ctx| render::finish(self, ctx, sink))
+  }
+
+  pub(crate) fn new(ctx: &Context, opts: Options) -> Self {
+    Self {
+      ctx: ctx.ctx_id(),
+      state: Arc::new(render::State::new(opts)),
+    }
   }
 
   /// Executes `cb` after looking up the context that "owns" this report.
   ///
   /// Danger: calling any diagnostic-generating function in the callback will
   /// self-deadlock.
-  fn in_context<R>(self, cb: impl FnOnce(Report, &Context) -> R) -> R {
+  fn in_context<R>(&self, cb: impl FnOnce(&Context) -> R) -> R {
     Context::find_and_run(self.ctx, |ctx| {
       match ctx {
-        Some(ctx) => cb(self, ctx),
+        Some(ctx) => cb(ctx),
         None => {
           let msg = "ilex: attempted to operate on a report, but ilex::Context that owns it has disappeared; this is probably a bug";
 
@@ -241,59 +213,11 @@ impl Report {
   }
 }
 
-thread_local! {
-  static REPORT: RefCell<Option<Report>> = RefCell::new(None);
-}
-
-pub(crate) fn try_current() -> Option<Report> {
-  REPORT.with(|report| report.borrow().clone())
-}
-
-/// An RAII type that undoes a call to `report::install()`.
-pub struct Installation(Option<Report>);
-impl Drop for Installation {
-  fn drop(&mut self) {
-    if let Some(old) = self.0.take() {
-      mem::forget(old);
-    }
-  }
-}
-
-/// Installs a `Report` as this thread's current report.
+/// An error type for making returning a [`Result`] that will trigger
+/// diagnostics printing when unwrapped.
 ///
-/// Returns a cleanup object that places the previous report back in place
-/// when it goes out of scope.
-pub fn install(mut report: Report) -> Installation {
-  report.id = report.state.next_id.fetch_add(1, SeqCst);
-  REPORT.with(|tls| {
-    Installation(mem::replace(&mut *tls.borrow_mut(), Some(report)))
-  })
-}
-
-/// Returns this thread's `Report`.
-///
-/// # Panics
-///
-/// If this thread did not have a report initialized with [`install()`], this
-/// function will panic.
-pub fn current() -> Report {
-  match try_current() {
-    Some(report) => report,
-    None => {
-      const MSG: &str =
-        "called Report::with_current() on a thread without a report installed";
-      let current = thread::current();
-
-      match current.name() {
-        Some(name) => panic!("{MSG} ({name:?})"),
-        None => panic!("{MSG} ({:?})", current.id()),
-      }
-    }
-  }
-}
-
-/// Returned by functions that take a [`Report`] for writing errors to, if any
-/// errors were written to it.
+/// This is useful for functions that are [`Result`]-ey, like reading a file,
+/// but which want to generate diagnostics, too.
 pub struct Fatal(Report);
 
 impl Fatal {
@@ -311,10 +235,7 @@ impl Fatal {
 
 impl fmt::Debug for Fatal {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    self
-      .0
-      .clone()
-      .in_context(|this, ctx| render::render_fmt(&this, ctx, f))
+    self.0.in_context(|ctx| render::render_fmt(&self.0, ctx, f))
   }
 }
 

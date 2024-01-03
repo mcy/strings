@@ -117,7 +117,12 @@ fn llvm() {
 
   let llvm = Llvm::get();
   let mut ctx = ilex::Context::new();
-  let tokens = ctx.new_file("test.file", text).lex(llvm.spec()).unwrap();
+  let _u = ctx.use_for_debugging_spans();
+  let report = ctx.new_report();
+  let tokens = ctx
+    .new_file("test.file", text)
+    .lex(llvm.spec(), &report)
+    .unwrap();
   eprintln!("stream: {tokens:#?}");
 
   Matcher::new()

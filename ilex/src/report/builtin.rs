@@ -18,7 +18,6 @@ use crate::lexer::Lexeme;
 use crate::report::Diagnostic;
 use crate::token;
 
-use crate::report;
 use crate::report::Report;
 use crate::token::Token as _;
 
@@ -27,21 +26,11 @@ use crate::token::Token as _;
 /// See [`Report::builtins()`].
 pub struct Builtins(pub(super) Report);
 
-/// Returns a `Builtins` wrapping `report::current()`.
-///
-/// # Panics
-///
-/// If this thread did not have a report initialized with
-/// [`report::install()`][super::install], this function will panic.
-pub fn builtins() -> Builtins {
-  report::current().builtins()
-}
-
 impl Builtins {
   /// Generates an "unexpected" diagnostic.
   #[track_caller]
   pub fn unexpected<'a, 'b>(
-    self,
+    &self,
     spec: &Spec,
     found: impl Into<Expected<'a>>,
     unexpected_in: impl Into<Expected<'b>>,
@@ -49,10 +38,11 @@ impl Builtins {
   ) -> Diagnostic {
     self
       .0
-      .in_context(|this, ctx| {
+      .in_context(|ctx| {
         let found = found.into();
 
-        let diagnostic = this
+        let diagnostic = self
+          .0
           .error(f!(
             "unexpected {} in {}",
             found.for_user_diagnostic(spec, ctx),
@@ -69,7 +59,7 @@ impl Builtins {
   /// diagnostic.
   #[track_caller]
   pub fn expected<'a, 'b, E: Into<Expected<'b>>>(
-    self,
+    &self,
     spec: &Spec,
     expected: impl IntoIterator<Item = E>,
     found: impl Into<Expected<'b>>,
@@ -77,12 +67,13 @@ impl Builtins {
   ) -> Diagnostic {
     self
       .0
-      .in_context(|this, ctx| {
+      .in_context(|ctx| {
         let expected = expected.into_iter().map(Into::into).collect::<Vec<_>>();
         let alts = disjunction_to_string(spec, ctx, &expected);
         let found = found.into();
 
-        let diagnostic = this
+        let diagnostic = self
+          .0
           .error(f!(
             "expected {alts}, but found {}",
             found.for_user_diagnostic(spec, ctx)
@@ -98,7 +89,7 @@ impl Builtins {
   /// not closed before the end of the input.
   #[track_caller]
   pub fn unclosed<'a>(
-    self,
+    &self,
     spec: &Spec,
     what: impl Into<Expected<'a>>,
     open: impl Spanned,
@@ -106,8 +97,9 @@ impl Builtins {
   ) -> Diagnostic {
     self
       .0
-      .in_context(|this, ctx| {
-        this
+      .in_context(|ctx| {
+        self
+          .0
           .error(f!(
             "found an unclosed {}",
             what.into().for_user_diagnostic(spec, ctx)
@@ -121,12 +113,13 @@ impl Builtins {
   /// Generates an "invalid escape sequence" diagnostic, for when an
   /// [`Escape::Invalid`][crate::lexer::rule::Escape::Invalid] is encountered.
   #[track_caller]
-  pub fn invalid_escape(self, at: impl Spanned) -> Diagnostic {
+  pub fn invalid_escape(&self, at: impl Spanned) -> Diagnostic {
     self
       .0
-      .in_context(|this, ctx| {
+      .in_context(|ctx| {
         let seq = at.text(ctx);
-        this
+        self
+          .0
           .error(f!("found an invalid escape sequence: `{seq}`"))
           .saying(at, "invalid escape sequence")
       })
@@ -136,7 +129,7 @@ impl Builtins {
   /// Generates a "numeric literal overflowed" diagnostic.
   #[track_caller]
   pub fn literal_out_of_range<'a, N: fmt::Display>(
-    self,
+    &self,
     spec: &Spec,
     what: impl Into<Expected<'a>>,
     at: impl Spanned,
@@ -159,8 +152,9 @@ impl Builtins {
 
     self
       .0
-      .in_context(|this, ctx| {
-        this
+      .in_context(|ctx| {
+        self
+          .0
           .error(f!(
             "{} literal out of range",
             what.into().for_user_diagnostic(spec, ctx)
@@ -317,7 +311,7 @@ fn pos_iter() {
 /// Something that looks enough like an [`ilex::Token`][token::Token] that it
 /// could be used for diagnostics.
 ///
-/// This type exists because there are many potential sources for the "name of
+/// Self.0 type exists because there are many potential sources for the "name of
 /// a token", and so it's easier to just have a sink type that they all convert
 /// into.
 pub enum Expected<'lex> {
@@ -331,7 +325,7 @@ pub enum Expected<'lex> {
 }
 
 impl Expected<'_> {
-  /// Converts this tokenish into a string that can be used in a diagnostic.
+  /// Converts self.0 tokenish into a string that can be used in a diagnostic.
   pub(crate) fn for_user_diagnostic<'a>(
     &'a self,
     spec: &'a Spec,

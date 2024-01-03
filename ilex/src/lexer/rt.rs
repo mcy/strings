@@ -9,8 +9,8 @@ use crate::lexer::best_match::MatchData;
 use crate::lexer::rule;
 use crate::lexer::spec::Spec;
 use crate::lexer::Lexeme;
-use crate::report;
 use crate::report::Fatal;
+use crate::report::Report;
 use crate::token;
 use crate::token::Content;
 use crate::token::Sign;
@@ -19,12 +19,13 @@ use super::range_add;
 
 pub fn lex<'spec>(
   file: FileMut,
+  report: &Report,
   spec: &'spec Spec,
 ) -> Result<token::Stream<'spec>, Fatal> {
-  let mut lex = Lexer::new(file, spec);
+  let mut lex = Lexer::new(file, report, spec);
   lex.run();
 
-  report::current().fatal_or(token::Stream {
+  report.fatal_or(token::Stream {
     spec,
     toks: mem::take(&mut lex.tokens),
   })
@@ -71,8 +72,9 @@ pub struct DigitBlocks {
   pub which_exp: usize,
 }
 
-struct Lexer<'spec, 'ctx> {
+struct Lexer<'spec, 'rep, 'ctx> {
   file: FileMut<'ctx>,
+  report: &'rep Report,
   spec: &'spec Spec,
 
   cursor: usize,
@@ -87,7 +89,20 @@ struct DelimInfo {
   close: Yarn,
 }
 
-impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
+impl<'spec, 'rep, 'ctx> Lexer<'spec, 'rep, 'ctx> {
+  fn new(file: FileMut<'ctx>, report: &'rep Report, spec: &'spec Spec) -> Self {
+    Lexer {
+      file,
+      report,
+      spec,
+
+      cursor: 0,
+      tokens: Vec::new(),
+      delims: Vec::new(),
+      comments: Vec::new(),
+    }
+  }
+
   fn run(&mut self) {
     let mut unexpected_start = None;
     while let Some(next) = self.rest().chars().next() {
@@ -127,19 +142,10 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
 
     for delim in self.delims.drain(..) {
       let open = self.tokens[delim.open_idx].span;
-      report::builtins().unclosed(self.spec, delim.lexeme, open, eof);
-    }
-  }
-
-  fn new(file: FileMut<'ctx>, spec: &'spec Spec) -> Self {
-    Lexer {
-      file,
-      spec,
-
-      cursor: 0,
-      tokens: Vec::new(),
-      delims: Vec::new(),
-      comments: Vec::new(),
+      self
+        .report
+        .builtins()
+        .unclosed(self.spec, delim.lexeme, open, eof);
     }
   }
 
@@ -277,7 +283,7 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
         self.comments.push(span);
 
         if best_match.unexpected_eof {
-          report::builtins().unclosed(
+          self.report.builtins().unclosed(
             self.spec,
             best_match.lexeme,
             self.mksp(start..start + best_match.prefix.len()),
@@ -321,7 +327,6 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
         let core_end = self.cursor - suf_len;
         let prefix = (pre_len > 0).then(|| self.mksp(affix_start..core_start));
         let suffix = (suf_len > 0).then(|| self.mksp(core_end..self.cursor));
-
         let (mant, exps) = blocks.split_first().unwrap();
         let tok = Token {
           kind: Kind::Digital {
@@ -384,7 +389,7 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
         let close = self.mksp(start + unquoted.end..core_end);
 
         if best_match.unexpected_eof {
-          report::builtins().unclosed(
+          self.report.builtins().unclosed(
             self.spec,
             best_match.lexeme,
             open,
@@ -401,7 +406,7 @@ impl<'spec, 'ctx> Lexer<'spec, 'ctx> {
               Ok(code) => *code,
               Err(r) => {
                 let span = self.mksp(range_add(r, start));
-                report::builtins().invalid_escape(span);
+                self.report.builtins().invalid_escape(span);
                 !0
               }
             };

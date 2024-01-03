@@ -1,8 +1,10 @@
 use std::fmt;
 use std::io;
 use std::ops::Range;
-use std::sync::atomic::Ordering::SeqCst;
-use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 
 use annotate_snippets::renderer::AnsiColor;
 use annotate_snippets::renderer::Style;
@@ -15,42 +17,62 @@ use annotate_snippets::SourceAnnotation;
 
 use crate::file::Context;
 use crate::file::Spanned;
-
+use crate::report::diagnostic;
 use crate::report::diagnostic::Info;
 use crate::report::diagnostic::Kind;
+use crate::report::Options;
 use crate::report::Report;
 
-/// Collates all of the "unsorted diagnostics" into the "sorted diagnostics",
-/// sorting them by thread id. This ensures that all diagnostics coming from
-/// a particular thread are together.
-pub fn collate(report: &Report) {
-  let mut recent = report.state.recent_diagnostics.lock().unwrap();
-  let mut sorted = report.state.sorted_diagnostics.lock().unwrap();
-
-  recent.sort_by_key(|&(id, _)| id);
-  sorted.extend(recent.drain(..).map(|(_, i)| i));
+pub struct State {
+  pub opts: Options,
+  has_error: AtomicBool,
+  sorted_diagnostics: Mutex<Vec<diagnostic::Info>>,
+  recent_diagnostics: Mutex<Vec<(u64, diagnostic::Info)>>,
 }
 
-pub(in crate::report) fn insert_diagnostic(report: &mut Report, info: Info) {
-  if let Some(Kind::Error) = info.kind {
-    report.state.has_error.store(true, SeqCst);
+impl State {
+  pub fn new(opts: Options) -> Self {
+    Self {
+      opts,
+      has_error: AtomicBool::new(false),
+      sorted_diagnostics: Default::default(),
+      recent_diagnostics: Default::default(),
+    }
   }
 
-  let mut lock;
-  let recent_diagnostics = match Arc::get_mut(&mut report.state) {
-    Some(state) => state.recent_diagnostics.get_mut().unwrap(),
-    None => {
-      lock = report.state.recent_diagnostics.lock().unwrap();
-      &mut *lock
-    }
-  };
+  pub fn has_error(&self) -> bool {
+    self.has_error.load(Ordering::SeqCst)
+  }
 
-  recent_diagnostics.push((report.id, info))
+  /// Collates all of the "unsorted diagnostics" into the "sorted diagnostics",
+  /// sorting them by thread id. This ensures that all diagnostics coming from
+  /// a particular thread are together.
+  pub fn collate(&self) {
+    let mut recent = self.recent_diagnostics.lock().unwrap();
+    let mut sorted = self.sorted_diagnostics.lock().unwrap();
+
+    recent.sort_by_key(|&(id, _)| id);
+    sorted.extend(recent.drain(..).map(|(_, i)| i));
+  }
+
+  pub fn insert_diagnostic(&self, info: Info) {
+    if let Some(Kind::Error) = info.kind {
+      self.has_error.store(true, Ordering::SeqCst);
+    }
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    thread_local! {
+      static ID: u64 = COUNTER.fetch_add(1, Ordering::Relaxed);
+    };
+
+    let mut recent = self.recent_diagnostics.lock().unwrap();
+    recent.push((ID.with(|&x| x), info))
+  }
 }
 
 /// Consumes this `Report` and dumps its diagnostics to `sink`.
 pub fn finish(
-  report: Report,
+  report: &Report,
   fcx: &Context,
   sink: impl io::Write,
 ) -> io::Result<()> {
@@ -68,9 +90,9 @@ pub fn finish(
     }
   }
 
-  collate(&report);
+  report.state.collate();
   let mut out = Writer { sink, error: None };
-  render_fmt(&report, fcx, &mut out).map_err(|_| {
+  render_fmt(report, fcx, &mut out).map_err(|_| {
     if let Some(e) = out.error.take() {
       return e;
     }
@@ -85,7 +107,7 @@ pub fn render_fmt(
   fcx: &Context,
   sink: &mut dyn fmt::Write,
 ) -> fmt::Result {
-  collate(report);
+  report.state.collate();
   let mut errors = 0;
 
   let mut renderer = Renderer::plain();
@@ -134,7 +156,7 @@ pub fn render_fmt(
           cur_slice = Some(Slice {
             source: file.text(),
             line_start: 1,
-            origin: Some(file.name().as_str()),
+            origin: Some(file.path().as_str()),
             annotations: Vec::new(),
             fold: true,
           });
