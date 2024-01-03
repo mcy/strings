@@ -13,9 +13,17 @@ use crate::token;
 use crate::Never;
 use crate::WrongKind;
 
+/// A general rule.
+///
+/// This trait is implemented by all other types in this module that represent
+/// a rule.
 pub trait Rule: fmt::Debug + TryFrom<Any> + Into<Any> + 'static {
+  /// This rule's corresponding token type.
+  ///
+  /// [`Comment`], which has no corresponding token, has this as [`Never`].
   type Token<'lex>: token::Token<'lex>;
 
+  /// Converts a reference to [`Any`] to a reference to this kind of rule.
   fn try_from_ref(value: &Any) -> Result<&Self, WrongKind>;
 }
 
@@ -23,6 +31,7 @@ pub use crate::token::Sign;
 
 /// Any of the possible rule types in a [`Spec`][crate::Spec].
 #[derive(Debug)]
+#[allow(missing_docs)]
 pub enum Any {
   Keyword(Keyword),
   Bracket(Bracket),
@@ -54,12 +63,53 @@ impl Rule for Any {
   }
 }
 
+/// The end-of-file.
+///
+/// This rule only exists so that [`token::Eof`] can have a corresponding rule.
+/// It is not constructible.
+#[derive(Debug)]
+pub struct Eof(Never);
+
+impl Rule for Eof {
+  type Token<'lex> = token::Eof<'lex>;
+
+  fn try_from_ref(value: &Any) -> Result<&Self, WrongKind> {
+    Err(WrongKind {
+      want: "Eof",
+      got: value.debug_name(),
+    })
+  }
+}
+
+impl From<Eof> for Any {
+  fn from(value: Eof) -> Self {
+    value.0.from_nothing_anything()
+  }
+}
+
+impl TryFrom<Any> for Eof {
+  type Error = WrongKind;
+
+  fn try_from(value: Any) -> Result<Self, Self::Error> {
+    Err(WrongKind {
+      want: "Eof",
+      got: value.debug_name(),
+    })
+  }
+}
+
+/// A keyword, i.e., an exact well-known string, such as `+`, `class`, and
+/// `#define`.
+///
+/// Keywords are similar to identifiers, but their content is always the same
+/// fixed string.
 #[derive(Debug)]
 pub struct Keyword {
   pub(super) value: Yarn,
 }
 
 impl Keyword {
+  /// Constructs a new keyword rule with the exact string it matches.
   pub fn new(value: impl Into<Yarn>) -> Self {
     Self {
       value: value.into(),
@@ -108,48 +158,75 @@ impl TryFrom<Any> for Keyword {
 }
 
 /// A paired bracket, such as `(..)`.
+///
+/// Brackets are pairs of delimiters with tokens between them. They are used as
+/// both standalone rules and to define other rules, such as [`Quoted`]s
 #[derive(Debug)]
-pub enum Bracket {
-  /// An ordinary pair: an opening string and its matching closing string.
-  Paired(Yarn, Yarn),
+pub struct Bracket(pub(super) BracketKind);
+
+impl Bracket {
+  /// An ordinary pair of delimiters: an opening string and its matching
+  /// closing string.
+  pub fn paired(open: impl Into<Yarn>, close: impl Into<Yarn>) -> Self {
+    Self(BracketKind::Paired(open.into(), close.into()))
+  }
 
   /// A Rust raw string-like bracket. This corresponds to `##"foo"##` raw
   /// strings in Rust.
   ///
   /// This kind of bracket must be special-cased, since it makes the grammar
-  /// non-context-sensitive. To lex it, first we try to lex `open.0` if
+  /// non-context-sensitive. To lex it, first we try to lex `open_start` if
   /// present, then we try to lex as many copies of `repeating` as possible,
-  /// and then an `open.1`. Then we lex the contents until we lex a `close.0`,
-  /// then the same number of copies of `repeating`, and then a `close.1`, if
-  /// present.
+  /// and then an `open_end`. Then we lex the contents until we lex a
+  /// `close_start`, then the same number of copies of `repeating`,
+  /// and then a `close_end`.
   ///
   /// To specify the exact syntax from Rust, you would write
-  /// `RustLike { repeating: "#", open: ("", "\""), close: ("\"", "") }`.
-  RustLike {
-    /// The string that is repeated over and over between the opening brackets
-    /// and the closing brackets.
-    repeating: Yarn,
-
-    /// The brackets around the `repeating` block to open the delimited range
-    /// itself. The first entry comes before the `repeating` block and the
-    /// latter after.
-    open: (Yarn, Yarn),
-
-    /// The brackets around the `repeating` block to closing the delimited
-    /// range itself. The first entry comes before the `repeating` block and the
-    /// latter after.
-    close: (Yarn, Yarn),
-  },
+  /// `Bracket::rust_raw_string('#', 'r', '"', '"', "")`.
+  pub fn rust_raw_string(
+    repeating: impl Into<Yarn>,
+    (open_start, open_end): (impl Into<Yarn>, impl Into<Yarn>),
+    (close_start, close_end): (impl Into<Yarn>, impl Into<Yarn>),
+  ) -> Self {
+    Self(BracketKind::RustLike {
+      repeating: repeating.into(),
+      open: (open_start.into(), open_end.into()),
+      close: (close_start.into(), close_end.into()),
+    })
+  }
 
   /// A C++ raw string-like bracket. This corresponds to `R"xyz(foo)xyz"` raw
   /// strings in C++.
   ///
-  /// This kind of bracket must be special-cased, since it makes the grammar
-  /// non-context-sensitive. To lex it, first we try to lex a `open.0`
-  /// then we try to lex an identifier as specified by `ident_rule`, and then an
-  /// `open.1`. We then lex the contents until we lex a `close.0`, a copy of the
-  /// previously lexed identifier, and then a `close.1`.
-  CppLike {
+  /// This is similar to [`Bracket::rust_raw_string()`], but for C++'s raw
+  /// strings. Instead of parsing repeated copies of some string, we parse a
+  /// whole identifier (prefixes and suffixes and all) and expect it to be at
+  /// the other end.
+  ///
+  /// To specify the exact syntax from C++, you would write
+  /// `Bracket::cxx_raw_string(Ident::new(), "R\"", '(', ')', '"')`.
+  pub fn cxx_raw_string(
+    ident: Ident,
+    (open_start, open_end): (impl Into<Yarn>, impl Into<Yarn>),
+    (close_start, close_end): (impl Into<Yarn>, impl Into<Yarn>),
+  ) -> Self {
+    Self(BracketKind::CxxLike {
+      ident_rule: ident,
+      open: (open_start.into(), open_end.into()),
+      close: (close_start.into(), close_end.into()),
+    })
+  }
+}
+
+#[derive(Debug)]
+pub(super) enum BracketKind {
+  Paired(Yarn, Yarn),
+  RustLike {
+    repeating: Yarn,
+    open: (Yarn, Yarn),
+    close: (Yarn, Yarn),
+  },
+  CxxLike {
     ident_rule: Ident,
     open: (Yarn, Yarn),
     close: (Yarn, Yarn),
@@ -178,7 +255,7 @@ impl From<Bracket> for Any {
 
 impl<Y: Into<Yarn>, Z: Into<Yarn>> From<(Y, Z)> for Bracket {
   fn from((y, z): (Y, Z)) -> Self {
-    Bracket::Paired(y.into(), z.into())
+    Bracket::paired(y, z)
   }
 }
 
@@ -426,7 +503,7 @@ impl Quoted {
   /// a quoted thing have the exact same bracket on either side.
   pub fn new(quote: impl Into<Yarn>) -> Self {
     let quote = quote.into();
-    Self::with(Bracket::Paired(quote.clone(), quote))
+    Self::with(Bracket::paired(quote.clone(), quote))
   }
 
   /// Creates a new quoted string rule with the given bracket.
@@ -561,6 +638,7 @@ pub enum Escape {
   ///
   /// The `parse` function may be called speculatively; it MUST NOT emit its
   /// own diagnostics.
+  #[allow(missing_docs)]
   Fixed {
     char_count: u32,
     parse: Box<dyn Fn(&str) -> Option<u32> + Sync + Send>,
@@ -575,6 +653,7 @@ pub enum Escape {
   ///
   /// The `parse` function may be called speculatively; it MUST NOT emit its
   /// own diagnostics.
+  #[allow(missing_docs)]
   Bracketed {
     bracket: Bracket,
     parse: Box<dyn Fn(&str) -> Option<u32> + Sync + Send>,
@@ -839,10 +918,40 @@ impl TryFrom<Any> for Digital {
   }
 }
 
+/// A comment rule.
+///
+/// Comments do not generate tokens, unlike most rules. Instead, they are
+/// attached to the overall span of a token, and can be inspected through
+/// [`Span::comments()`][crate::Span::comments].
 #[derive(Debug)]
-pub enum Comment {
+pub struct Comment(pub(super) CommentKind);
+
+#[derive(Debug)]
+pub(super) enum CommentKind {
   Line(Yarn),
   Block(Bracket),
+}
+
+impl Comment {
+  /// Creates a new line comment. Line comments cannot nest, and run from
+  /// starting delimiter (which is something like `//` or `#`) to the next
+  /// `'\n'` character (not including it).
+  pub fn line(delim: impl Into<Yarn>) -> Self {
+    Self(CommentKind::Line(delim.into()))
+  }
+
+  /// Creates a new block comment with paired delimiters.
+  ///
+  /// See [`Self::block()`].
+  pub fn paired(open: impl Into<Yarn>, close: impl Into<Yarn>) -> Self {
+    Self::block((open, close).into())
+  }
+
+  /// Creates a new block comment. Block comments can nest, and use the rules of
+  /// `bracket` to determine where they open and close.
+  pub fn block(bracket: Bracket) -> Self {
+    Self(CommentKind::Block(bracket))
+  }
 }
 
 impl Rule for Comment {

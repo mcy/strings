@@ -4,7 +4,7 @@ use ilex::token::Content as C;
 
 ilex::spec! {
   struct Llvm {
-    comment: Comment = Comment::Line(";".into()),
+    comment: Comment = Comment::line(';'),
 
     parens: Bracket = ('(', ')'),
     brackets: Bracket = ('[', ']'),
@@ -146,8 +146,8 @@ fn llvm() {
       ('"', '"'),
       [
         C::lit("hello world"),
-        C::esc(r"\0A", 0xA),
-        C::esc(r"\00", 0),
+        C::esc(r"\0A", 0xAu32),
+        C::esc(r"\00", 0u32),
       ],
     )
     //

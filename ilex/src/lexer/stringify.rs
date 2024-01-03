@@ -23,22 +23,23 @@ pub fn lexeme_to_string(
 
   match spec.rule(lexeme) {
     rule::Any::Keyword(rule) => yarn!("`{}`", rule.value),
-    rule::Any::Comment(rule::Comment::Line(start)) => {
-      yarn!("`{start} ...`")
+    rule::Any::Comment(rule::Comment(rule::CommentKind::Line(open))) => {
+      yarn!("`{open} ...`")
     }
-    rule::Any::Bracket(d) | rule::Any::Comment(rule::Comment::Block(d)) => {
-      match d {
-        rule::Bracket::Paired(open, close) => yarn!("`{open} ... {close}`"),
-        rule::Bracket::CppLike {
-          open: (o1, o2),
-          close: (c1, c2),
-          ..
-        } => yarn!("`{o1}<ident>{o2} ... {c1}<ident>{c2}`"),
-        rule::Bracket::RustLike {
+    rule::Any::Bracket(d)
+    | rule::Any::Comment(rule::Comment(rule::CommentKind::Block(d))) => {
+      match &d.0 {
+        rule::BracketKind::Paired(open, close) => yarn!("`{open} ... {close}`"),
+        rule::BracketKind::RustLike {
           repeating,
           open: (o1, o2),
           close: (c1, c2),
         } => yarn!("`{o1}{repeating}{o2} ... {c1}{repeating}{c2}`"),
+        rule::BracketKind::CxxLike {
+          open: (o1, o2),
+          close: (c1, c2),
+          ..
+        } => yarn!("`{o1}<ident>{o2} ... {c1}<ident>{c2}`"),
       }
     }
 

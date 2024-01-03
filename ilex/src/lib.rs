@@ -207,6 +207,7 @@ let my_lexeme = json.object;  // Etc.
 //! messages for ICEs.
 
 #![deny(rustdoc::broken_intra_doc_links)]
+#![warn(missing_docs)]
 
 use std::fmt;
 
