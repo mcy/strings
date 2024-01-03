@@ -24,14 +24,12 @@ fn greedy() {
 
   let spec = spec.compile();
 
-  // NOTE: currently, the lexer runtime would recognize the string `poisonous[xyz]`
-  // as the "rust like"
   let text = r#"
     poison
     poisonous
     poisonous[xyz]>
     poisonous#%#%[xyz]#%#%>
-    poisonous [xyz]
+    poisonous[xyz]
     R"cc(some c++)" )cc"
   "#;
 
