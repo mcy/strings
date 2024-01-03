@@ -43,11 +43,11 @@ pub fn compile(builder: SpecBuilder) -> Spec {
   for (lexeme, rule) in builder.rules.iter().enumerate() {
     let lexeme = Lexeme::new(lexeme as u32);
     match rule {
-      rule::Any::Comment(rule::Comment::Line(open)) => {
+      rule::Any::Comment(rule::Comment(rule::CommentKind::Line(open))) => {
         c.add_lexeme(open.clone(), lexeme)
       }
 
-      rule::Any::Comment(rule::Comment::Block(bracket)) => {
+      rule::Any::Comment(rule::Comment(rule::CommentKind::Block(bracket))) => {
         let (open, _) = make_delim_prefixes(bracket);
         c.add_lexeme(open, lexeme);
       }
@@ -147,14 +147,14 @@ pub fn compile(builder: SpecBuilder) -> Spec {
 }
 
 fn make_delim_prefixes(delim: &rule::Bracket) -> (Yarn, Yarn) {
-  match delim {
-    rule::Bracket::Paired(open, close) => (open.clone(), close.clone()),
-    rule::Bracket::RustLike {
+  match &delim.0 {
+    rule::BracketKind::Paired(open, close) => (open.clone(), close.clone()),
+    rule::BracketKind::RustLike {
       open: (open, _),
       close: (close, _),
       ..
     }
-    | rule::Bracket::CppLike {
+    | rule::BracketKind::CxxLike {
       open: (open, _),
       close: (close, _),
       ..

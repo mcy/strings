@@ -101,6 +101,7 @@ pub enum Category {
   /// `Infinity` or `+Infinity`.
   Infinity,
   /// A quiet or signaling not-a-number value.
+  #[allow(missing_docs)]
   Nan { signaling: bool },
 }
 

@@ -5,8 +5,6 @@ use std::marker::PhantomData;
 use std::ops::Add;
 use std::ops::Range;
 
-use crate::Never;
-
 pub mod best_match;
 pub mod compile;
 pub mod rt;
@@ -24,7 +22,7 @@ pub struct Lexeme<Rule> {
   _ph: PhantomData<Rule>,
 }
 
-impl Lexeme<Never> {
+impl Lexeme<rule::Eof> {
   /// Returns the unique lexeme for the end-of-file marker.
   pub fn eof() -> Self {
     Self::new(!0)

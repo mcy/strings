@@ -25,6 +25,7 @@ pub struct Stream<'spec> {
 }
 
 impl<'spec> Stream<'spec> {
+  /// Returns a cursor over this stream.
   pub fn cursor(&self) -> Cursor {
     Cursor {
       spec: self.spec,

@@ -6,17 +6,17 @@ use ilex::testing::Matcher;
 #[test]
 fn greedy() {
   let mut spec = ilex::Spec::builder();
-  let rust_like = spec.rule(Quoted::with(Bracket::RustLike {
-    repeating: "#%".into(),
-    open: ("poisonous".into(), "[".into()),
-    close: ("]".into(), ">".into()),
-  }));
+  let rust_like = spec.rule(Quoted::with(Bracket::rust_raw_string(
+    "#%",
+    ("poisonous", "["),
+    ("]", ">"),
+  )));
 
-  let cpp_like = spec.rule(Quoted::with(Bracket::CppLike {
-    ident_rule: Ident::new(),
-    open: ("R\"".into(), "(".into()),
-    close: (")".into(), "\"".into()),
-  }));
+  let cpp_like = spec.rule(Quoted::with(Bracket::cxx_raw_string(
+    Ident::new(),
+    ("R\"", "("),
+    (")", "\""),
+  )));
 
   let array = spec.rule(Bracket::from(("[", "]")));
   let poison = spec.rule(Keyword::new("poison"));

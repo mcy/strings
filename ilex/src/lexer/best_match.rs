@@ -110,7 +110,9 @@ impl Spec {
             })
           }
 
-          rule::Any::Comment(rule::Comment::Line(prefix)) => Some(Match {
+          rule::Any::Comment(rule::Comment(rule::CommentKind::Line(
+            prefix,
+          ))) => Some(Match {
             prefix,
             rule,
             lexeme,
@@ -120,7 +122,9 @@ impl Spec {
             unexpected_eof: false,
           }),
 
-          rule::Any::Comment(rule::Comment::Block(bracket)) => {
+          rule::Any::Comment(rule::Comment(rule::CommentKind::Block(
+            bracket,
+          ))) => {
             let (len, ok) = take_block_comment(&mut { src }, bracket)?;
             Some(Match {
               prefix,
@@ -224,13 +228,13 @@ fn take_open_delim<'a>(
   rule: &rule::Bracket,
 ) -> Option<(usize, &'a str)> {
   let start = *src;
-  match rule {
-    rule::Bracket::Paired(open, _) => {
+  match &rule.0 {
+    rule::BracketKind::Paired(open, _) => {
       let len = take(src, open)?;
       Some((len, ""))
     }
 
-    rule::Bracket::RustLike {
+    rule::BracketKind::RustLike {
       repeating,
       open: (prefix, suffix),
       ..
@@ -247,7 +251,7 @@ fn take_open_delim<'a>(
       Some((len, data))
     }
 
-    rule::Bracket::CppLike {
+    rule::BracketKind::CxxLike {
       ident_rule,
       open: (prefix, suffix),
       ..
@@ -482,13 +486,13 @@ fn make_close_delim<'a>(
   rule: &'a rule::Bracket,
   data: &str,
 ) -> YarnBox<'a, str> {
-  match rule {
-    rule::Bracket::Paired(_, close) => close.as_ref().to_box(),
-    rule::Bracket::RustLike {
+  match &rule.0 {
+    rule::BracketKind::Paired(_, close) => close.as_ref().to_box(),
+    rule::BracketKind::RustLike {
       close: (prefix, suffix),
       ..
     }
-    | rule::Bracket::CppLike {
+    | rule::BracketKind::CxxLike {
       close: (prefix, suffix),
       ..
     } => {

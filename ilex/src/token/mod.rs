@@ -43,6 +43,7 @@ pub use stream::Stream;
 pub trait Token<'lex>:
   Copy + Spanned + fmt::Debug + TryFrom<Any<'lex>> + Into<Any<'lex>>
 {
+  /// The token this rule was parsed from.
   type Rule: rule::Rule;
 
   /// The spec that lexed this token.
@@ -80,6 +81,7 @@ pub trait Token<'lex>:
 /// This includes all possible token types, plus the "unexpected" tokens that
 /// represent unexpected characters encountered and skipped.
 #[derive(Copy, Clone)]
+#[allow(missing_docs)]
 pub enum Any<'lex> {
   Unexpected(Span, &'lex Spec),
   Eof(Eof<'lex>),
@@ -249,7 +251,7 @@ pub struct Eof<'lex> {
 }
 
 impl<'lex> Token<'lex> for Eof<'lex> {
-  type Rule = Never;
+  type Rule = rule::Eof;
 
   fn spec(self) -> &'lex Spec {
     self.spec
@@ -534,7 +536,10 @@ impl Spanned for Ident<'_> {
   }
 }
 
-/// An integer literal.
+/// A digital literal.
+///
+/// See [`rule::Digital`] for an explanation on what a "digital" is (briefly,
+/// they are generalized number literals).
 ///
 /// Note that this crate does not provide general number parsing services;
 /// parsing numbers is a complex and subtle undertaking, particularly when it
@@ -815,7 +820,9 @@ impl<'lex> Digital<'lex> {
 /// A sign for a [`Digital`] literal.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Sign {
+  /// Positive.
   Pos,
+  /// Negative.
   Neg,
 }
 
@@ -1090,15 +1097,13 @@ pub enum Content<Span = self::Span> {
 }
 
 impl<Span> Content<Span> {
+  /// Literal contents.
   pub fn lit(chunk: impl Into<Span>) -> Self {
     Self::Lit(chunk.into())
   }
 
-  pub fn esc(chunk: impl Into<Span>, code: u32) -> Self {
-    Self::Esc(chunk.into(), code)
-  }
-
-  pub fn esc_char(chunk: impl Into<Span>, code: char) -> Self {
+  /// Escaped contents.
+  pub fn esc(chunk: impl Into<Span>, code: impl Into<u32>) -> Self {
     Self::Esc(chunk.into(), code.into())
   }
 }

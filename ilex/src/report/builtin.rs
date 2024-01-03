@@ -315,12 +315,12 @@ fn pos_iter() {
 /// a token", and so it's easier to just have a sink type that they all convert
 /// into.
 pub enum Expected<'lex> {
-  // A literal string, equivalent to a keyword token, and wrapped in backticks
-  // in the diagnostic.
+  /// A literal string, equivalent to a keyword token, and wrapped in backticks
+  /// in the diagnostic.
   Literal(&'lex str),
-  // An actual token, which is, with some exceptions, digested into its lexeme.
+  /// An actual token, which is, with some exceptions, digested into its lexeme.
   Token(token::Any<'lex>),
-  // A lexeme, from which a name can be inferred.
+  /// A lexeme, from which a name can be inferred.
   Lexeme(Lexeme<rule::Any>),
 }
 
