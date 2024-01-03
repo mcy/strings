@@ -32,7 +32,6 @@ use crate::Never;
 use crate::WrongKind;
 
 mod stream;
-pub mod testing;
 
 pub use stream::switch::switch;
 pub use stream::switch::Switch;

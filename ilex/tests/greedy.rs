@@ -1,7 +1,7 @@
 // This test verifies that lexing is greedy in *most* cases.
 
 use ilex::rule::*;
-use ilex::token::testing;
+use ilex::testing::Matcher;
 
 #[test]
 fn greedy() {
@@ -39,19 +39,14 @@ fn greedy() {
   let tokens = ctx.new_file("test.file", text).lex(&spec).unwrap();
   eprintln!("stream: {tokens:#?}");
 
-  testing::recognize_tokens(
-    &ctx,
-    tokens.cursor(),
-    &[
-      poison.matcher("poison"),
-      ident.matcher("poisonous"),
-      rust_like.matcher(("poisonous[", "]>"), ["xyz"]),
-      rust_like.matcher(("poisonous#%#%[", "]#%#%>"), ["xyz"]),
-      ident.matcher("poisonous"),
-      array.matcher(("[", "]"), vec![ident.matcher("xyz")]),
-      cpp_like.matcher(("R\"cc(", ")cc\""), ["some c++)\" "]),
-      testing::Matcher::eof(),
-    ],
-  )
-  .unwrap();
+  Matcher::new()
+    .then1(poison, "poison")
+    .then1(ident, "poisonous")
+    .then2(rust_like, ("poisonous[", "]>"), ["xyz"])
+    .then2(rust_like, ("poisonous#%#%[", "]#%#%>"), ["xyz"])
+    .then1(ident, "poisonous")
+    .then2(array, ("[", "]"), Matcher::new().then1(ident, "xyz"))
+    .then2(cpp_like, ("R\"cc(", ")cc\""), ["some c++)\" "])
+    .eof()
+    .assert_matches(&ctx, &tokens);
 }

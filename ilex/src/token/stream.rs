@@ -34,6 +34,15 @@ impl<'spec> Stream<'spec> {
   }
 }
 
+impl<'lex> IntoIterator for &'lex Stream<'_> {
+  type IntoIter = Cursor<'lex>;
+  type Item = token::Any<'lex>;
+
+  fn into_iter(self) -> Self::IntoIter {
+    self.cursor()
+  }
+}
+
 impl fmt::Debug for Stream<'_> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     fmt::Debug::fmt(&self.cursor(), f)

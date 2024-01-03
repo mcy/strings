@@ -1,8 +1,6 @@
 use ilex::rule::*;
-use ilex::token::testing;
-use ilex::token::testing::Matcher;
-use ilex::token::Content::Esc;
-use ilex::token::Content::Lit;
+use ilex::testing::Matcher;
+use ilex::token::Content as C;
 
 ilex::spec! {
   struct Llvm {
@@ -87,8 +85,6 @@ ilex::spec! {
 
 #[test]
 fn llvm() {
-  let llvm = Llvm::get();
-
   let text = r#"
     ; Declare the string constant as a global constant.
     @.str = private unnamed_addr constant [13 x i8] c"hello world\0A\00"
@@ -118,176 +114,160 @@ fn llvm() {
       ret void
     }
   "#;
+
+  let llvm = Llvm::get();
   let mut ctx = ilex::Context::new();
   let tokens = ctx.new_file("test.file", text).lex(llvm.spec()).unwrap();
   eprintln!("stream: {tokens:#?}");
 
-  testing::recognize_tokens(
-    &ctx,
-    tokens.cursor(),
-    &vec![
-      llvm
-        .bare
-        .matcher(".str")
-        .prefix("@")
-        .comments(["; Declare the string constant as a global constant."]),
-      llvm.equal.matcher("="),
-      llvm.private.matcher("private"),
-      llvm.unnamed_addr.matcher("unnamed_addr"),
-      llvm.constant.matcher("constant"),
-      llvm.brackets.matcher(
-        ("[", "]"),
-        vec![
-          llvm.dec.matcher(10, ["13"]),
-          llvm.times.matcher("x"),
-          llvm.int.matcher(10, ["8"]).prefix("i"),
-        ],
-      ),
-      llvm
-        .string
-        .matcher(
-          ("\"", "\""),
-          vec![
-            Lit("hello world".into()),
-            Esc("\\0A".into(), 0xa),
-            Esc("\\00".into(), 0),
-          ],
+  Matcher::new()
+    .prefix1(llvm.bare, "@", ".str")
+    .comments(["; Declare the string constant as a global constant."])
+    .then1(llvm.equal, "=")
+    .then1(llvm.private, "private")
+    .then1(llvm.unnamed_addr, "unnamed_addr")
+    .then1(llvm.constant, "constant")
+    .then2(
+      llvm.brackets,
+      ("[", "]"),
+      Matcher::new()
+        .then2(llvm.dec, 10, ["13"])
+        .then1(llvm.times, "x")
+        .prefix2(llvm.int, "i", 10, ["8"]),
+    )
+    .prefix2(
+      llvm.string,
+      "c",
+      ('"', '"'),
+      [
+        C::lit("hello world"),
+        C::esc(r"\0A", 0xA),
+        C::esc(r"\00", 0),
+      ],
+    )
+    //
+    .then1(llvm.declare, "declare")
+    .comments(["; External declaration of the puts function"])
+    .prefix2(llvm.int, "i", 10, ["32"])
+    .prefix2(llvm.quoted, "@", ('"', '"'), ["non trivial name"])
+    .then2(
+      llvm.parens,
+      ("(", ")"),
+      Matcher::new()
+        .then1(llvm.ptr, "ptr")
+        .then1(llvm.nocapture, "nocapture"),
+    )
+    .then1(llvm.nounwind, "nounwind")
+    //
+    .then1(llvm.define, "define")
+    .comments(["; Definition of main function"])
+    .prefix2(llvm.int, "i", 10, ["32"])
+    .prefix1(llvm.bare, "@", "main")
+    .then2(
+      llvm.parens,
+      ("(", ")"),
+      Matcher::new()
+        .prefix2(llvm.int, "i", 10, ["32"])
+        .prefix1(llvm.bare, "%", "0")
+        .then1(llvm.comma, ",")
+        .then1(llvm.ptr, "ptr")
+        .prefix1(llvm.bare, "%", "1"),
+    )
+    .then2(
+      llvm.braces,
+      ("{", "}"),
+      Matcher::new()
+        .then1(llvm.call, "call")
+        .comments(["; Call puts function to write out the string to stdout."])
+        .prefix2(llvm.int, "i", 10, ["32"])
+        .prefix2(llvm.quoted, "@", ('"', '"'), ["non trivial name"])
+        .then2(
+          llvm.parens,
+          ("(", ")"),
+          Matcher::new()
+            .then1(llvm.ptr, "ptr")
+            .prefix1(llvm.bare, "@", ".str"),
         )
-        .prefix("c"),
-      //
-      llvm
-        .declare
-        .matcher("declare")
-        .comments(["; External declaration of the puts function"]),
-      llvm.int.matcher(10, ["32"]).prefix("i"),
-      llvm
-        .quoted
-        .matcher(("\"", "\""), ["non trivial name"])
-        .prefix("@"),
-      llvm.parens.matcher(
-        ("(", ")"),
-        vec![llvm.ptr.matcher("ptr"), llvm.nocapture.matcher("nocapture")],
-      ),
-      llvm.nounwind.matcher("nounwind"),
-      //
-      llvm
-        .define
-        .matcher("define")
-        .comments(["; Definition of main function"]),
-      llvm.int.matcher(10, ["32"]).prefix("i"),
-      llvm.bare.matcher("main").prefix("@"),
-      llvm.parens.matcher(
-        ("(", ")"),
-        vec![
-          llvm.int.matcher(10, ["32"]).prefix("i"),
-          llvm.bare.matcher("0").prefix("%"),
-          llvm.comma.matcher(","),
-          llvm.ptr.matcher("ptr"),
-          llvm.bare.matcher("1").prefix("%"),
-        ],
-      ),
-      llvm.braces.matcher(
-        ("{", "}"),
-        vec![
-          llvm.call.matcher("call").comments([
-            "; Call puts function to write out the string to stdout.",
-          ]),
-          llvm.int.matcher(10, ["32"]).prefix("i"),
-          llvm
-            .quoted
-            .matcher(("\"", "\""), ["non trivial name"])
-            .prefix("@"),
-          llvm.parens.matcher(
-            ("(", ")"),
-            vec![
-              llvm.ptr.matcher("ptr"),
-              llvm.bare.matcher(".str").prefix("@"),
-            ],
-          ),
-          //
-          llvm.ret.matcher("ret"),
-          llvm.int.matcher(10, ["32"]).prefix("i"),
-          llvm.dec.matcher(10, ["0"]),
-        ],
-      ),
-      //
-      llvm
-        .bare
-        .matcher("0")
-        .prefix("!")
-        .comments(["; Named metadata"]),
-      llvm.equal.matcher("="),
-      llvm.meta.matcher(
-        ("!{", "}"),
-        vec![
-          llvm.int.matcher(10, ["32"]).prefix("i"),
-          llvm.dec.matcher(10, ["42"]),
-          llvm.comma.matcher(","),
-          llvm.null.matcher("null"),
-          llvm.comma.matcher(","),
-          llvm.quoted.matcher(("\"", "\""), ["string"]).prefix("!"),
-        ],
-      ),
-      //
-      llvm.bare.matcher("foo").prefix("!"),
-      llvm.equal.matcher("="),
-      llvm
-        .meta
-        .matcher(("!{", "}"), vec![llvm.bare.matcher("0").prefix("!")]),
-      //
-      llvm.bare.matcher("glb").prefix("@"),
-      llvm.equal.matcher("="),
-      llvm.global.matcher("global"),
-      llvm.int.matcher(10, ["8"]).prefix("i"),
-      llvm.dec.matcher(10, ["0"]),
-      //
-      llvm.define.matcher("define"),
-      llvm.void.matcher("void"),
-      llvm.bare.matcher("f").prefix("@"),
-      llvm.parens.matcher(
-        ("(", ")"),
-        vec![llvm.ptr.matcher("ptr"), llvm.bare.matcher("a").prefix("%")],
-      ),
-      llvm.braces.matcher(
-        ("{", "}"),
-        vec![
-          llvm.bare.matcher("c").prefix("%"),
-          llvm.equal.matcher("="),
-          llvm.icmp.matcher("icmp"),
-          llvm.icmp_eq.matcher("eq"),
-          llvm.ptr.matcher("ptr"),
-          llvm.bare.matcher("a").prefix("%"),
-          llvm.comma.matcher(","),
-          llvm.bare.matcher("glb").prefix("@"),
-          //
-          llvm.br.matcher("br"),
-          llvm.int.matcher(10, ["1"]).prefix("i"),
-          llvm.bare.matcher("c").prefix("%"),
-          llvm.comma.matcher(","),
-          llvm.label.matcher("label"),
-          llvm.bare.matcher("BB_EXIT").prefix("%"),
-          llvm.comma.matcher(","),
-          llvm.label.matcher("label"),
-          llvm.bare.matcher("BB_CONTINUE").prefix("%"),
-          //
-          llvm
-            .label_ident
-            .matcher("BB_EXIT")
-            .comments(["; escapes %a"])
-            .suffix(":"),
-          llvm.call.matcher("call"),
-          llvm.void.matcher("void"),
-          llvm.bare.matcher("exit").prefix("@"),
-          llvm.parens.matcher(("(", ")"), vec![]),
-          llvm.unreachable.matcher("unreachable"),
-          //
-          llvm.label_ident.matcher("BB_CONTINUE").suffix(":"),
-          llvm.ret.matcher("ret"),
-          llvm.void.matcher("void"),
-        ],
-      ),
-      Matcher::eof(),
-    ],
-  )
-  .unwrap();
+        .then1(llvm.ret, "ret")
+        .prefix2(llvm.int, "i", 10, ["32"])
+        .then2(llvm.dec, 10, ["0"]),
+    )
+    //
+    .prefix1(llvm.bare, "!", "0")
+    .comments(["; Named metadata"])
+    .then1(llvm.equal, "=")
+    .then2(
+      llvm.meta,
+      ("!{", "}"),
+      Matcher::new()
+        .prefix2(llvm.dec, "i", 10, ["32"])
+        .then2(llvm.dec, 10, ["42"])
+        .then1(llvm.comma, ",")
+        .then1(llvm.null, "null")
+        .then1(llvm.comma, ",")
+        .prefix2(llvm.quoted, "!", ('"', '"'), ["string"]),
+    )
+    .prefix1(llvm.bare, "!", "foo")
+    .then1(llvm.equal, "=")
+    .then2(
+      llvm.meta,
+      ("!{", "}"),
+      Matcher::new().prefix1(llvm.bare, "!", "0"),
+    )
+    //
+    .prefix1(llvm.bare, "@", "glb")
+    .then1(llvm.equal, "=")
+    .then1(llvm.global, "global")
+    .prefix2(llvm.int, "i", 10, ["8"])
+    .then2(llvm.dec, 10, ["0"])
+    //
+    .then1(llvm.define, "define")
+    .then1(llvm.void, "void")
+    .prefix1(llvm.bare, "@", "f")
+    .then2(
+      llvm.parens,
+      ("(", ")"),
+      Matcher::new()
+        .then1(llvm.ptr, "ptr")
+        .prefix1(llvm.bare, "%", "a"),
+    )
+    .then2(
+      llvm.braces,
+      ("{", "}"),
+      Matcher::new()
+        .prefix1(llvm.bare, "%", "c")
+        .then1(llvm.equal, "=")
+        .then1(llvm.icmp, "icmp")
+        .then1(llvm.icmp_eq, "eq")
+        .then1(llvm.ptr, "ptr")
+        .prefix1(llvm.bare, "%", "a")
+        .then1(llvm.comma, ",")
+        .prefix1(llvm.bare, "@", "glb")
+        //
+        .then1(llvm.br, "br")
+        .prefix2(llvm.int, "i", 10, ["1"])
+        .prefix1(llvm.bare, "%", "c")
+        .then1(llvm.comma, ",")
+        .then1(llvm.label, "label")
+        .prefix1(llvm.bare, "%", "BB_EXIT")
+        .then1(llvm.comma, ",")
+        .then1(llvm.label, "label")
+        .prefix1(llvm.bare, "%", "BB_CONTINUE")
+        //
+        .suffix1(llvm.label_ident, "BB_EXIT", ":")
+        .comments(["; escapes %a"])
+        //
+        .then1(llvm.call, "call")
+        .then1(llvm.void, "void")
+        .prefix1(llvm.bare, "@", "exit")
+        .then2(llvm.parens, ("(", ")"), Matcher::new())
+        //
+        .then1(llvm.unreachable, "unreachable")
+        //
+        .suffix1(llvm.label_ident, "BB_CONTINUE", ":")
+        .then1(llvm.ret, "ret")
+        .then1(llvm.void, "void"),
+    )
+    .eof()
+    .assert_matches(&ctx, &tokens)
 }
