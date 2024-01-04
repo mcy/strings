@@ -31,19 +31,23 @@ pub struct File<'ctx> {
 
 impl<'ctx> File<'ctx> {
   /// Returns the name of this file, as a path.
-  pub fn path(&self) -> &'ctx Utf8Path {
+  pub fn path(self) -> &'ctx Utf8Path {
     let (path, _) = self.ctx.lookup_file(self.idx);
     path
   }
 
   /// Returns the textual contents of this file.
-  pub fn text(&self) -> &'ctx str {
+  pub fn text(self) -> &'ctx str {
     self.text
   }
 
   /// Returns the [`Context`] that owns this file.
-  pub fn context(&self) -> &'ctx Context {
+  pub fn context(self) -> &'ctx Context {
     self.ctx
+  }
+
+  pub(crate) fn idx(self) -> usize {
+    self.idx
   }
 }
 

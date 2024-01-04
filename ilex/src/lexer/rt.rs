@@ -72,10 +72,10 @@ pub struct DigitBlocks {
   pub which_exp: usize,
 }
 
-struct Lexer<'spec, 'rep, 'ctx> {
+pub struct Lexer<'spec, 'rep, 'ctx> {
+  pub report: &'rep Report,
+  pub spec: &'spec Spec,
   file: FileMut<'ctx>,
-  report: &'rep Report,
-  spec: &'spec Spec,
 
   cursor: usize,
   tokens: Vec<Token>,
@@ -157,7 +157,7 @@ impl<'spec, 'rep, 'ctx> Lexer<'spec, 'rep, 'ctx> {
     &self.text()[self.cursor..]
   }
 
-  fn mksp(&mut self, range: Range<usize>) -> Span {
+  pub fn mksp(&mut self, range: Range<usize>) -> Span {
     self.file.new_span(range)
   }
 
@@ -234,7 +234,7 @@ impl<'spec, 'rep, 'ctx> Lexer<'spec, 'rep, 'ctx> {
     }
 
     // Otherwise, try to find a new token.
-    let Some(best_match) = self.spec.best_match(self.rest()) else {
+    let Some(best_match) = self.spec.best_match(self.cursor, self.rest(), &self.report) else {
       return;
     };
 
@@ -244,10 +244,10 @@ impl<'spec, 'rep, 'ctx> Lexer<'spec, 'rep, 'ctx> {
       self.add_unexpected(start);
     }
 
-    self.cursor += best_match.len;
+    self.cursor += best_match.full_len;
     let span = self.mksp(start..self.cursor);
 
-    match &best_match.rule {
+    match &self.spec.rule(best_match.lexeme) {
       rule::Any::Keyword(_) => {
         self.add_token(Token {
           kind: Kind::Keyword,
@@ -286,7 +286,7 @@ impl<'spec, 'rep, 'ctx> Lexer<'spec, 'rep, 'ctx> {
           self.report.builtins().unclosed(
             self.spec,
             best_match.lexeme,
-            self.mksp(start..start + best_match.prefix.len()),
+            self.mksp(start..start + best_match.prefix_len),
             self.mksp(self.text().len()..self.text().len()),
           );
         }

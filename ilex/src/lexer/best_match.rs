@@ -1,33 +1,38 @@
+use std::cmp::Ordering;
+use std::mem;
 use std::ops::Range;
 
 use byteyarn::yarn;
 use byteyarn::Yarn;
 use byteyarn::YarnBox;
 use byteyarn::YarnRef;
+use unicode_xid::UnicodeXID;
 
+use crate::lexer::compile::Action;
+use crate::lexer::range_add;
 use crate::lexer::rule;
 use crate::lexer::spec::Spec;
+use crate::lexer::Lexeme;
+use crate::report::Diagnostic;
+use crate::report::Report;
 use crate::token::Sign;
 
-use super::range_add;
-use super::Lexeme;
+/// A raw match from `Spec::best_len()`.
+pub struct Match {
+  pub prefix_len: usize,
+  pub full_len: usize,
 
-/// A raw match from `Spec::best_match()`.
-pub struct Match<'a> {
-  /// The prefix for the rule we matched.
-  pub prefix: &'a str,
-  /// The rule we matched.
-  pub rule: &'a rule::Any,
   /// The lexeme of the rule we matched.
   pub lexeme: Lexeme<rule::Any>,
-  /// The length of the match; i.e., how many bytes we consume as a result.
-  pub len: usize,
   /// Extra data that came out of doing a "complete" lexing step.
   pub data: Option<MatchData>,
-  /// Whether this match hit an unexpected EOF while lexing.
-  pub unexpected_eof: bool,
   /// The lengths of the affixes on the parsed chunk.
   pub affixes: (usize, usize),
+
+  /// Speculative diagnostics for this match, assuming it is picked.
+  pub diagnostics: Vec<Diagnostic>,
+
+  pub unexpected_eof: bool,
 }
 
 // Extra data from a `Match`.
@@ -58,135 +63,170 @@ impl Spec {
   ///
   /// It does so by lexing all tokens that could possibly start at `src`, and
   /// then choosing the largest match, with some tie-breaking options.
-  pub(super) fn best_match(&self, src: &str) -> Option<Match> {
-    self
+  pub(super) fn best_match(
+    &self,
+    cursor: usize,
+    src: &str,
+    report: &Report,
+  ) -> Option<Match> {
+    let choices = self
       .compiled
       .trie
       .prefixes(src)
-      .flat_map(|(k, v)| v.iter().map(move |v| (k, v)))
-      .filter_map(|(prefix, action)| {
-        let lexeme = action.lexeme;
-        let rule = self.rule(lexeme);
-        match rule {
-          rule::Any::Ident(ident) => {
-            let (len, pre, suf) = take_ident(
-              &mut { src },
-              ident,
-              Some(action.prefix_len as usize),
-            )?;
-            Some(Match {
-              prefix,
-              rule,
-              lexeme,
-              len,
-              affixes: (pre, suf),
-              data: None,
-              unexpected_eof: false,
-            })
-          }
+      .flat_map(|(k, v)| v.iter().map(move |v| (k, v)));
 
-          rule::Any::Keyword(..) => Some(Match {
-            prefix,
-            rule,
-            lexeme,
-            len: prefix.len(),
-            affixes: (0, 0),
-            data: None,
-            unexpected_eof: false,
-          }),
+    let mut best = None::<Match>;
+    for (prefix, action) in choices {
+      let mtch = take_any(cursor, src, prefix, action, self, report)?;
+      if mtch.full_len == 0 {
+        continue;
+      }
 
-          rule::Any::Bracket(delimiter) => {
-            let (open, data) = take_open_delim(&mut { src }, delimiter)?;
-            Some(Match {
-              prefix,
-              rule,
-              lexeme,
-              len: open,
-              affixes: (0, 0),
-              data: Some(MatchData::CloseDelim(
-                make_close_delim(delimiter, data).immortalize(),
-              )),
-              unexpected_eof: false,
-            })
-          }
-
-          rule::Any::Comment(rule::Comment(rule::CommentKind::Line(
-            prefix,
-          ))) => Some(Match {
-            prefix,
-            rule,
-            lexeme,
-            len: take_line_comment(&mut { src }, prefix)?,
-            affixes: (0, 0),
-            data: None,
-            unexpected_eof: false,
-          }),
-
-          rule::Any::Comment(rule::Comment(rule::CommentKind::Block(
-            bracket,
-          ))) => {
-            let (len, ok) = take_block_comment(&mut { src }, bracket)?;
-            Some(Match {
-              prefix,
-              rule,
-              lexeme,
-              len,
-              affixes: (0, 0),
-              data: None,
-              unexpected_eof: !ok,
-            })
-          }
-
-          rule::Any::Digital(num) => {
-            let (len, pre, suf, data) =
-              take_digital(&mut { src }, num, action.prefix_len as usize)?;
-            Some(Match {
-              prefix,
-              rule,
-              lexeme,
-              len,
-              affixes: (pre, suf),
-              data: Some(data),
-              unexpected_eof: false,
-            })
-          }
-
-          rule::Any::Quoted(quote) => {
-            let (len, pre, suf, data, ok) = take_quote(
-              &mut { src },
-              quote,
-              Some(action.prefix_len as usize),
-            )?;
-            Some(Match {
-              prefix,
-              rule,
-              lexeme,
-              len,
-              affixes: (pre, suf),
-              data: Some(data),
-              unexpected_eof: !ok,
-            })
-          }
-        }
-      })
-      .filter(|m| m.len > 0)
-      .max_by(|a, b| {
-        // Comments always win.
-        let is_comment = |c| matches!(c, &rule::Any::Comment(..));
-        let comment_cmp = bool::cmp(&is_comment(a.rule), &is_comment(b.rule));
-        if !comment_cmp.is_eq() {
-          return comment_cmp;
-        }
-
-        // Prefer rules that didn't see an unexpected EOF, so false is greater
-        // here.
-        bool::cmp(&a.unexpected_eof, &b.unexpected_eof)
-          .reverse()
+      if let Some(best) = &mut best {
+        let cmp = Ordering::Equal
+          .then({
+            // Comments always win.
+            let is_comment =
+              |r| matches!(self.rule(r), &rule::Any::Comment(..));
+            bool::cmp(&is_comment(best.lexeme), &is_comment(mtch.lexeme))
+          })
           .then(
-            usize::cmp(&a.len, &b.len)
-              .then(usize::cmp(&a.prefix.len(), &b.prefix.len())),
+            // Prefer rules that produced a valid match.
+            bool::cmp(
+              &best.diagnostics.is_empty(),
+              &mtch.diagnostics.is_empty(),
+            ),
           )
+          .then(usize::cmp(&best.full_len, &mtch.prefix_len))
+          .then(usize::cmp(&best.prefix_len, &mtch.prefix_len));
+
+        if cmp.is_gt() {
+          *best = mtch;
+        }
+      } else {
+        best = Some(mtch);
+      }
+    }
+
+    best
+  }
+}
+
+fn take_any(
+  cursor: usize,
+  src: &str,
+  prefix: &str,
+  action: &Action,
+  spec: &Spec,
+  report: &Report,
+) -> Option<Match> {
+  let lexeme = action.lexeme;
+  let rule = spec.rule(lexeme);
+  match rule {
+    rule::Any::Keyword(..) => {
+      let mut diagnostics = Vec::new();
+      if let Some(next) = src[prefix.len()..].chars().next() {
+        if next.is_xid_start() {
+          diagnostics.push(report.builtins().unexpected0(
+            spec,
+            Yarn::from(next).as_str(),
+            lexeme,
+          ));
+        }
+      }
+
+      Some(Match {
+        prefix_len: prefix.len(),
+        full_len: prefix.len(),
+        lexeme,
+        affixes: (0, 0),
+        data: None,
+        diagnostics,
+        unexpected_eof: false,
       })
+    }
+
+    rule::Any::Bracket(delimiter) => {
+      let (open, data) = take_open_delim(&mut { src }, delimiter)?;
+      Some(Match {
+        prefix_len: prefix.len(),
+        full_len: open,
+        lexeme,
+        affixes: (0, 0),
+        data: Some(MatchData::CloseDelim(
+          make_close_delim(delimiter, data).immortalize(),
+        )),
+        diagnostics: Vec::new(),
+        unexpected_eof: false,
+      })
+    }
+
+    rule::Any::Comment(rule::Comment(rule::CommentKind::Line(prefix))) => {
+      Some(Match {
+        prefix_len: prefix.len(),
+        full_len: take_line_comment(&mut { src }, prefix)?,
+        lexeme,
+        affixes: (0, 0),
+        data: None,
+        diagnostics: Vec::new(),
+        unexpected_eof: false,
+      })
+    }
+
+    rule::Any::Comment(rule::Comment(rule::CommentKind::Block(bracket))) => {
+      let (len, ok) = take_block_comment(&mut { src }, bracket)?;
+      Some(Match {
+        prefix_len: prefix.len(),
+        full_len: len,
+        lexeme,
+        affixes: (0, 0),
+        data: None,
+        diagnostics: Vec::new(),
+        unexpected_eof: !ok,
+      })
+    }
+
+    rule::Any::Ident(ident) => {
+      let (len, pre, suf) =
+        take_ident(&mut { src }, ident, Some(action.prefix_len as usize))?;
+      Some(Match {
+        prefix_len: prefix.len(),
+        full_len: len,
+        lexeme,
+        affixes: (pre, suf),
+        data: None,
+        diagnostics: Vec::new(),
+        unexpected_eof: false,
+      })
+    }
+
+    rule::Any::Digital(num) => {
+      let (len, pre, suf, data) =
+        take_digital(&mut { src }, num, action.prefix_len as usize)?;
+      Some(Match {
+        prefix_len: prefix.len(),
+        full_len: len,
+        lexeme,
+        affixes: (pre, suf),
+        data: Some(data),
+        diagnostics: Vec::new(),
+        unexpected_eof: false,
+      })
+    }
+
+    rule::Any::Quoted(quote) => {
+      let (len, pre, suf, data, ok) =
+        take_quote(&mut { src }, quote, Some(action.prefix_len as usize))?;
+      Some(Match {
+        prefix_len: prefix.len(),
+        full_len: len,
+        lexeme,
+        affixes: (pre, suf),
+        data: Some(data),
+        diagnostics: Vec::new(),
+        unexpected_eof: !ok,
+      })
+    }
   }
 }
 
@@ -374,22 +414,54 @@ fn take_digits(
 
   let mut digits_this_block = 0;
   let mut block_start = len;
+  let mut prev_was_sep = false;
   loop {
     if !rule.separator.is_empty() {
       if let Some(n) = take(src, &rule.separator) {
+        if digits_this_block == 0 {
+          // This is a prefix separator of some kind. Check if it's permitted.
+          let allowed = if !digit_data.blocks.is_empty() {
+            rule.corner_cases.around_point
+          } else if is_mant {
+            rule.corner_cases.prefix
+          } else {
+            rule.corner_cases.around_exp
+          };
+
+          if !allowed {
+            return None;
+          }
+        }
+
+        prev_was_sep = true;
         len += n;
         continue;
       }
     }
+
+    let prev_was_sep = mem::replace(&mut prev_was_sep, false);
 
     if let Some(n) = take(&mut { src }, &rule.point) {
       // This corresponds to either a leading point (which can't happen due to
       // how the spec is compiled) or a doubled point, e.g. `x..`. We undo
       // taking the first point here, and a second one after we break out
       // if necessary.
+      //
+      // *However*, if the previous character was a separator, this is x._.,
+      // which is not allowed.
       if digits_this_block == 0 {
+        if prev_was_sep {
+          return None;
+        }
+
         break;
       }
+
+      // This is 123_., which we need to check is allowed.
+      if prev_was_sep && !rule.corner_cases.around_point {
+        return None;
+      }
+
       *src = &src[n..];
 
       if digit_data.blocks.len() as u32 + 1 == digits.max_chunks {
@@ -405,16 +477,9 @@ fn take_digits(
     }
 
     let Some(next) = src.chars().next() else { break };
-    let digit = match next {
-      '0'..='9' => next as u8 - b'0',
-      'a'..='f' => next as u8 - b'a' + 10,
-      'A'..='F' => next as u8 - b'A' + 10,
-      _ => break,
-    };
-
-    if digit >= digits.radix {
+    if next.to_digit(digits.radix as u32).is_none() {
       break;
-    }
+    };
 
     digits_this_block += 1;
     len += take(src, next)?;
@@ -444,6 +509,7 @@ fn take_digital(
   rule: &rule::Digital,
   prefix_len: usize,
 ) -> Option<(usize, usize, usize, MatchData)> {
+  let prev = *src;
   let (mut len, mant) =
     take_digits(src, prefix_len, rule, &rule.mant, !0, true)?;
   let prefix_len_without_sign = prefix_len
@@ -452,6 +518,7 @@ fn take_digital(
       .as_ref()
       .map(|(r, _)| r.end - r.start)
       .unwrap_or(0);
+  let mut ends_in_sep = prev[..len].ends_with(rule.separator.as_str());
 
   let mut blocks = vec![mant];
   while let Some((i, (prefix, exp))) = rule
@@ -461,6 +528,11 @@ fn take_digital(
     .filter(|(_, (y, _))| src.starts_with(y.as_str()))
     .max_by_key(|(_, (y, _))| y.len())
   {
+    if ends_in_sep && !rule.corner_cases.around_exp {
+      return None;
+    }
+
+    let prev = *src;
     let (exp_len, mut exp) =
       take_digits(src, prefix.len(), rule, exp, i, false)?;
     exp.prefix = range_add(&exp.prefix, len);
@@ -469,12 +541,17 @@ fn take_digital(
       *block = range_add(block, len);
     }
 
+    ends_in_sep = prev[..exp_len].ends_with(rule.separator.as_str());
     len += exp_len;
     blocks.push(exp);
 
     if blocks.len() as u32 + 1 >= rule.max_exps {
       break;
     }
+  }
+
+  if ends_in_sep && !rule.corner_cases.suffix {
+    return None;
   }
 
   let suffix_len = take_longest(src, &rule.affixes.suffixes)?;

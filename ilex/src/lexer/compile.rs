@@ -112,18 +112,20 @@ pub fn compile(builder: SpecBuilder) -> Spec {
                 },
               );
 
-              c.add_action(
-                Yarn::concat(&[
-                  sign,
-                  prefix,
-                  &rule.separator,
-                  &Yarn::from(digit),
-                ]),
-                Action {
-                  lexeme,
-                  prefix_len: (sign.len() + prefix.len()) as u32,
-                },
-              );
+              if rule.corner_cases.prefix {
+                c.add_action(
+                  Yarn::concat(&[
+                    sign,
+                    prefix,
+                    &rule.separator,
+                    &Yarn::from(digit),
+                  ]),
+                  Action {
+                    lexeme,
+                    prefix_len: (sign.len() + prefix.len()) as u32,
+                  },
+                );
+              }
             }
           }
         };
