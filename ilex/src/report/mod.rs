@@ -130,17 +130,7 @@ impl Report {
 
   #[track_caller]
   fn new_diagnostic(&self, kind: Kind, message: String) -> Diagnostic {
-    Diagnostic {
-      report: self.clone(),
-      info: diagnostic::Info {
-        message,
-        kind: Some(kind),
-        snippets: Vec::new(),
-        notes: Vec::new(),
-        reported_at: None,
-      },
-    }
-    .reported_at(Location::caller())
+    Diagnostic::new(self.clone(), kind, message).reported_at(Location::caller())
   }
 
   /// Returns a [`Fatal`] regardless of whether this report contains any errors.

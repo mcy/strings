@@ -36,19 +36,26 @@ impl Builtins {
     unexpected_in: impl Into<Expected<'b>>,
     at: impl Spanned,
   ) -> Diagnostic {
+    self.unexpected0(spec, found, unexpected_in).at(at)
+  }
+
+  #[track_caller]
+  pub(crate) fn unexpected0<'a, 'b>(
+    &self,
+    spec: &Spec,
+    found: impl Into<Expected<'a>>,
+    unexpected_in: impl Into<Expected<'b>>,
+  ) -> Diagnostic {
     self
       .0
       .in_context(|ctx| {
         let found = found.into();
 
-        let diagnostic = self
-          .0
-          .error(f!(
-            "unexpected {} in {}",
-            found.for_user_diagnostic(spec, ctx),
-            unexpected_in.into().for_user_diagnostic(spec, ctx),
-          ))
-          .at(at);
+        let diagnostic = self.0.error(f!(
+          "unexpected {} in {}",
+          found.for_user_diagnostic(spec, ctx),
+          unexpected_in.into().for_user_diagnostic(spec, ctx),
+        ));
 
         non_printable_note(ctx, found, diagnostic)
       })
@@ -156,7 +163,7 @@ impl Builtins {
         self
           .0
           .error(f!(
-            "{} literal out of range",
+            "{} out of range",
             what.into().for_user_diagnostic(spec, ctx)
           ))
           .at(at)

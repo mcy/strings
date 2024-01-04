@@ -1,6 +1,5 @@
 use std::fmt;
 use std::io;
-use std::ops::Range;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
@@ -16,12 +15,13 @@ use annotate_snippets::Snippet;
 use annotate_snippets::SourceAnnotation;
 
 use crate::file::Context;
-use crate::file::Spanned;
 use crate::report::diagnostic;
 use crate::report::diagnostic::Info;
 use crate::report::diagnostic::Kind;
 use crate::report::Options;
 use crate::report::Report;
+
+use super::diagnostic::Span;
 
 pub struct State {
   pub opts: Options,
@@ -146,7 +146,7 @@ pub fn render_fmt(
       let mut cur_file = None;
       let mut cur_slice = None;
       for (span, text, is_remark) in snips {
-        let file = span.file(fcx);
+        let file = fcx.file(span.file as usize).unwrap();
         if cur_file != Some(file) {
           cur_file = Some(file);
           if let Some(slice) = cur_slice.take() {
@@ -163,15 +163,15 @@ pub fn render_fmt(
         }
 
         let slice = cur_slice.as_mut().unwrap();
-        let Range { mut start, mut end } = span
-          .range(fcx)
-          .expect("synthetic spans are not supported in diagnostics yet");
+        let &Span {
+          mut start, mut end, ..
+        } = span;
 
         if start == end && !slice.source.is_empty() {
           // Normalize the range so that it is never just one space long.
           // If this would cause range.1 to go past the end of the input length,
           // we swap them around instead.
-          if end == slice.source.len() {
+          if end as usize == slice.source.len() {
             start = end - 1;
           } else {
             end = start + 1;
@@ -179,7 +179,7 @@ pub fn render_fmt(
         }
 
         slice.annotations.push(SourceAnnotation {
-          range: (start, end),
+          range: (start as usize, end as usize),
           label: text,
           annotation_type: if *is_remark {
             AnnotationType::Info

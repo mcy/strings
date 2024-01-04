@@ -1,4 +1,4 @@
-//! Lexer specifications.
+//! Lexer rules.
 
 use core::fmt;
 use std::mem;
@@ -693,12 +693,55 @@ impl<U: Into<u32>> From<U> for Escape {
 #[derive(Debug)]
 pub struct Digital {
   pub(crate) mant: Digits,
+
   pub(crate) exps: Vec<(Yarn, Digits)>,
   pub(super) max_exps: u32,
 
   pub(crate) separator: Yarn,
+  pub(super) corner_cases: SeparatorCornerCases,
+
   pub(crate) point: Yarn,
+
   pub(super) affixes: Affixes,
+}
+
+/// Places in which a separator in a [`Digital`] is allowed.
+///
+/// There is no configuration for whether the separator is permitted
+/// "internally", since that is always allowed. (e.g., `1_000`).
+///
+/// See [`Digital::separator_in()`].
+#[derive(Debug)]
+pub struct SeparatorCornerCases {
+  /// As a prefix to the whole [`Digital`] (after the sign and prefix). E.g.,
+  /// is `-_12.34e56` allowed?
+  ///
+  /// Defaults to false.
+  pub prefix: bool,
+  /// As a suffix to the whole [`Digital`] (before the literal's suffix). E.g.,
+  /// are `12_`, `12.34_`, or `12e56_` allowed?
+  ///
+  /// Defaults to false.
+  pub suffix: bool,
+  /// Around a point. E.g. is `12_.34` or `12._34` allowed?
+  ///
+  /// Defaults to true.
+  pub around_point: bool,
+  /// Around a an exponent marker. E.g. is `12_e34` or `12e_34` allowed?
+  ///
+  /// Defaults to true.
+  pub around_exp: bool,
+}
+
+impl Default for SeparatorCornerCases {
+  fn default() -> Self {
+    SeparatorCornerCases {
+      prefix: false,
+      suffix: false,
+      around_point: true,
+      around_exp: true,
+    }
+  }
 }
 
 impl Digital {
@@ -721,6 +764,7 @@ impl Digital {
       exps: Vec::new(),
       max_exps: 1,
       separator: "".into(),
+      corner_cases: Default::default(),
       point: ".".into(),
       affixes: Affixes::default(),
     }
@@ -730,8 +774,21 @@ impl Digital {
   ///
   /// A separator is a character that can occur within a number but which is
   /// ignored, like `_` in Rust or `'` in C++.
-  pub fn separator(mut self, x: impl Into<Yarn>) -> Self {
-    self.separator = x.into();
+  pub fn separator(self, sep: impl Into<Yarn>) -> Self {
+    self.separator_with(sep, Default::default())
+  }
+
+  /// Sets the digit separator for this rule, and its "corner case" behaviors.
+  ///
+  /// A separator is a character that can occur within a number but which is
+  /// ignored, like `_` in Rust or `'` in C++.
+  pub fn separator_with(
+    mut self,
+    sep: impl Into<Yarn>,
+    corner_cases: SeparatorCornerCases,
+  ) -> Self {
+    self.separator = sep.into();
+    self.corner_cases = corner_cases;
     self
   }
 
