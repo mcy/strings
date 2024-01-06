@@ -1,6 +1,6 @@
 //! The lexer runtime.
 
-use crate::file::FileMut;
+use crate::file::File;
 use crate::file::Span;
 use crate::report::Fatal;
 use crate::report::Report;
@@ -16,7 +16,7 @@ pub mod find;
 pub mod lexer;
 
 pub fn lex<'spec>(
-  file: FileMut,
+  file: File,
   report: &Report,
   spec: &'spec Spec,
 ) -> Result<token::Stream<'spec>, Fatal> {

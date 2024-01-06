@@ -9,16 +9,13 @@
 //! typically passed by reference into functions, but can be copied to simplify
 //! lifetimes, since it's reference-counted.
 
-use std::backtrace::Backtrace;
 use std::cell::Cell;
 use std::fmt;
 use std::io;
-use std::io::Write;
 use std::panic;
 use std::panic::Location;
 use std::process;
 use std::sync::Arc;
-use std::thread;
 
 use crate::file::Context;
 #[cfg(doc)]
@@ -40,9 +37,8 @@ pub use diagnostic::ToLoc;
 /// To construct a report, see [`Context::new_report()`]. The context that
 /// constructs a report is the only one whose [`Span`]s should be passed into
 /// it; doing otherwise will result in unspecified output (or probably a panic).
-#[derive(Clone)]
 pub struct Report {
-  ctx: u32,
+  ctx: Context,
   state: Arc<render::State>,
 }
 
@@ -66,6 +62,13 @@ impl Default for Options {
 }
 
 impl Report {
+  pub(crate) fn copy(&self) -> Report {
+    Self {
+      ctx: self.ctx.copy(),
+      state: self.state.clone(),
+    }
+  }
+
   /// Returns a wrapper for accessing commonly-used, built-in message types.
   ///
   /// See [`Builtins`].
@@ -132,12 +135,12 @@ impl Report {
 
   #[track_caller]
   fn new_diagnostic(&self, kind: Kind, message: String) -> Diagnostic {
-    Diagnostic::new(self.clone(), kind, message).reported_at(Location::caller())
+    Diagnostic::new(self.copy(), kind, message).reported_at(Location::caller())
   }
 
   /// Returns a [`Fatal`] regardless of whether this report contains any errors.
   pub fn fatal<T>(&self) -> Result<T, Fatal> {
-    Err(Fatal(self.clone()))
+    Err(Fatal(self.copy()))
   }
 
   /// If this report contains any errors, returns [`Err(Fatal)`][Fatal];
@@ -166,42 +169,28 @@ impl Report {
 
   /// Writes out the contents of this diagnostic to `sink`.
   pub fn write_out(&self, sink: impl io::Write) -> io::Result<()> {
-    self.in_context(|ctx| render::finish(self, ctx, sink))
+    render::finish(self, sink)
+  }
+
+  pub(crate) fn write_out_for_test(&self) -> String {
+    let mut sink = String::new();
+    render::render_fmt(
+      self,
+      &Options {
+        color: false,
+        show_report_locations: false,
+      },
+      &mut sink,
+    )
+    .unwrap();
+    sink
   }
 
   pub(crate) fn new(ctx: &Context, opts: Options) -> Self {
     Self {
-      ctx: ctx.ctx_id(),
+      ctx: ctx.copy(),
       state: Arc::new(render::State::new(opts)),
     }
-  }
-
-  /// Executes `cb` after looking up the context that "owns" this report.
-  ///
-  /// Danger: calling any diagnostic-generating function in the callback will
-  /// self-deadlock.
-  fn in_context<R>(&self, cb: impl FnOnce(&Context) -> R) -> R {
-    Context::find_and_run(self.ctx, |ctx| {
-      match ctx {
-        Some(ctx) => cb(ctx),
-        None => {
-          let msg = "ilex: attempted to operate on a report, but ilex::Context that owns it has disappeared; this is probably a bug";
-
-          // It is highly probable this will be called while handling a panic.
-          // Instead of double panicking (which is an instant abort) we print,
-          // flush, print a backtrace, and *then* panic.
-          if thread::panicking() {
-            eprintln!("{msg}");
-            let bt = Backtrace::capture();
-            eprintln!("{bt}");
-            std::io::stderr().flush().unwrap();
-            panic!("double panic!");
-          }
-
-          panic!("{msg}")
-        }
-      }
-    })
   }
 }
 
@@ -227,7 +216,7 @@ impl Fatal {
 
 impl fmt::Debug for Fatal {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    self.0.in_context(|ctx| render::render_fmt(&self.0, ctx, f))
+    render::render_fmt(&self.0, &self.0.state.opts, f)
   }
 }
 

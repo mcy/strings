@@ -14,7 +14,6 @@ use annotate_snippets::Slice;
 use annotate_snippets::Snippet;
 use annotate_snippets::SourceAnnotation;
 
-use crate::file::Context;
 use crate::report::diagnostic;
 use crate::report::diagnostic::Info;
 use crate::report::diagnostic::Kind;
@@ -71,11 +70,7 @@ impl State {
 }
 
 /// Consumes this `Report` and dumps its diagnostics to `sink`.
-pub fn finish(
-  report: &Report,
-  fcx: &Context,
-  sink: impl io::Write,
-) -> io::Result<()> {
+pub fn finish(report: &Report, sink: impl io::Write) -> io::Result<()> {
   struct Writer<W: io::Write> {
     sink: W,
     error: Option<io::Error>,
@@ -90,9 +85,8 @@ pub fn finish(
     }
   }
 
-  report.state.collate();
   let mut out = Writer { sink, error: None };
-  render_fmt(report, fcx, &mut out).map_err(|_| {
+  render_fmt(report, &report.state.opts, &mut out).map_err(|_| {
     if let Some(e) = out.error.take() {
       return e;
     }
@@ -104,7 +98,7 @@ pub fn finish(
 /// Dumps this collection of errors as user-displayable text into `sink`.
 pub fn render_fmt(
   report: &Report,
-  fcx: &Context,
+  opts: &Options,
   sink: &mut dyn fmt::Write,
 ) -> fmt::Result {
   report.state.collate();
@@ -113,7 +107,7 @@ pub fn render_fmt(
   let mut renderer = Renderer::plain();
   #[rustfmt::skip]
   #[allow(clippy::let_unit_value)]
-  let _ = if report.state.opts.color {
+  let _ = if opts.color {
     renderer = Renderer::styled()
       .error(Style::new().fg_color(Some(AnsiColor::BrightRed.into())).bold())
       .warning(Style::new().fg_color(Some(AnsiColor::BrightYellow.into())).bold())
@@ -146,7 +140,7 @@ pub fn render_fmt(
       let mut cur_file = None;
       let mut cur_slice = None;
       for (span, text, is_remark) in snips {
-        let file = fcx.file(span.file).unwrap();
+        let file = report.ctx.file(span.file).unwrap();
         if cur_file != Some(file) {
           cur_file = Some(file);
           if let Some(slice) = cur_slice.take() {
@@ -228,7 +222,7 @@ pub fn render_fmt(
     }
 
     let footer;
-    if report.state.opts.show_report_locations {
+    if opts.show_report_locations {
       footer = format!("reported at: {}", e.reported_at.unwrap());
       snippet.footer.push(Annotation {
         id: None,

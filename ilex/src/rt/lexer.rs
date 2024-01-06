@@ -1,9 +1,10 @@
 use std::ops::Range;
 
+use format_args as f;
+
 use byteyarn::Yarn;
 
 use crate::file::File;
-use crate::file::FileMut;
 use crate::file::Span;
 use crate::report::Report;
 use crate::rt;
@@ -13,12 +14,14 @@ use crate::spec::Lexeme;
 use crate::spec::Spec;
 use crate::token;
 
+use super::find;
+
 /// The lexer state struct, that tracks everything going on during a lexing
 /// operation.
 pub struct Lexer<'a, 'spec, 'ctx> {
   report: &'a Report,
   spec: &'spec Spec,
-  file: FileMut<'ctx>,
+  file: File<'ctx>,
 
   cursor: usize,
   tokens: Vec<rt::Token>,
@@ -37,11 +40,7 @@ pub struct Closer {
 
 impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   /// Creates a new lexer.
-  pub fn new(
-    mut file: FileMut<'ctx>,
-    report: &'a Report,
-    spec: &'spec Spec,
-  ) -> Self {
+  pub fn new(file: File<'ctx>, report: &'a Report, spec: &'spec Spec) -> Self {
     Lexer {
       eof: file.new_span(file.text().len()..file.text().len()),
 
@@ -77,7 +76,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
 
   /// Returns the spec we're lexing against.
   pub fn file(&self) -> File {
-    self.file.as_ref()
+    self.file
   }
 
   /// Returns the full text of the current file being lexed.
@@ -120,8 +119,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
       Some(close) if self.rest().starts_with(close.close.as_str()) => {
         let close = self.closers.pop().unwrap();
 
-        let span = self.mksp(self.cursor..self.cursor + close.close.len());
-        self.cursor += close.close.len();
+        self.advance(close.close.len());
 
         let close_idx = self.tokens.len();
         let offset_to_open = (close_idx - close.open_idx) as u32;
@@ -134,7 +132,23 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
             panic!("ilex: lexer.closers.last().open_idx did not point to an rt::Kind::Open; this is a bug")
           }
         }
+        let open_sp = self.tokens[close.open_idx].span;
 
+        if let Some(len) = find::expect_non_xid(self, 0) {
+          let sp = self.mksp(self.cursor()..self.cursor() + len);
+          self.report().builtins().extra_chars(
+            self.spec(),
+            self.spec().rule_name_or(
+              close.lexeme.any(),
+              f!("{} ... {}", open_sp.text(self.file.context()), close.close),
+            ),
+            sp,
+          );
+
+          self.advance(len);
+        }
+
+        let span = self.mksp(self.cursor - close.close.len()..self.cursor);
         self.add_token(rt::Token {
           kind: rt::Kind::Close { offset_to_open },
           span,
@@ -150,9 +164,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   /// Adds a new token, draining all of the saved-up comments.
   pub fn add_token(&mut self, tok: rt::Token) {
     for comment in self.comments.drain(..) {
-      tok
-        .span
-        .append_comment_span(self.file.context_mut(), comment);
+      tok.span.append_comment_span(self.file.context(), comment);
     }
 
     self.tokens.push(tok);

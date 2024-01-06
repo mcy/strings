@@ -80,6 +80,10 @@ impl Loc {
       end,
     }
   }
+
+  pub(crate) fn text(self, ctx: &Context) -> &str {
+    &ctx.file(self.file).unwrap().text()[self.start..self.end]
+  }
 }
 
 /// Converts a value to a file [`Loc`].
@@ -160,18 +164,12 @@ impl Diagnostic {
       self.info.snippets = vec![vec![]];
     }
 
-    Context::find_and_run(self.report.ctx, |ctx| {
-      let ctx = ctx.expect(
-        "attempted to emit a diagnostic after the ilex::Context that owns it has disappeared",
-      );
-
-      self.info.snippets.last_mut().unwrap().push((
-        span.to_loc(ctx),
-        message.to_string(),
-        is_remark,
-      ));
-      self
-    })
+    self.info.snippets.last_mut().unwrap().push((
+      span.to_loc(&self.report.ctx),
+      message.to_string(),
+      is_remark,
+    ));
+    self
   }
 
   /// Starts a new snippet, even if the next span is in the same file.

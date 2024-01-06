@@ -1,20 +1,16 @@
-use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::fs;
-use std::mem::ManuallyDrop;
 use std::ops::Range;
-use std::sync::atomic::AtomicU32;
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::Arc;
 use std::sync::RwLock;
+use std::sync::RwLockReadGuard;
 
 use std::format_args as f;
 
-use byteyarn::Yarn;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
 use crate::file::File;
-use crate::file::FileMut;
 use crate::file::Span;
 use crate::file::CTX_FOR_SPAN_DEBUG;
 use crate::report;
@@ -28,41 +24,19 @@ pub type Offset = u32;
 /// A `Context` contains the full text of all the loaded source files, which
 /// [`Span`]s ultimately refer to. Most [`Span`] operations need their
 /// corresponding `Context` available.
+#[derive(Default)]
 pub struct Context {
-  state: *const UnsafeCell<State>,
-  ctx_id: u32,
+  state: Arc<RwLock<State>>,
 }
 
 #[derive(Default)]
-struct State {
+pub struct State {
   files: Vec<(Utf8PathBuf, String)>,
 
   // Maps a span id to (start, end, file index).
   ranges: Vec<(Offset, Offset, Offset)>,
-  synthetics: Vec<Yarn>,
+  synthetics: Vec<String>,
   comments: HashMap<i32, Vec<Span>>,
-}
-
-#[derive(Default)]
-struct VeryUnsafeCell<T>(UnsafeCell<T>);
-unsafe impl<T> Send for VeryUnsafeCell<T> {}
-unsafe impl<T> Sync for VeryUnsafeCell<T> {}
-
-static CONTEXTS: RwLock<Option<HashMap<u32, Box<VeryUnsafeCell<State>>>>> =
-  RwLock::new(None);
-
-impl Drop for Context {
-  fn drop(&mut self) {
-    if let Ok(Some(map)) = CONTEXTS.write().as_deref_mut() {
-      assert!(map.remove(&self.ctx_id).is_some());
-    }
-  }
-}
-
-impl Default for Context {
-  fn default() -> Self {
-    Self::new()
-  }
 }
 
 unsafe impl Send for Context {}
@@ -71,19 +45,13 @@ unsafe impl Sync for Context {}
 impl Context {
   /// Creates a new source context.
   pub fn new() -> Self {
-    static COUNTER: AtomicU32 = AtomicU32::new(0);
-    let ctx_id = COUNTER.fetch_add(1, Relaxed);
+    Self::default()
+  }
 
-    let mut contexts = CONTEXTS.write().unwrap();
-    let contexts = contexts.get_or_insert_with(HashMap::new);
-
-    let cell = Box::<VeryUnsafeCell<State>>::default();
-    contexts.insert(ctx_id, cell);
-    // This is a bit janky, but MIRI doesn't like it unless we get the pointer
-    // after moving the box into the hashmap.
-    let state = &contexts.get(&ctx_id).unwrap().0 as *const UnsafeCell<State>;
-
-    Self { state, ctx_id }
+  pub(crate) fn copy(&self) -> Context {
+    Self {
+      state: self.state.clone(),
+    }
   }
 
   /// Sets this thread to use this [`Context`] in `fmt::Debug`.
@@ -98,14 +66,14 @@ impl Context {
   /// clobbered.
   #[must_use = "Context::use_for_debugging_spans() returns an RAII object"]
   pub fn use_for_debugging_spans(&self) -> impl Drop {
-    struct Replacer(Option<u32>);
+    struct Replacer(Option<Context>);
     impl Drop for Replacer {
       fn drop(&mut self) {
-        CTX_FOR_SPAN_DEBUG.with(|v| v.set(self.0))
+        CTX_FOR_SPAN_DEBUG.with(|v| *v.borrow_mut() = self.0.take())
       }
     }
 
-    Replacer(CTX_FOR_SPAN_DEBUG.with(|v| v.replace(Some(self.ctx_id))))
+    Replacer(CTX_FOR_SPAN_DEBUG.with(|v| v.replace(Some(self.copy()))))
   }
 
   /// Creates a new [`Report`] based on this context.
@@ -119,34 +87,28 @@ impl Context {
     Report::new(self, options)
   }
 
-  fn state(&self) -> &State {
-    unsafe { &*(*self.state).get() }
-  }
-
-  fn mutate(&mut self, body: impl FnOnce(&mut State)) {
-    let _l = CONTEXTS.write();
-    body(unsafe { &mut *(*self.state).get() });
-  }
-
   /// Adds a new file to this source context.
   pub fn new_file(
-    &mut self,
+    &self,
     name: impl Into<Utf8PathBuf>,
     text: impl Into<String>,
-  ) -> FileMut {
-    self.mutate(|state| state.files.push((name.into(), text.into())));
+  ) -> File {
+    let idx = {
+      let mut state = self.state.write().unwrap();
+      state.files.push((name.into(), text.into()));
+      state.files.len() - 1
+    };
 
-    let idx = self.state().files.len() - 1;
-    self.file_mut(idx).unwrap()
+    self.file(idx).unwrap()
   }
 
   /// Adds a new file to this source context by opening `name` and reading it
   /// from the file system.
   pub fn open_file(
-    &mut self,
+    &self,
     name: impl Into<Utf8PathBuf>,
     report: &Report,
-  ) -> Result<FileMut, Fatal> {
+  ) -> Result<File, Fatal> {
     let name = name.into();
 
     let bytes = match fs::read(&name) {
@@ -158,7 +120,7 @@ impl Context {
     };
 
     let Ok(utf8) = String::from_utf8(bytes) else {
-      report.error("input file `{name}` was not valid UTF-8");
+      report.error(f!("input file `{name}` was not valid UTF-8"));
       return report.fatal();
     };
 
@@ -171,45 +133,28 @@ impl Context {
       return Some(self.synthetic_file());
     }
 
-    let (_, text) = self.state().files.get(idx)?;
+    let state = self.state.read().unwrap();
+    let (path, text) = state.files.get(idx)?;
+    let (path, text) = unsafe {
+      // SAFETY: The pointer to the file's text is immutable and pointer-stable,
+      // so we can safely extend its lifetime here.
+      (
+        &*(path.as_path() as *const Utf8Path),
+        &*(text.as_str() as *const str),
+      )
+    };
+
     Some(File {
+      path,
       text,
       ctx: self,
       idx,
     })
   }
 
-  /// Gets the `idx`th file in this source context.
-  pub fn file_mut(&mut self, idx: usize) -> Option<FileMut> {
-    self.state().files.get(idx)?;
-    Some(FileMut { ctx: self, idx })
-  }
-
   /// Gets the number of files currently tracked by this source context.
   pub fn file_count(&self) -> usize {
-    self.state().files.len()
-  }
-
-  pub(crate) fn ctx_id(&self) -> u32 {
-    self.ctx_id
-  }
-
-  pub(crate) fn find_and_run<R>(
-    ctx_id: u32,
-    body: impl FnOnce(Option<&Context>) -> R,
-  ) -> R {
-    let contexts = CONTEXTS.read().unwrap();
-    let ctx = contexts
-      .as_ref()
-      .and_then(|map| map.get(&ctx_id))
-      .map(|bx| {
-        ManuallyDrop::new(Context {
-          state: &bx.0,
-          ctx_id,
-        })
-      });
-
-    body(ctx.as_deref())
+    self.state.read().unwrap().files.len()
   }
 
   /// Gets the byte range for the given span, if it isn't the synthetic span.
@@ -218,8 +163,8 @@ impl Context {
       return (Utf8Path::new("<scratch>"), "");
     }
 
-    let (name, text) = &self.state().files[idx];
-    (name, text)
+    let file = self.file(idx).unwrap();
+    (file.path(), file.text())
   }
 
   /// Gets the byte range for the given span, if it isn't the synthetic span.
@@ -231,10 +176,11 @@ impl Context {
       return (None, !0);
     }
 
-    let (start, mut end, file) = self.state().ranges[span.index()];
+    let state = self.state.read().unwrap();
+    let (start, mut end, file) = state.ranges[span.index()];
 
     if let Some(end_span) = span.end() {
-      let (_, actual_end, _) = self.state().ranges[end_span.index()];
+      let (_, actual_end, _) = state.ranges[end_span.index()];
       end = actual_end;
     }
 
@@ -242,27 +188,42 @@ impl Context {
   }
 
   pub(crate) fn lookup_synthetic(&self, span: Span) -> &str {
-    &self.state().synthetics[span.index()]
+    let state = self.state.read().unwrap();
+    let text = state.synthetics[span.index()].as_str();
+    unsafe {
+      // SAFETY: The pointer to the file's text is immutable and pointer-stable,
+      // so we can safely extend its lifetime here.
+      &*(text as *const str)
+    }
   }
 
-  pub(crate) fn lookup_comments(&self, span: Span) -> &[Span] {
-    self
-      .state()
+  pub(crate) fn lookup_comments(
+    &self,
+    span: Span,
+  ) -> (RwLockReadGuard<State>, *const [Span]) {
+    let state = self.state.read().unwrap();
+    let ptr = state
       .comments
       .get(&span.start)
       .map(|x| x.as_slice())
-      .unwrap_or_default()
+      .unwrap_or_default() as *const [Span];
+    (state, ptr)
   }
 
-  pub(crate) fn add_comment(&mut self, span: Span, comment: Span) {
-    self.mutate(|state| {
-      state.comments.entry(span.start).or_default().push(comment)
-    });
+  pub(crate) fn add_comment(&self, span: Span, comment: Span) {
+    self
+      .state
+      .write()
+      .unwrap()
+      .comments
+      .entry(span.start)
+      .or_default()
+      .push(comment)
   }
 
   /// Creates a new synthetic span with the given contents.
   pub(crate) fn new_span(
-    &mut self,
+    &self,
     start: usize,
     end: usize,
     file_idx: usize,
@@ -271,10 +232,8 @@ impl Context {
       .file(file_idx)
       .unwrap_or_else(|| panic!("invalid file index for span: {file_idx}"));
 
-    assert!(
-      self.state().ranges.len() < (i32::MAX as usize),
-      "ran out of spans"
-    );
+    let mut state = self.state.write().unwrap();
+    assert!(state.ranges.len() < (i32::MAX as usize), "ran out of spans");
     assert!(start <= end, "invalid range for span: {start} > {end}");
     assert!(
       end <= file.text().len(),
@@ -283,31 +242,31 @@ impl Context {
     );
 
     let span = Span {
-      start: self.state().ranges.len() as i32,
+      start: state.ranges.len() as i32,
       end: -1,
     };
 
-    self.mutate(|state| {
-      state
-        .ranges
-        .push((start as u32, end as u32, file_idx as u32))
-    });
+    state
+      .ranges
+      .push((start as u32, end as u32, file_idx as u32));
     span
   }
 
   /// Creates a new synthetic span with the given contents.
-  pub(crate) fn new_synthetic_span(&mut self, text: Yarn) -> Span {
+  pub(crate) fn new_synthetic_span(&self, text: String) -> Span {
+    let mut state = self.state.write().unwrap();
+
     assert!(
-      self.state().synthetics.len() < (i32::MAX as usize),
+      state.synthetics.len() < (i32::MAX as usize),
       "ran out of spans",
     );
 
     let span = Span {
-      start: !self.state().synthetics.len() as i32,
+      start: !state.synthetics.len() as i32,
       end: -1,
     };
 
-    self.mutate(|state| state.synthetics.push(text));
+    state.synthetics.push(text);
     span
   }
 
@@ -367,6 +326,7 @@ impl Context {
 
   pub(crate) fn synthetic_file(&self) -> File {
     File {
+      path: Utf8Path::new("<scratch>"),
       text: "",
       ctx: self,
       idx: !0,

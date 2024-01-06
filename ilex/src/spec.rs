@@ -1,6 +1,7 @@
 //! Lexer specifications.
 
 use std::fmt;
+use std::fmt::Display;
 use std::marker::PhantomData;
 
 use byteyarn::yarn;
@@ -9,6 +10,7 @@ use byteyarn::YarnBox;
 use byteyarn::YarnRef;
 use twie::Trie;
 
+use crate::report::Expected;
 use crate::rule;
 use crate::rule::Rule;
 
@@ -98,6 +100,28 @@ impl Spec {
       .prefixes(src)
       .flat_map(|(k, v)| v.iter().map(move |v| (k, v)))
   }
+
+  /// Returns the name of a rule corresponding to a particular lexeme, if it has
+  /// one.
+  pub(super) fn rule_name(
+    &self,
+    lexeme: Lexeme<rule::Any>,
+  ) -> Option<YarnRef<str>> {
+    Some(self.builder.names[lexeme.index()].as_ref()).filter(|n| !n.is_empty())
+  }
+
+  /// Returns the name of a rule corresponding to a particular lexeme, if it has
+  /// one.
+  pub(super) fn rule_name_or(
+    &self,
+    lexeme: Lexeme<rule::Any>,
+    or: impl Display,
+  ) -> Expected {
+    self
+      .rule_name(lexeme)
+      .map(|y| Expected::Name(y.to_box()))
+      .unwrap_or(Expected::Literal(or.to_string().into()))
+  }
 }
 
 /// A builder for constructing a [`Spec`].
@@ -166,15 +190,6 @@ impl SpecBuilder {
     self.names.push(name.into());
     self.rules.push(rule.into());
     Lexeme::new(self.rules.len() as u32 - 1)
-  }
-
-  /// Returns the name of a rule corresponding to a particular lexeme, if it has
-  /// one.
-  pub(super) fn rule_name(
-    &self,
-    lexeme: Lexeme<rule::Any>,
-  ) -> Option<YarnRef<str>> {
-    Some(self.names[lexeme.index()].as_ref()).filter(|n| !n.is_empty())
   }
 }
 
@@ -448,7 +463,7 @@ impl Lexeme<rule::Any> {
       return yarn!("<eof>");
     }
 
-    if let Some(name) = &spec.builder.rule_name(self) {
+    if let Some(name) = &spec.rule_name(self) {
       return name.to_box();
     }
 

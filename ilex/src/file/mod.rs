@@ -1,12 +1,13 @@
 //! Source code file management.
 
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::fmt;
 use std::fmt::Write;
 use std::iter;
 use std::ops::Range;
 use std::ptr;
 use std::slice;
+use std::sync::RwLockReadGuard;
 
 use byteyarn::Yarn;
 use camino::Utf8Path;
@@ -24,6 +25,7 @@ pub use context::Context;
 /// An input source file.
 #[derive(Copy, Clone)]
 pub struct File<'ctx> {
+  path: &'ctx Utf8Path,
   text: &'ctx str,
   ctx: &'ctx Context,
   idx: usize,
@@ -32,8 +34,7 @@ pub struct File<'ctx> {
 impl<'ctx> File<'ctx> {
   /// Returns the name of this file, as a path.
   pub fn path(self) -> &'ctx Utf8Path {
-    let (path, _) = self.ctx.lookup_file(self.idx);
-    path
+    self.path
   }
 
   /// Returns the textual contents of this file.
@@ -49,57 +50,6 @@ impl<'ctx> File<'ctx> {
   pub(crate) fn idx(self) -> usize {
     self.idx
   }
-}
-
-impl PartialEq for File<'_> {
-  fn eq(&self, other: &Self) -> bool {
-    ptr::eq(self.ctx, other.ctx) && self.idx == other.idx
-  }
-}
-
-/// An input source file.
-pub struct FileMut<'ctx> {
-  ctx: &'ctx mut Context,
-  idx: usize,
-}
-
-impl<'ctx> FileMut<'ctx> {
-  /// Returns the name of this file, as a path.
-  pub fn path(&self) -> &Utf8Path {
-    let (path, _) = self.ctx.lookup_file(self.idx);
-    path
-  }
-
-  /// Returns the textual contents of this file.
-  pub fn text(&self) -> &str {
-    let (_, text) = self.ctx.lookup_file(self.idx);
-    text
-  }
-
-  /// Converts this file reference into an immutable one.
-  pub fn as_ref(&self) -> File {
-    File {
-      text: self.text(),
-      ctx: self.ctx,
-      idx: self.idx,
-    }
-  }
-
-  /// Returns the [`Context`] that owns this file.
-  pub fn context(&self) -> &Context {
-    self.ctx
-  }
-
-  /// Like [`FileMut::context()`], but returns a mutable reference.
-  pub fn context_mut(&mut self) -> &mut Context {
-    self.ctx
-  }
-
-  /// Like [`FileMut::context()`], but consumes `self` and returns a longer
-  /// lived mutable reference.
-  pub fn into_context(self) -> &'ctx mut Context {
-    self.ctx
-  }
 
   /// Tokenizes the this file according to `spec` and generates a token stream.
   pub fn lex<'spec>(
@@ -111,13 +61,19 @@ impl<'ctx> FileMut<'ctx> {
   }
 
   /// Creates a new span with the given range.
-  pub(crate) fn new_span(&mut self, range: Range<usize>) -> Span {
+  pub(crate) fn new_span(&self, range: Range<usize>) -> Span {
     assert!(
       self.idx != !0,
       "tried to create new span on the synthetic file"
     );
 
     self.ctx.new_span(range.start, range.end, self.idx)
+  }
+}
+
+impl PartialEq for File<'_> {
+  fn eq(&self, other: &Self) -> bool {
+    ptr::eq(self.ctx, other.ctx) && self.idx == other.idx
   }
 }
 
@@ -220,14 +176,14 @@ impl Span {
   ///
   /// May panic if this span is not owned by `ctx` (or it may produce an
   /// unexpected result).
-  pub fn append_comment(self, ctx: &mut Context, text: impl Into<Yarn>) {
-    let span = ctx.new_synthetic_span(text.into());
+  pub fn append_comment(self, ctx: &Context, text: impl Into<Yarn>) {
+    let span = ctx.new_synthetic_span(text.into().into());
     self.append_comment_span(ctx, span);
   }
 
   /// Sets the comment associated with a given span. The comment must itself
   /// be specified as a span.
-  pub(crate) fn append_comment_span(self, ctx: &mut Context, comment: Span) {
+  pub(crate) fn append_comment_span(self, ctx: &Context, comment: Span) {
     ctx.add_comment(self, comment)
   }
 
@@ -241,59 +197,57 @@ impl Span {
 }
 
 thread_local! {
-  static CTX_FOR_SPAN_DEBUG: Cell<Option<u32>> = Cell::new(None);
+  static CTX_FOR_SPAN_DEBUG: RefCell<Option<Context>> = RefCell::new(None);
 }
 
 impl fmt::Debug for Span {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    CTX_FOR_SPAN_DEBUG.with(|id| {
-      let Some(id) = id.get() else {
+    CTX_FOR_SPAN_DEBUG.with(|ctx| {
+      let ctx = ctx.borrow();
+      let Some(ctx) = &*ctx else {
         return f.write_str("<elided>")
       };
 
-      Context::find_and_run(id, |ctx| match ctx {
-        None => f.write_str("<expired>"),
-        Some(ctx) => {
-          let text = self.text(ctx);
-          write!(f, "`")?;
-          for c in text.chars() {
-            if ('\x20'..'\x7e').contains(&c) {
-              f.write_char(c)?;
-            } else {
-              write!(f, "<U+{:X}>", c as u32)?;
-            }
-          }
-          write!(f, "` @ ")?;
-
-          match self.range(ctx) {
-            Some(range) => write!(f, "{}[{range:?}]", self.file(ctx).path()),
-            None => f.write_str("n/a"),
-          }
+      let text = self.text(ctx);
+      write!(f, "`")?;
+      for c in text.chars() {
+        if ('\x20'..'\x7e').contains(&c) {
+          f.write_char(c)?;
+        } else {
+          write!(f, "<U+{:X}>", c as u32)?;
         }
-      })
+      }
+      write!(f, "` @ ")?;
+
+      match self.range(ctx) {
+        Some(range) => write!(f, "{}[{range:?}]", self.file(ctx).path()),
+        None => f.write_str("n/a"),
+      }
     })
   }
 }
 
 /// An iterator over the comment spans attached to a [`Span`].
 pub struct Comments<'ctx> {
-  slice: &'ctx [Span],
+  slice: (RwLockReadGuard<'ctx, context::State>, *const [Span]),
   ctx: &'ctx Context,
 }
 
 impl<'ctx> Comments<'ctx> {
   /// Adapts this iterator to return just the text contents of each [`Span`].
-  pub fn as_strings(&self) -> impl Iterator<Item = &'ctx str> {
-    self.slice.iter().map(|span| span.text(self.ctx))
+  pub fn as_strings(&self) -> impl Iterator<Item = &'_ str> {
+    unsafe { &*self.slice.1 }
+      .iter()
+      .map(|span| span.text(self.ctx))
   }
 }
 
-impl<'ctx> IntoIterator for Comments<'ctx> {
+impl<'a> IntoIterator for &'a Comments<'_> {
   type Item = Span;
-  type IntoIter = iter::Copied<slice::Iter<'ctx, Span>>;
+  type IntoIter = iter::Copied<slice::Iter<'a, Span>>;
 
   fn into_iter(self) -> Self::IntoIter {
-    self.slice.iter().copied()
+    unsafe { &*self.slice.1 }.iter().copied()
   }
 }
 
@@ -326,7 +280,7 @@ pub trait Spanned {
   }
 
   /// Forwards to [`Span::append_comment()`].
-  fn append_comment(&self, ctx: &mut Context, text: impl Into<Yarn>) {
+  fn append_comment(&self, ctx: &Context, text: impl Into<Yarn>) {
     self.span(ctx).append_comment(ctx, text)
   }
 }
