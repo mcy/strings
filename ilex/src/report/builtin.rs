@@ -5,7 +5,6 @@ use std::ops::Bound;
 use std::ops::RangeBounds;
 use std::panic::Location;
 
-use byteyarn::YarnRef;
 use format_args as f;
 
 use byteyarn::yarn;
@@ -14,22 +13,19 @@ use byteyarn::YarnBox;
 use crate::file::Context;
 use crate::file::Spanned;
 use crate::report::Diagnostic;
+use crate::report::Report;
+use crate::report::ToLoc;
 use crate::rule;
 use crate::spec::Lexeme;
 use crate::spec::Spec;
 use crate::token;
 
-use crate::report::Report;
-use crate::token::Token as _;
-
-use super::ToLoc;
-
 /// A wrapper over [`Report`] for generating diagnostics.
 ///
 /// See [`Report::builtins()`].
-pub struct Builtins(pub(super) Report);
+pub struct Builtins<'a>(pub(super) &'a Report);
 
-impl Builtins {
+impl Builtins<'_> {
   /// Generates an "unexpected" diagnostic.
   #[track_caller]
   pub fn unexpected<'a, 'b>(
@@ -39,20 +35,38 @@ impl Builtins {
     unexpected_in: impl Into<Expected<'b>>,
     at: impl ToLoc,
   ) -> Diagnostic {
-    self
-      .0
-      .in_context(|ctx| {
-        let found = found.into();
+    let found = found.into();
 
-        let diagnostic = self.0.error(f!(
-          "unexpected {} in {}",
-          found.for_user_diagnostic(spec, ctx),
-          unexpected_in.into().for_user_diagnostic(spec, ctx),
-        ));
+    let diagnostic = self.0.error(f!(
+      "unexpected {} in {}",
+      found.for_user_diagnostic(spec, &self.0.ctx),
+      unexpected_in.into().for_user_diagnostic(spec, &self.0.ctx),
+    ));
 
-        non_printable_note(ctx, found, diagnostic)
-      })
+    non_printable_note(&self.0.ctx, found, diagnostic)
       .at(at)
+      .reported_at(Location::caller())
+  }
+
+  pub(crate) fn extra_chars<'a>(
+    &self,
+    spec: &Spec,
+    unexpected_in: impl Into<Expected<'a>>,
+    at: impl ToLoc,
+  ) -> Diagnostic {
+    let at = at.to_loc(&self.0.ctx);
+    let found = at.text(&self.0.ctx);
+
+    let diagnostic = self
+      .0
+      .error(f!(
+        "unexpected extra character{} in {}",
+        if found.chars().count() == 1 { "" } else { "s" },
+        unexpected_in.into().for_user_diagnostic(spec, &self.0.ctx),
+      ))
+      .saying(at, "you may have meant to add a space here");
+
+    non_printable_note(&self.0.ctx, found.into(), diagnostic)
       .reported_at(Location::caller())
   }
 
@@ -66,23 +80,19 @@ impl Builtins {
     found: impl Into<Expected<'b>>,
     at: impl ToLoc,
   ) -> Diagnostic {
-    self
+    let expected = expected.into_iter().map(Into::into).collect::<Vec<_>>();
+    let alts = disjunction_to_string(spec, &self.0.ctx, &expected);
+    let found = found.into();
+
+    let diagnostic = self
       .0
-      .in_context(|ctx| {
-        let expected = expected.into_iter().map(Into::into).collect::<Vec<_>>();
-        let alts = disjunction_to_string(spec, ctx, &expected);
-        let found = found.into();
+      .error(f!(
+        "expected {alts}, but found {}",
+        found.for_user_diagnostic(spec, &self.0.ctx)
+      ))
+      .saying(at, f!("expected {alts}"));
 
-        let diagnostic = self
-          .0
-          .error(f!(
-            "expected {alts}, but found {}",
-            found.for_user_diagnostic(spec, ctx)
-          ))
-          .saying(at, f!("expected {alts}"));
-
-        non_printable_note(ctx, found, diagnostic)
-      })
+    non_printable_note(&self.0.ctx, found, diagnostic)
       .reported_at(Location::caller())
   }
 
@@ -98,16 +108,12 @@ impl Builtins {
   ) -> Diagnostic {
     self
       .0
-      .in_context(|ctx| {
-        self
-          .0
-          .error(f!(
-            "found an unclosed {}",
-            what.into().for_user_diagnostic(spec, ctx)
-          ))
-          .remark(open, "opened here")
-          .saying(eof, "expected it to be closed here")
-      })
+      .error(f!(
+        "found an unclosed {}",
+        what.into().for_user_diagnostic(spec, &self.0.ctx)
+      ))
+      .remark(open, "opened here")
+      .saying(eof, "expected it to be closed here")
       .reported_at(Location::caller())
   }
 
@@ -118,16 +124,12 @@ impl Builtins {
     at: impl ToLoc,
     why: impl fmt::Display,
   ) -> Diagnostic {
+    let at = at.to_loc(&self.0.ctx);
+    let seq = &&self.0.ctx.file(at.file).unwrap().text()[at.start..at.end];
     self
       .0
-      .in_context(|ctx| {
-        let at = at.to_loc(ctx);
-        let seq = &ctx.file(at.file).unwrap().text()[at.start..at.end];
-        self
-          .0
-          .error(f!("found an invalid escape sequence: `{seq}`"))
-          .saying(at, why)
-      })
+      .error(f!("found an invalid escape sequence: `{seq}`"))
+      .saying(at, why)
       .reported_at(Location::caller())
   }
 
@@ -157,20 +159,16 @@ impl Builtins {
 
     self
       .0
-      .in_context(|ctx| {
-        self
-          .0
-          .error(f!(
-            "{} out of range",
-            what.into().for_user_diagnostic(spec, ctx)
-          ))
-          .at(at)
-          .note(f!(
-            "expected value in the range {start}{}..{}{end}",
-            if is_exc { "<" } else { "" },
-            if is_inc { "=" } else { "" },
-          ))
-      })
+      .error(f!(
+        "{} out of range",
+        what.into().for_user_diagnostic(spec, &self.0.ctx)
+      ))
+      .at(at)
+      .note(f!(
+        "expected value in the range {start}{}..{}{end}",
+        if is_exc { "<" } else { "" },
+        if is_inc { "=" } else { "" },
+      ))
       .reported_at(Location::caller())
   }
 }
@@ -322,9 +320,9 @@ fn pos_iter() {
 pub enum Expected<'lex> {
   /// A literal string, equivalent to a keyword token, and wrapped in backticks
   /// in the diagnostic.
-  Literal(YarnRef<'lex, str>),
+  Literal(YarnBox<'lex, str>),
   /// The name of something, which should be shown unquoted in the diagnostic.
-  Name(YarnRef<'lex, str>),
+  Name(YarnBox<'lex, str>),
   /// An actual token, which is, with some exceptions, digested into its lexeme.
   Token(token::Any<'lex>),
   /// A lexeme, from which a name can be inferred.
@@ -340,13 +338,9 @@ impl Expected<'_> {
   ) -> YarnBox<'a, str> {
     match self {
       Self::Literal(lit) => yarn!("`{lit}`"),
-      Self::Name(name) => name.to_box(),
+      Self::Name(name) => name.as_ref().to_box(),
       Self::Lexeme(lex) => lex.to_yarn(spec),
-      Self::Token(tok) => match tok {
-        token::Any::Eof(..) => yarn!("<eof>"),
-        token::Any::Unexpected(span, ..) => yarn!("`{}`", span.text(ctx)),
-        tok => tok.lexeme().unwrap().any().to_yarn(spec),
-      },
+      Self::Token(tok) => tok.to_yarn(ctx),
     }
   }
 }

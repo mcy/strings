@@ -33,7 +33,7 @@ fn greedy() {
     R"cc(some c++)" )cc"
   "#;
 
-  let mut ctx = ilex::Context::new();
+  let ctx = ilex::Context::new();
   let _u = ctx.use_for_debugging_spans();
   let report = ctx.new_report();
   let tokens = ctx.new_file("test.file", text).lex(&spec, &report).unwrap();

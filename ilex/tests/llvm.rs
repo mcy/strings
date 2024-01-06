@@ -118,7 +118,7 @@ fn llvm() {
   "#;
 
   let llvm = Llvm::get();
-  let mut ctx = ilex::Context::new();
+  let ctx = ilex::Context::new();
   let _u = ctx.use_for_debugging_spans();
   let report = ctx.new_report();
   let tokens = ctx

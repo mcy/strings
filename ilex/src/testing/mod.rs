@@ -6,13 +6,16 @@
 //! These matchers are intended for writing *tests*. To write a parser, you\
 //! should use [`Cursor`][crate::token::Cursor] instead.
 
-use std::fmt;
-use std::ops::Range;
-
 use byteyarn::Yarn;
+use std::env;
+use std::fmt;
+use std::fs;
+use std::ops::Range;
+use std::path::Path;
 
 use crate::file::Context;
 use crate::file::Span;
+use crate::report::Report;
 use crate::rule;
 use crate::spec::Lexeme;
 use crate::token;
@@ -21,6 +24,31 @@ use crate::token::Sign;
 
 mod recognize;
 use recognize::Kind;
+
+/// Checks that `report` contains the expected diagnostics in `path`, verbatim.
+///
+/// If the contents do not match, it will print a diff to stderr and panic.
+///
+/// If the `ILEX_REGENERATE` env var is set, instead of reading the file and
+/// performing the check, it will write the expected contents to the file,
+/// allowing for easy generation of test data.
+#[track_caller]
+pub fn check_report(report: &Report, path: &(impl AsRef<Path> + ?Sized)) {
+  let path = path.as_ref();
+  let got = report.write_out_for_test();
+  let want = if env::var("ILEX_REGENERATE").is_ok() {
+    if let Some(parent) = path.parent() {
+      fs::create_dir_all(parent).unwrap();
+    }
+    fs::write(path, got).unwrap();
+    return;
+  } else {
+    fs::read_to_string(path).unwrap()
+  };
+
+  eprintln!("checking against {}...", path.display());
+  similar_asserts::assert_eq!(want, got);
+}
 
 /// A matcher for a token stream.
 ///

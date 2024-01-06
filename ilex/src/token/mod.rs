@@ -15,6 +15,8 @@ use std::marker::PhantomData;
 use std::ops::RangeBounds;
 use std::panic::Location;
 
+use byteyarn::yarn;
+use byteyarn::YarnBox;
 use num_traits::Bounded;
 
 use crate::file::Context;
@@ -1193,5 +1195,37 @@ impl TryFrom<Any<'_>> for Never {
 impl From<Never> for Any<'_> {
   fn from(value: Never) -> Self {
     value.from_nothing_anything()
+  }
+}
+
+/// Converts a lexeme into a string, for printing as a diagnostic.
+impl<'lex> Any<'lex> {
+  pub(crate) fn to_yarn(self, ctx: &Context) -> YarnBox<'lex, str> {
+    let spec = self.spec();
+    if let Some(name) = self.lexeme().and_then(|l| spec.rule_name(l)) {
+      return name.to_box();
+    }
+
+    let (pre, suf, kind) = match self {
+      Any::Unexpected(sp, _) => return yarn!("`{}`", sp.text(ctx)),
+      Any::Eof(_) => return yarn!("<eof>"),
+      Any::Keyword(tok) => return yarn!("`{}`", tok.text(ctx)),
+      Any::Bracket(d) => {
+        return yarn!("`{} .. {}`", d.open().text(ctx), d.close().text(ctx));
+      }
+
+      Any::Ident(tok) => (tok.prefix(), tok.suffix(), "identifier"),
+      Any::Quoted(tok) => (tok.prefix(), tok.suffix(), "string"),
+      Any::Digital(tok) => (tok.prefix(), tok.suffix(), "number"),
+    };
+
+    match (pre.map(|s| s.text(ctx)), suf.map(|s| s.text(ctx))) {
+      (Some(pre), Some(suf)) => {
+        yarn!("`{pre}`-prefixed, `{suf}`-suffixed {kind}")
+      }
+      (Some(pre), None) => yarn!("`{pre}`-prefixed, {kind}"),
+      (None, Some(suf)) => yarn!("`{suf}`-suffixed {kind}"),
+      (None, None) => yarn!("`{kind}`"),
+    }
   }
 }

@@ -234,7 +234,7 @@ pub mod token;
 pub use {
   crate::{
     file::Context,
-    file::{File, FileMut},
+    file::File,
     file::{Span, Spanned},
     report::{Fatal, Report},
     rule::Rule,

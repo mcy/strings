@@ -71,7 +71,7 @@ impl Matcher {
       "comments",
       state,
       &self.comments,
-      tok.comments(ctx),
+      &tok.comments(ctx),
       |state, t, s| {
         state.match_spans("comment", t, s);
       },

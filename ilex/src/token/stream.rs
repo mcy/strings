@@ -13,11 +13,11 @@ use crate::spec::Spec;
 use crate::token;
 
 #[cfg(doc)]
-use crate::file::FileMut;
+use crate::file::File;
 
 /// A tree-like stream of tokens.
 ///
-/// This is type returned by by [`FileMut::lex()`] when lexing succeeds.
+/// This is type returned by by [`File::lex()`] when lexing succeeds.
 #[derive(Clone)]
 pub struct Stream<'spec> {
   pub(crate) spec: &'spec Spec,

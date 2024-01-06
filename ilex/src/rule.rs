@@ -1051,6 +1051,36 @@ impl Comment {
   }
 }
 
+impl From<&'static str> for Comment {
+  fn from(value: &'static str) -> Self {
+    Self::line(value)
+  }
+}
+
+impl From<char> for Comment {
+  fn from(value: char) -> Self {
+    Self::line(value)
+  }
+}
+
+impl From<Yarn> for Comment {
+  fn from(value: Yarn) -> Self {
+    Self::line(value)
+  }
+}
+
+impl<Y: Into<Yarn>, Z: Into<Yarn>> From<(Y, Z)> for Comment {
+  fn from((y, z): (Y, Z)) -> Self {
+    Self::paired(y, z)
+  }
+}
+
+impl From<Bracket> for Comment {
+  fn from(value: Bracket) -> Self {
+    Self::block(value)
+  }
+}
+
 impl Rule for Comment {
   type Token<'lex> = Never;
 

@@ -37,7 +37,7 @@ ilex::spec! {
         Escape::Fixed {
           char_count: 4,
           parse: Box::new(|hex| u32::from_str_radix(hex, 16)
-          .map_err(|_| "expected hexadecimal".into())),
+            .map_err(|_| "expected hexadecimal".into())),
         },
       ),
 
@@ -66,7 +66,7 @@ const SOME_JSON: &str = r#"
 #[test]
 fn check_tokens() {
   let json = JsonSpec::get();
-  let mut ctx = ilex::Context::new();
+  let ctx = ilex::Context::new();
   let _u = ctx.use_for_debugging_spans();
   let report = ctx.new_report();
   let tokens = ctx
@@ -179,7 +179,7 @@ enum Json {
 
 #[test]
 fn parse_test() {
-  use pretty_assertions::assert_eq;
+  use similar_asserts::assert_eq;
 
   let value = parse("null").unwrap();
   assert_eq!(value, Json::Null);
@@ -226,7 +226,7 @@ fn parse(data: &str) -> Result<Json, impl fmt::Debug> {
 
   let json = JsonSpec::get();
 
-  let mut ctx = ilex::Context::new();
+  let ctx = ilex::Context::new();
   let report = ctx.new_report();
   let stream = ctx
     .new_file("<i>", data)

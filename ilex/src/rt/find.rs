@@ -30,7 +30,7 @@ pub struct Match {
   /// Extra data that came out of doing a "complete" lexing step.
   pub data: Option<MatchData>,
   /// The lengths of the affixes on the parsed chunk.
-  pub affixes: Affixes,
+  pub affixes: Option<Affixes>,
 
   /// Speculative diagnostics for this match, assuming it is picked.
   pub diagnostics: Vec<Diagnostic>,
@@ -38,7 +38,7 @@ pub struct Match {
   pub not_ok: bool,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct Affixes {
   pub pre: usize,
   pub suf: usize,
@@ -73,7 +73,7 @@ impl Match {
     lexer: &mut Lexer,
     start: usize,
   ) -> (Range<usize>, Option<Span>, Option<Span>) {
-    let Affixes { pre, suf } = self.affixes;
+    let Affixes { pre, suf } = self.affixes.unwrap_or_default();
     let end = lexer.cursor();
 
     let core_start = start + pre;
@@ -92,9 +92,7 @@ pub fn find(lexer: &Lexer) -> Option<Match> {
   let choices = lexer.spec().possible_rules(lexer.rest());
 
   let mut best = None::<Match>;
-  eprintln!("---");
   for (prefix, action) in choices {
-    eprintln!("{prefix:?} -> {action:?}");
     let found = Finder {
       lexer,
       prefix,
@@ -167,10 +165,11 @@ impl Finder<'_, '_> {
     }
   }
 
-  fn diagnose(&mut self, cb: impl FnOnce(&Self) -> Diagnostic) {
+  fn diagnose(&mut self, cb: impl FnOnce(&mut Self) -> Diagnostic) {
     self.not_ok = true;
     if !self.prev_ok {
-      self.diagnostics.push(cb(self).speculate())
+      let d = cb(self);
+      self.diagnostics.push(d.speculate());
     }
   }
 
@@ -250,50 +249,17 @@ impl Finder<'_, '_> {
     Some((idx, &prefixes[idx]))
   }
 
-  fn expect_non_xid(&mut self) {
-    let Some(next) = self.rest().chars().next() else { return };
-    if !next.is_xid_start() {
-      return;
-    }
-
-    // Find the previous character. Thanks to how UTF-8 works, we can just
-    // try to slice the string at growing intervals until we successfully parse
-    // one full UTF-8 code point.
-    let prev_char = if self.cursor() == 0 {
-      return;
-    } else {
-      let mut prev_start = self.cursor() - 1;
-      while self.lexer.text().get(prev_start..).is_none() {
-        prev_start -= 1;
-      }
-      self.lexer.text()[prev_start..].chars().next().unwrap()
-    };
-
-    if !prev_char.is_xid_start() {
-      return;
-    }
-
-    self.diagnose(|this| {
-      this.lexer.report().builtins().unexpected(
-        this.lexer.spec(),
-        Expected::Literal(next.into()),
-        this.action.lexeme,
-        Loc::new(this.lexer.file(), this.cursor()..this.cursor()),
-      )
-    });
-  }
-
   fn take_any(mut self) -> Match {
-    let (affixes, data) = match self.lexer.spec().rule(self.action.lexeme) {
+    let (mut affixes, data) = match self.lexer.spec().rule(self.action.lexeme) {
       rule::Any::Keyword(..) => {
         self.sub_cursor += self.prefix.len();
-        (Affixes::default(), None)
+        (None, None)
       }
 
       rule::Any::Bracket(delimiter) => {
         let data = self.take_open_delim(delimiter).unwrap_or(0..0);
         (
-          Affixes::default(),
+          None,
           Some(MatchData::CloseDelim(
             make_close_delim(delimiter, &self.lexer.text()[data]).immortalize(),
           )),
@@ -302,12 +268,12 @@ impl Finder<'_, '_> {
 
       rule::Any::Comment(rule::Comment(rule::CommentKind::Line(prefix))) => {
         self.take_line_comment(prefix);
-        (Affixes::default(), None)
+        (None, None)
       }
 
       rule::Any::Comment(rule::Comment(rule::CommentKind::Block(bracket))) => {
         self.take_block_comment(bracket);
-        (Affixes::default(), None)
+        (None, None)
       }
 
       rule::Any::Ident(ident) => {
@@ -334,21 +300,35 @@ impl Finder<'_, '_> {
           }
         }
 
-        (aff.unwrap_or_default(), None)
+        (aff, None)
       }
 
       rule::Any::Digital(num) => self
         .take_digital(num, self.action.prefix_len as usize)
-        .map(|(a, d)| (a, Some(d)))
+        .map(|(a, d)| (Some(a), Some(d)))
         .unwrap_or_default(),
 
       rule::Any::Quoted(quote) => self
         .take_quote(quote, self.action.prefix_len as usize)
-        .map(|(a, d)| (a, Some(d)))
+        .map(|(a, d)| (Some(a), Some(d)))
         .unwrap_or_default(),
     };
 
-    self.expect_non_xid();
+    if let Some(len) = expect_non_xid(self.lexer, self.sub_cursor) {
+      self.diagnose(|this| {
+        this.lexer.report().builtins().extra_chars(
+          this.lexer.spec(),
+          this.action.lexeme,
+          Loc::new(this.lexer.file(), this.cursor()..this.cursor() + len),
+        )
+      });
+
+      self.sub_cursor += len;
+      if let Some(Affixes { suf, .. }) = &mut affixes {
+        // Lengthen the suffix if we saw some extraneous characters.
+        *suf += len;
+      }
+    }
 
     Match {
       prefix_len: self.prefix.len(),
@@ -501,6 +481,24 @@ impl Finder<'_, '_> {
         )
       });
       break;
+    }
+
+    // Do the xid check here, so we can use the comment's actual brackets in
+    // the error.
+
+    if let Some(len) = expect_non_xid(self.lexer, self.sub_cursor) {
+      self.diagnose(|this| {
+        this.lexer.report().builtins().extra_chars(
+          this.lexer.spec(),
+          this
+            .lexer
+            .spec()
+            .rule_name_or(this.action.lexeme, f!("{open} ... {close}")),
+          Loc::new(this.lexer.file(), this.cursor()..this.cursor() + len),
+        )
+      });
+
+      self.sub_cursor += len;
     }
 
     Some(())
@@ -797,8 +795,13 @@ impl Finder<'_, '_> {
     rule: &rule::Quoted,
     prefix_len: usize,
   ) -> Option<(Affixes, MatchData)> {
+    let start = self.cursor();
     self.sub_cursor += prefix_len;
+    let pre_str = &self.lexer.text()[start..self.cursor()];
+
+    let start = self.cursor();
     let close_data = self.take_open_delim(&rule.bracket)?;
+    let open = &self.lexer.text()[start..self.cursor()];
     let close = make_close_delim(&rule.bracket, &self.lexer.text()[close_data]);
 
     let uq_start = self.cursor(); // uq -> unquoted
@@ -827,7 +830,7 @@ impl Finder<'_, '_> {
             self.diagnose(|this| {
               this.lexer.report().builtins().expected(
                 this.lexer.spec(),
-                [Expected::Literal(close.as_ref())],
+                [Expected::Literal(close.as_ref().to_box())],
                 Lexeme::eof(),
                 Loc::new(this.lexer.file(), this.cursor()..this.cursor()),
               )
@@ -946,9 +949,26 @@ impl Finder<'_, '_> {
       chunk_start = self.cursor();
     };
 
+    let start = self.cursor();
     let suf = self
       .must_take_longest(&rule.affixes.suffixes)
       .map(|(_, y)| y.len())?;
+    let suf_str = &self.lexer.text()[start..self.cursor()];
+
+    if let Some(len) = expect_non_xid(self.lexer, self.sub_cursor) {
+      self.diagnose(|this| {
+        this.lexer.report().builtins().extra_chars(
+          this.lexer.spec(),
+          this.lexer.spec().rule_name_or(
+            this.action.lexeme,
+            f!("{pre_str}{open} ... {close}{suf_str}"),
+          ),
+          Loc::new(this.lexer.file(), this.cursor()..this.cursor() + len),
+        )
+      });
+
+      self.sub_cursor += len;
+    }
 
     Some((
       Affixes {
@@ -980,4 +1000,38 @@ fn make_close_delim<'a>(
       yarn!("{}{}{}", prefix, data, suffix)
     }
   }
+}
+
+pub fn expect_non_xid(lex: &Lexer, offset: usize) -> Option<usize> {
+  // Find the previous character. Thanks to how UTF-8 works, we can just
+  // try to slice the string at growing intervals until we successfully parse
+  // one full UTF-8 code point.
+  let prev_char = if lex.cursor() + offset == 0 {
+    return None;
+  } else {
+    let mut prev_start = lex.cursor() + offset - 1;
+    while lex.text().get(prev_start..).is_none() {
+      prev_start -= 1;
+    }
+    lex.text()[prev_start..].chars().next().unwrap()
+  };
+
+  if !prev_char.is_xid_continue() {
+    return None;
+  }
+
+  // Consume as many xid continues as possible and emit a diagnostic if
+  // non-empty.
+  let start = lex.cursor() + offset;
+  let bytes = lex.text()[start..]
+    .chars()
+    .take_while(|c| c.is_xid_continue())
+    .map(char::len_utf8)
+    .sum();
+
+  if bytes == 0 {
+    return None;
+  }
+
+  Some(bytes)
 }
