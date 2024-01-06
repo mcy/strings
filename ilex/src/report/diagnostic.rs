@@ -15,10 +15,10 @@ use crate::report::Report;
 /// almost always temporaries, e.g.
 ///
 /// ```
-/// # fn x(report: &ilex::Report) {
+/// # fn x(report: &ilex::Report, span: ilex::Span) {
 /// report.error("my error message")
 ///   .saying(span, "this is bad code");
-/// #}
+/// # }
 /// ```
 ///
 /// However, holding a diagnostic in a variable will delay it until the end of
@@ -43,19 +43,66 @@ pub enum Kind {
 pub struct Info {
   pub kind: Option<Kind>,
   pub message: String,
-  pub snippets: Vec<Vec<(Span, String, bool)>>,
+  pub snippets: Vec<Vec<(Loc, String, bool)>>,
   pub notes: Vec<String>,
   pub reported_at: Option<&'static panic::Location<'static>>,
 }
 
-// Some parts of the lexer want to generate diagnostics before spans are being
-// minted. This is never a feature that is needed above the lexer, so it is not
-// exposed to users.
-#[derive(Copy, Clone, PartialEq)]
-pub struct Span {
-  pub file: u32,
-  pub start: u32,
-  pub end: u32,
+/// A location in a source file: like a [`Span`], but slightly more general.
+///
+/// Full span information (such as comments) is not necessary for diagnostics,
+/// so anything that implements [`ToLoc`] (which includes anything that is
+/// [`Spanned`]) is suitable for placing spanned data
+/// in diagnostics.
+#[derive(Copy, Clone)]
+pub struct Loc {
+  pub(super) file: usize,
+  pub(super) start: usize,
+  pub(super) end: usize,
+}
+
+impl Loc {
+  /// Constructs a location from a file and a byte range within it.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `start > end`, or if `end` is greater than the length of the
+  /// file.
+  pub fn new(file: File<'_>, range: Range<usize>) -> Loc {
+    let Range { start, end } = range;
+    let len = file.text().len();
+    assert!(start <= end, "invalid range bounds: {start}..{end}");
+    assert!(end <= len, "range end out of bounds: {end} > {len}");
+
+    Loc {
+      file: file.idx(),
+      start,
+      end,
+    }
+  }
+}
+
+/// Converts a value to a file [`Loc`].
+pub trait ToLoc {
+  /// Performs the conversion.
+  fn to_loc(&self, ctx: &Context) -> Loc;
+}
+
+impl ToLoc for Loc {
+  fn to_loc(&self, _ctx: &Context) -> Loc {
+    *self
+  }
+}
+
+impl<S: Spanned> ToLoc for S {
+  fn to_loc(&self, ctx: &Context) -> Loc {
+    let span = self.span(ctx);
+    let range = span
+      .range(ctx)
+      .expect("synthetic spans are not supported in diagnostics yet");
+
+    Loc::new(span.file(ctx), range)
+  }
 }
 
 impl Diagnostic {
@@ -88,47 +135,24 @@ impl Diagnostic {
   }
 
   /// Adds a new relevant snippet at the given location.
-  pub fn at(self, span: impl Spanned) -> Self {
+  pub fn at(self, span: impl ToLoc) -> Self {
     self.saying(span, "")
   }
 
   /// Adds a new diagnostic location, with the given message attached to it.
-  pub fn saying(self, span: impl Spanned, message: impl fmt::Display) -> Self {
+  pub fn saying(self, span: impl ToLoc, message: impl fmt::Display) -> Self {
     self.snippet(span, message, false)
   }
 
   /// Like `saying`, but the underline is as for a "note" rather than the
   /// overall diagnostic.
-  pub fn remark(self, span: impl Spanned, message: impl fmt::Display) -> Self {
+  pub fn remark(self, span: impl ToLoc, message: impl fmt::Display) -> Self {
     self.snippet(span, message, true)
-  }
-
-  pub(crate) fn raw_saying(
-    mut self,
-    file: File,
-    span: Range<usize>,
-    message: impl fmt::Display,
-  ) -> Self {
-    if self.info.snippets.is_empty() {
-      self.info.snippets = vec![vec![]];
-    }
-
-    self.info.snippets.last_mut().unwrap().push((
-      Span {
-        file: file.idx() as u32,
-        start: span.start as u32,
-        end: span.end as u32,
-      },
-      message.to_string(),
-      false,
-    ));
-
-    self
   }
 
   fn snippet(
     mut self,
-    span: impl Spanned,
+    span: impl ToLoc,
     message: impl fmt::Display,
     is_remark: bool,
   ) -> Self {
@@ -137,18 +161,12 @@ impl Diagnostic {
     }
 
     Context::find_and_run(self.report.ctx, |ctx| {
-      let ctx = ctx.expect("attempted to emit a diagnostic after the ilex::Context that owns it has disappeared");
-      let span = span.span(ctx);
-      let file = span.file(ctx).idx();
-      let range = span
-        .range(ctx)
-        .expect("synthetic spans are not supported in diagnostics yet");
+      let ctx = ctx.expect(
+        "attempted to emit a diagnostic after the ilex::Context that owns it has disappeared",
+      );
+
       self.info.snippets.last_mut().unwrap().push((
-        Span {
-          file: file as u32,
-          start: range.start as u32,
-          end: range.end as u32,
-        },
+        span.to_loc(ctx),
         message.to_string(),
         is_remark,
       ));

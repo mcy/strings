@@ -36,7 +36,8 @@ ilex::spec! {
         r"\u",
         Escape::Fixed {
           char_count: 4,
-          parse: Box::new(|hex| u32::from_str_radix(hex, 16).ok()),
+          parse: Box::new(|hex| u32::from_str_radix(hex, 16)
+          .map_err(|_| "expected hexadecimal".into())),
         },
       ),
 

@@ -12,8 +12,8 @@ use std::format_args as f;
 use crate::file::Context;
 use crate::file::Span;
 use crate::file::Spanned;
-use crate::lexer::rule;
-use crate::lexer::Lexeme;
+use crate::rule;
+use crate::spec::Lexeme;
 use crate::token;
 use crate::token::Any;
 

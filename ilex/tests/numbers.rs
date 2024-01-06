@@ -74,6 +74,7 @@ fn numbers() {
   "#;
 
   let mut ctx = ilex::Context::new();
+  let _u = ctx.use_for_debugging_spans();
   let report = ctx.new_report();
   let tokens = ctx
     .new_file("test.file", text)

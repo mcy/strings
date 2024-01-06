@@ -361,7 +361,7 @@ macro_rules! define_fp {
         // This unwrap is safe, so to speak, because it's only validating syntax,
         // which the callee does for us.
         <$Soft>::from_str_r(text, Round::NearestTiesToEven)
-          .expect("ilex: invalid float syntax generated internally; this is a bug")
+          .unwrap_or_else(|_| bug!("invalid float syntax generated internally: {:?}", text))
           .map(Self::from_soft)
       }
       fn __min() -> Self {
@@ -533,7 +533,7 @@ impl Digital<'_> {
 
           let digit = c
             .to_digit(self.radix() as u32)
-            .expect("ilex: bad digit slipped past the lexer; this is a bug")
+            .unwrap_or_else(|| bug!("bad digit slipped past the lexer"))
             as u128;
           text = &text[1..];
           if digit > 0 {
@@ -562,10 +562,9 @@ impl Digital<'_> {
             continue;
           }
 
-          let digit = c
-            .to_digit(exp.radix() as u32)
-            .expect("ilex: bad digit slipped past the lexer; this is a bug")
-            as u128;
+          let digit = c.to_digit(exp.radix() as u32).unwrap_or_else(|| {
+            bug!("bad digit slipped past the lexer: {:?}", c)
+          }) as u128;
           text = &text[1..];
 
           e = e

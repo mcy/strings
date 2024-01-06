@@ -98,7 +98,8 @@ let json = Json {
         r"\u",
         Escape::Fixed {
           char_count: 4,
-          parse: Box::new(|hex| u32::from_str_radix(hex, 16).ok()),
+          parse: Box::new(|hex| u32::from_str_radix(hex, 16)
+            .map_err(|_| "expected hexadecimal".into())),
         },
       ),
   ),
@@ -121,7 +122,7 @@ let json = Json {
 //! This is the intended idiom for using `ilex`; there is a convenient macro
 //! for doing this in a single step.
 //!
-/*!```rust
+/*! ```
 use ilex::rule::Keyword;
 use ilex::rule::Bracket;
 use ilex::rule::Quoted;
@@ -156,7 +157,8 @@ ilex::spec! {
         r"\u",
         Escape::Fixed {
           char_count: 4,
-          parse: Box::new(|hex| u32::from_str_radix(hex, 16).ok()),
+          parse: Box::new(|hex| u32::from_str_radix(hex, 16)
+            .map_err(|_| "expected hexadecimal".into())),
         },
       ),
 
@@ -211,12 +213,20 @@ let my_lexeme = json.object;  // Etc.
 
 use std::fmt;
 
+macro_rules! bug {
+  ($fmt:literal $($arg:tt)*) => {{
+    panic!(concat!("ilex: ", $fmt, "; this is a bug") $($arg)*)
+  }};
+}
+
 mod file;
-mod lexer;
+mod rt;
+mod spec;
 
 pub mod fp;
 pub mod ice;
 pub mod report;
+pub mod rule;
 pub mod testing;
 pub mod token;
 
@@ -226,11 +236,9 @@ pub use {
     file::Context,
     file::{File, FileMut},
     file::{Span, Spanned},
-    lexer::rule,
-    lexer::spec::{Spec, SpecBuilder},
-    lexer::Lexeme,
     report::{Fatal, Report},
     rule::Rule,
+    spec::{Lexeme, Spec, SpecBuilder},
     token::Token,
   },
   byteyarn::Yarn,

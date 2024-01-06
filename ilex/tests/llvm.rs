@@ -47,7 +47,8 @@ ilex::spec! {
         "\\",
         Escape::Fixed {
           char_count: 2,
-          parse: Box::new(|hex| u32::from_str_radix(hex, 16).ok()),
+          parse: Box::new(|hex| u32::from_str_radix(hex, 16)
+            .map_err(|_| "expected hexadecimal".into())),
         },
       )
       .prefixes(["", "c"]),
@@ -68,7 +69,8 @@ ilex::spec! {
     quoted: Quoted = Quoted::new('"')
       .escape("\\", Escape::Fixed {
         char_count: 2,
-        parse: Box::new(|hex| u32::from_str_radix(hex, 16).ok()),
+        parse: Box::new(|hex| u32::from_str_radix(hex, 16)
+          .map_err(|_| "expected hexadecimal".into())),
       })
       .prefixes(["!", "@", "%"]),
 

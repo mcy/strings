@@ -5,6 +5,7 @@ use std::ops::Bound;
 use std::ops::RangeBounds;
 use std::panic::Location;
 
+use byteyarn::YarnRef;
 use format_args as f;
 
 use byteyarn::yarn;
@@ -12,14 +13,16 @@ use byteyarn::YarnBox;
 
 use crate::file::Context;
 use crate::file::Spanned;
-use crate::lexer::rule;
-use crate::lexer::spec::Spec;
-use crate::lexer::Lexeme;
 use crate::report::Diagnostic;
+use crate::rule;
+use crate::spec::Lexeme;
+use crate::spec::Spec;
 use crate::token;
 
 use crate::report::Report;
 use crate::token::Token as _;
+
+use super::ToLoc;
 
 /// A wrapper over [`Report`] for generating diagnostics.
 ///
@@ -34,17 +37,7 @@ impl Builtins {
     spec: &Spec,
     found: impl Into<Expected<'a>>,
     unexpected_in: impl Into<Expected<'b>>,
-    at: impl Spanned,
-  ) -> Diagnostic {
-    self.unexpected0(spec, found, unexpected_in).at(at)
-  }
-
-  #[track_caller]
-  pub(crate) fn unexpected0<'a, 'b>(
-    &self,
-    spec: &Spec,
-    found: impl Into<Expected<'a>>,
-    unexpected_in: impl Into<Expected<'b>>,
+    at: impl ToLoc,
   ) -> Diagnostic {
     self
       .0
@@ -59,6 +52,7 @@ impl Builtins {
 
         non_printable_note(ctx, found, diagnostic)
       })
+      .at(at)
       .reported_at(Location::caller())
   }
 
@@ -70,7 +64,7 @@ impl Builtins {
     spec: &Spec,
     expected: impl IntoIterator<Item = E>,
     found: impl Into<Expected<'b>>,
-    at: impl Spanned,
+    at: impl ToLoc,
   ) -> Diagnostic {
     self
       .0
@@ -99,8 +93,8 @@ impl Builtins {
     &self,
     spec: &Spec,
     what: impl Into<Expected<'a>>,
-    open: impl Spanned,
-    eof: impl Spanned,
+    open: impl ToLoc,
+    eof: impl ToLoc,
   ) -> Diagnostic {
     self
       .0
@@ -117,18 +111,22 @@ impl Builtins {
       .reported_at(Location::caller())
   }
 
-  /// Generates an "invalid escape sequence" diagnostic, for when an
-  /// [`Escape::Invalid`][crate::lexer::rule::Escape::Invalid] is encountered.
+  /// Generates an "invalid escape sequence" diagnostic.
   #[track_caller]
-  pub fn invalid_escape(&self, at: impl Spanned) -> Diagnostic {
+  pub fn invalid_escape(
+    &self,
+    at: impl ToLoc,
+    why: impl fmt::Display,
+  ) -> Diagnostic {
     self
       .0
       .in_context(|ctx| {
-        let seq = at.text(ctx);
+        let at = at.to_loc(ctx);
+        let seq = &ctx.file(at.file).unwrap().text()[at.start..at.end];
         self
           .0
           .error(f!("found an invalid escape sequence: `{seq}`"))
-          .saying(at, "invalid escape sequence")
+          .saying(at, why)
       })
       .reported_at(Location::caller())
   }
@@ -139,7 +137,7 @@ impl Builtins {
     &self,
     spec: &Spec,
     what: impl Into<Expected<'a>>,
-    at: impl Spanned,
+    at: impl ToLoc,
     range: &impl RangeBounds<N>,
     min: &dyn fmt::Display,
     max: &dyn fmt::Display,
@@ -324,7 +322,9 @@ fn pos_iter() {
 pub enum Expected<'lex> {
   /// A literal string, equivalent to a keyword token, and wrapped in backticks
   /// in the diagnostic.
-  Literal(&'lex str),
+  Literal(YarnRef<'lex, str>),
+  /// The name of something, which should be shown unquoted in the diagnostic.
+  Name(YarnRef<'lex, str>),
   /// An actual token, which is, with some exceptions, digested into its lexeme.
   Token(token::Any<'lex>),
   /// A lexeme, from which a name can be inferred.
@@ -338,14 +338,14 @@ impl Expected<'_> {
     spec: &'a Spec,
     ctx: &Context,
   ) -> YarnBox<'a, str> {
-    use crate::lexer::stringify::lexeme_to_string;
     match self {
-      Self::Literal(lit) => YarnBox::new(lit),
-      Self::Lexeme(lex) => lexeme_to_string(spec, *lex),
+      Self::Literal(lit) => yarn!("`{lit}`"),
+      Self::Name(name) => name.to_box(),
+      Self::Lexeme(lex) => lex.to_yarn(spec),
       Self::Token(tok) => match tok {
         token::Any::Eof(..) => yarn!("<eof>"),
         token::Any::Unexpected(span, ..) => yarn!("`{}`", span.text(ctx)),
-        tok => lexeme_to_string(spec, tok.lexeme().unwrap().any()),
+        tok => tok.lexeme().unwrap().any().to_yarn(spec),
       },
     }
   }
@@ -353,7 +353,7 @@ impl Expected<'_> {
 
 impl<'lex> From<&'lex str> for Expected<'lex> {
   fn from(value: &'lex str) -> Self {
-    Self::Literal(value)
+    Self::Literal(value.into())
   }
 }
 
