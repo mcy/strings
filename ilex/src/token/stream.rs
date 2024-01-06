@@ -4,12 +4,12 @@ use std::marker::PhantomData;
 use std::mem;
 
 use crate::file::Span;
-use crate::lexer::rt;
-use crate::lexer::rt::Kind;
-use crate::lexer::rule::Rule;
-use crate::lexer::spec::Spec;
-use crate::lexer::Lexeme;
 use crate::report::Report;
+use crate::rt;
+use crate::rt::Kind;
+use crate::rule::Rule;
+use crate::spec::Lexeme;
+use crate::spec::Spec;
 use crate::token;
 
 #[cfg(doc)]
@@ -246,7 +246,7 @@ impl<'lex> Iterator for Cursor<'lex> {
 
         let close = &self.toks[close_idx];
         let &Kind::Close { .. } = &close.kind else {
-          panic!("rt::Kind::Open did not point to an rt:Kind::Close; this is a bug");
+          bug!("Kind::Open did not point to an Kind::Close");
         };
 
         token::Any::Bracket(token::Bracket {
@@ -263,10 +263,7 @@ impl<'lex> Iterator for Cursor<'lex> {
       }
 
       Kind::Close { .. } => {
-        panic!(
-          "stray closing delimiter {:?} in token stream; this is a bug",
-          tok.span
-        )
+        bug!("stray closing delimiter {:?} in token stream", tok.span)
       }
 
       Kind::Ident { .. } => {
@@ -300,14 +297,13 @@ impl<'lex> Iterator for Cursor<'lex> {
 }
 
 pub mod switch {
-  use crate::lexer::rule;
-  use crate::lexer::rule::Rule;
-  use crate::lexer::Lexeme;
   use crate::report::Report;
+  use crate::rule;
+  use crate::rule::Rule;
+  use crate::spec::Lexeme;
   use crate::token::Any;
+  use crate::token::Cursor;
   use crate::token::Token;
-
-  use super::Cursor;
 
   /// A token switch.
   ///

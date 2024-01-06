@@ -281,6 +281,42 @@ pub(super) struct Affixes {
   pub has_suffixes: bool,
 }
 
+impl fmt::Display for Affixes {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    if self.has_prefixes {
+      for (i, pre) in self.prefixes.iter().enumerate() {
+        if i != 0 {
+          f.write_str(", ")?;
+        }
+        write!(f, "`{pre}`-")?;
+      }
+
+      f.write_str("prefixed")?;
+    }
+
+    if self.has_suffixes {
+      if self.has_prefixes {
+        f.write_str(", ")?;
+      }
+
+      for (i, pre) in self.suffixes.iter().enumerate() {
+        if i != 0 {
+          f.write_str(", ")?;
+        }
+        write!(f, "`{pre}`-")?;
+      }
+
+      f.write_str("suffixed")?;
+    }
+
+    if self.has_prefixes || self.has_suffixes {
+      f.write_str(" ")?;
+    }
+
+    Ok(())
+  }
+}
+
 impl Default for Affixes {
   fn default() -> Self {
     Self {
@@ -564,8 +600,8 @@ impl Quoted {
         Escape::Fixed {
           char_count: 2,
           parse: Box::new(|hex| match u8::from_str_radix(hex, 16) {
-            Ok(byte) if byte < 0x80 => Some(byte as u32),
-            _ => None,
+            Ok(byte) if byte < 0x80 => Ok(byte as u32),
+            _ => Err("expected ASCII value in the range \\x00..=\\0x7f".into()),
           }),
         },
       )
@@ -574,8 +610,8 @@ impl Quoted {
         Escape::Bracketed {
           bracket: ('{', '}').into(),
           parse: Box::new(|hex| match u32::from_str_radix(hex, 16) {
-            Ok(code) if char::from_u32(code).is_some() => Some(code),
-            _ => None,
+            Ok(code) if char::from_u32(code).is_some() => Ok(code),
+            _ => Err("expected Unicode scalar value in the ranges \\u{0}..=\\u{d7ff} or \\u{e000}..=\\u{10ffff}".into()),
           }),
         },
       )
@@ -634,14 +670,16 @@ pub enum Escape {
   ///
   /// This can be used to implement escapes like `\x` (aka `\xNN`) and the
   /// C++ version of `\u` (aka `\uNNNN`). This can also be used to implement
-  /// something like C's octal escapes (aka `\NNN`) using an escape key of `""`.
+  /// something like C's octal escapes (aka `\NNN`) using an escape key of `\`.
   ///
   /// The `parse` function may be called speculatively; it MUST NOT emit its
-  /// own diagnostics.
+  /// own diagnostics. The string returned as the `Err` variant will be shown
+  /// as a diagnostic, as if passed to the [`Builtins::invalid_escape()`]
+  /// function.
   #[allow(missing_docs)]
   Fixed {
     char_count: u32,
-    parse: Box<dyn Fn(&str) -> Option<u32> + Sync + Send>,
+    parse: Box<dyn Fn(&str) -> Result<u32, Yarn> + Sync + Send>,
   },
 
   /// The escape text delimited by `bracket` after the
@@ -652,11 +690,13 @@ pub enum Escape {
   /// (aka `\u{NNNN}`).
   ///
   /// The `parse` function may be called speculatively; it MUST NOT emit its
-  /// own diagnostics.
+  /// own diagnostics. The string returned as the `Err` variant will be shown
+  /// as a diagnostic, as if passed to the [`Builtins::invalid_escape()`]
+  /// function.
   #[allow(missing_docs)]
   Bracketed {
     bracket: Bracket,
-    parse: Box<dyn Fn(&str) -> Option<u32> + Sync + Send>,
+    parse: Box<dyn Fn(&str) -> Result<u32, Yarn> + Sync + Send>,
   },
 }
 

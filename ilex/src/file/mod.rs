@@ -11,10 +11,10 @@ use std::slice;
 use byteyarn::Yarn;
 use camino::Utf8Path;
 
-use crate::lexer::rt;
-use crate::lexer::spec::Spec;
 use crate::report::Fatal;
 use crate::report::Report;
+use crate::rt;
+use crate::spec::Spec;
 use crate::token;
 use crate::Never;
 
@@ -74,6 +74,15 @@ impl<'ctx> FileMut<'ctx> {
   pub fn text(&self) -> &str {
     let (_, text) = self.ctx.lookup_file(self.idx);
     text
+  }
+
+  /// Converts this file reference into an immutable one.
+  pub fn as_ref(&self) -> File {
+    File {
+      text: self.text(),
+      ctx: self.ctx,
+      idx: self.idx,
+    }
   }
 
   /// Returns the [`Context`] that owns this file.

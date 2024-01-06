@@ -21,13 +21,13 @@ use crate::file::Context;
 use crate::file::Span;
 use crate::file::Spanned;
 use crate::fp;
-use crate::lexer::rt;
-use crate::lexer::rt::DigitBlocks;
-use crate::lexer::rt::Kind;
-use crate::lexer::rule;
-use crate::lexer::spec::Spec;
-use crate::lexer::Lexeme;
 use crate::report::Report;
+use crate::rt;
+use crate::rt::DigitBlocks;
+use crate::rt::Kind;
+use crate::rule;
+use crate::spec::Lexeme;
+use crate::spec::Spec;
 use crate::Never;
 use crate::WrongKind;
 
@@ -454,7 +454,7 @@ impl<'lex> Ident<'lex> {
   pub fn name(self) -> Span {
     match &self.tok.kind {
       &Kind::Ident(name) => name,
-      _ => panic!("non-rt::Kind::Ident inside of Ident"),
+      _ => panic!("non-lexer::Kind::Ident inside of Ident"),
     }
   }
 
@@ -804,7 +804,7 @@ impl<'lex> Digital<'lex> {
   fn exponent_slice(self) -> &'lex [DigitBlocks] {
     match &self.tok.kind {
       Kind::Digital { exponents, .. } => exponents,
-      _ => panic!("non-rt::Kind::Digital inside of Digital"),
+      _ => panic!("non-lexer::Kind::Digital inside of Digital"),
     }
   }
 
@@ -812,7 +812,7 @@ impl<'lex> Digital<'lex> {
     match &self.tok.kind {
       Kind::Digital { digits, .. } if self.idx == 0 => digits,
       Kind::Digital { exponents, .. } => &exponents[self.idx - 1],
-      _ => panic!("non-rt::Kind::Digital inside of Digital"),
+      _ => panic!("non-lexer::Kind::Digital inside of Digital"),
     }
   }
 }
@@ -857,7 +857,6 @@ macro_rules! impl_radix {
         radix: u8,
         sep: &str,
       ) -> Option<Self> {
-        let start = data;
         let mut total: Self = 0;
         let mut count = 0;
         while !data.is_empty() {
@@ -871,17 +870,9 @@ macro_rules! impl_radix {
           let next = data.chars().next().unwrap();
           data = &data[next.len_utf8()..];
 
-          let digit = match next {
-            '0'..='9' => next as u8 - b'0',
-            'a'..='f' => next as u8 - b'a' + 10,
-            'A'..='F' => next as u8 - b'A' + 10,
-            _ => !0,
-          };
-
-          debug_assert!(
-            digit < radix,
-            "ilex: an invalid digit slipped past the lexer; this is a bug\ninvalid: {start:?}"
-          );
+          let digit = next.to_digit(radix as _).unwrap_or_else(|| {
+            bug!("an invalid digit slipped past the lexer: {:?}", next)
+          });
 
           let Some(new_total) = total
             .checked_mul(radix as Self)
@@ -995,7 +986,7 @@ impl<'lex> Quoted<'lex> {
   pub fn delimiters(self) -> (Span, Span) {
     match &self.tok.kind {
       &Kind::Quoted { open, close, .. } => (open, close),
-      _ => panic!("non-rt::Kind::Quoted inside of Quoted"),
+      _ => panic!("non-lexer::Kind::Quoted inside of Quoted"),
     }
   }
 
@@ -1056,7 +1047,7 @@ impl<'lex> Quoted<'lex> {
   fn content_slice(self) -> &'lex [Content] {
     match &self.tok.kind {
       Kind::Quoted { content, .. } => content,
-      _ => panic!("non-rt::Kind::Quoted inside of Quoted"),
+      _ => panic!("non-lexer::Kind::Quoted inside of Quoted"),
     }
   }
 
