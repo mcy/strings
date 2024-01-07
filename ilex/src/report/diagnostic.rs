@@ -32,19 +32,13 @@ pub struct Diagnostic {
   pub(super) speculative: bool,
 }
 
-#[derive(Copy, Clone, PartialEq)]
-pub enum Kind {
-  Error,
-  Warning,
-  Note,
-}
+pub use annotate_snippets::AnnotationType as Kind;
 
-#[derive(Default)]
 pub struct Info {
-  pub kind: Option<Kind>,
+  pub kind: Kind,
   pub message: String,
-  pub snippets: Vec<Vec<(Loc, String, bool)>>,
-  pub notes: Vec<String>,
+  pub snippets: Vec<Vec<(Loc, String, Kind)>>,
+  pub notes: Vec<(String, Kind)>,
   pub reported_at: Option<&'static panic::Location<'static>>,
 }
 
@@ -117,7 +111,7 @@ impl Diagnostic {
       speculative: false,
       info: Info {
         message,
-        kind: Some(kind),
+        kind,
         snippets: Vec::new(),
         notes: Vec::new(),
         reported_at: None,
@@ -146,20 +140,20 @@ impl Diagnostic {
 
   /// Adds a new diagnostic location, with the given message attached to it.
   pub fn saying(self, span: impl ToLoc, message: impl fmt::Display) -> Self {
-    self.snippet(span, message, false)
+    self.snippet(span, message, None)
   }
 
   /// Like `saying`, but the underline is as for a "note" rather than the
   /// overall diagnostic.
   pub fn remark(self, span: impl ToLoc, message: impl fmt::Display) -> Self {
-    self.snippet(span, message, true)
+    self.snippet(span, message, Some(Kind::Help))
   }
 
   fn snippet(
     mut self,
     span: impl ToLoc,
     message: impl fmt::Display,
-    is_remark: bool,
+    kind: Option<Kind>,
   ) -> Self {
     if self.info.snippets.is_empty() {
       self.info.snippets = vec![vec![]];
@@ -168,7 +162,7 @@ impl Diagnostic {
     self.info.snippets.last_mut().unwrap().push((
       span.to_loc(&self.report.ctx),
       message.to_string(),
-      is_remark,
+      kind.unwrap_or(self.info.kind),
     ));
     self
   }
@@ -187,16 +181,20 @@ impl Diagnostic {
     let mut note = message.to_string();
     note = note.replace("__", "_\u{200b}_");
 
-    self.info.notes.push(note);
+    self.info.notes.push((note, Kind::Note));
     self
   }
 
-  /// Appends a note to the bottom of the diagnostic.
-  pub fn note_by(
-    self,
-    fmt: impl FnOnce(&mut fmt::Formatter) -> fmt::Result,
-  ) -> Self {
-    self.note(super::display_by(fmt))
+  /// Appends a help tip to the bottom of the diagnostic.
+  pub fn help(mut self, message: impl fmt::Display) -> Self {
+    // HACK: annotate-snippets really likes to convert __ into bold, like
+    // Markdown, which is a problem for display correctness. We work around this
+    // by inserting a zero-width space between every two underscores.
+    let mut note = message.to_string();
+    note = note.replace("__", "_\u{200b}_");
+
+    self.info.notes.push((note, Kind::Help));
+    self
   }
 
   /// Updates the "reported at" information for this diagnostic.
@@ -214,10 +212,16 @@ impl Diagnostic {
 impl Drop for Diagnostic {
   fn drop(&mut self) {
     if !self.speculative {
-      self
-        .report
-        .state
-        .insert_diagnostic(mem::take(&mut self.info));
+      self.report.state.insert_diagnostic(mem::replace(
+        &mut self.info,
+        Info {
+          message: "".to_string(),
+          kind: Kind::Error,
+          snippets: Vec::new(),
+          notes: Vec::new(),
+          reported_at: None,
+        },
+      ));
     }
   }
 }

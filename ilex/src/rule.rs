@@ -104,7 +104,7 @@ impl TryFrom<Any> for Eof {
 /// fixed string.
 #[derive(Debug)]
 pub struct Keyword {
-  pub(super) value: Yarn,
+  pub(crate) value: Yarn,
 }
 
 impl Keyword {
@@ -163,7 +163,6 @@ impl TryFrom<Any> for Keyword {
 #[derive(Debug)]
 pub struct Bracket {
   pub(crate) kind: BracketKind,
-  pub(crate) min_len: usize,
 }
 
 impl Bracket {
@@ -172,7 +171,6 @@ impl Bracket {
   pub fn paired(open: impl Into<Yarn>, close: impl Into<Yarn>) -> Self {
     Self {
       kind: BracketKind::Paired(open.into(), close.into()),
-      min_len: 0,
     }
   }
 
@@ -187,19 +185,19 @@ impl Bracket {
   /// and then a `close_end`.
   ///
   /// To specify the exact syntax from Rust, you would write
-  /// `Bracket::rust_raw_string('#', 'r', '"', '"', "")`.
-  pub fn rust_raw_string(
-    repeating: impl Into<Yarn>,
+  /// `Bracket::rust_raw_string(('#', 0), ('r', '"'), ('"', ""))`.
+  pub fn rust_style(
+    (repeating, min_count): (impl Into<Yarn>, usize),
     (open_start, open_end): (impl Into<Yarn>, impl Into<Yarn>),
     (close_start, close_end): (impl Into<Yarn>, impl Into<Yarn>),
   ) -> Self {
     Self {
       kind: BracketKind::RustLike {
         repeating: repeating.into(),
+        min_count,
         open: (open_start.into(), open_end.into()),
         close: (close_start.into(), close_end.into()),
       },
-      min_len: 0,
     }
   }
 
@@ -212,13 +210,13 @@ impl Bracket {
   /// the other end.
   ///
   /// To specify the exact syntax from C++, you would write
-  /// `Bracket::cxx_raw_string(Ident::new(), "R\"", '(', ')', '"')`.
+  /// `Bracket::cxx_raw_string(Ident::new(), ("R\"", '('), (')', '"'))`.
   ///
   /// # Panics
   ///
   /// Panics if `ident` has any affixes.
   #[track_caller]
-  pub fn cxx_raw_string(
+  pub fn cxx_style(
     ident: Ident,
     (open_start, open_end): (impl Into<Yarn>, impl Into<Yarn>),
     (close_start, close_end): (impl Into<Yarn>, impl Into<Yarn>),
@@ -234,33 +232,16 @@ impl Bracket {
         open: (open_start.into(), open_end.into()),
         close: (close_start.into(), close_end.into()),
       },
-      min_len: 0,
     }
-  }
-
-  /// Sets the minimum length of the "tag" part of the delimiters (e.g. the
-  /// number of copies of the repeated string in [`Bracket::rust_raw_string()`]),
-  /// or the number of characters in the identifier in [`Bracket::cxx_raw_string()`])
-  ///
-  /// # Panics
-  ///
-  /// Panics if this is a [`Bracket::paired()`].
-  pub fn min_len(mut self, len: usize) -> Self {
-    assert!(
-      matches!(&self.kind, BracketKind::Paired(..)),
-      "cannot call min_len() on a Bracket::paired()"
-    );
-
-    self.min_len = len;
-    self
   }
 }
 
 #[derive(Debug)]
-pub(super) enum BracketKind {
+pub(crate) enum BracketKind {
   Paired(Yarn, Yarn),
   RustLike {
     repeating: Yarn,
+    min_count: usize,
     open: (Yarn, Yarn),
     close: (Yarn, Yarn),
   },
@@ -312,7 +293,7 @@ impl TryFrom<Any> for Bracket {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct Affixes {
+pub(crate) struct Affixes {
   prefixes: Vec<Yarn>,
   suffixes: Vec<Yarn>,
 }
@@ -423,10 +404,11 @@ macro_rules! affixes {
 /// Identifiers are self-delimiting "words" like `foo` and `黒猫`.
 #[derive(Default, Debug)]
 pub struct Ident {
-  pub(super) ascii_only: bool,
-  pub(super) extra_starts: String,
-  pub(super) extra_continues: String,
-  pub(super) affixes: Affixes,
+  pub(crate) ascii_only: bool,
+  pub(crate) extra_starts: String,
+  pub(crate) extra_continues: String,
+  pub(crate) affixes: Affixes,
+  pub(crate) min_len: usize,
 }
 
 impl Ident {
@@ -482,9 +464,19 @@ impl Ident {
     self
   }
 
+  /// Sets the minimum length of this identifier, in Unicode scalars (i.e.,
+  /// `char`s).
+  ///
+  /// This may be set to zero, but zero-length identifiers will never generate
+  /// a token; they may be used as part of other rules.
+  pub fn min_len(mut self, len: usize) -> Self {
+    self.min_len = len;
+    self
+  }
+
   affixes!();
 
-  pub(super) fn is_valid_start(&self, c: char) -> bool {
+  pub(crate) fn is_valid_start(&self, c: char) -> bool {
     if !self.ascii_only && c.is_xid_start() {
       return true;
     }
@@ -500,7 +492,7 @@ impl Ident {
     false
   }
 
-  pub(super) fn is_valid_continue(&self, c: char) -> bool {
+  pub(crate) fn is_valid_continue(&self, c: char) -> bool {
     if !self.ascii_only && c.is_xid_continue() {
       return true;
     }
@@ -561,9 +553,9 @@ impl TryFrom<Any> for Ident {
 /// non-Unicode target encodings).
 #[derive(Debug)]
 pub struct Quoted {
-  pub(super) bracket: Bracket,
-  pub(super) escapes: Trie<str, Escape>,
-  pub(super) affixes: Affixes,
+  pub(crate) bracket: Bracket,
+  pub(crate) escapes: Trie<str, Escape>,
+  pub(crate) affixes: Affixes,
 }
 
 impl Quoted {
@@ -652,6 +644,12 @@ impl Quoted {
   }
 
   affixes!();
+}
+
+impl From<Bracket> for Quoted {
+  fn from(value: Bracket) -> Self {
+    Self::with(value)
+  }
 }
 
 impl Rule for Quoted {
@@ -769,14 +767,14 @@ pub struct Digital {
   pub(crate) mant: Digits,
 
   pub(crate) exps: Vec<(Yarn, Digits)>,
-  pub(super) max_exps: u32,
+  pub(crate) max_exps: u32,
 
   pub(crate) separator: Yarn,
-  pub(super) corner_cases: SeparatorCornerCases,
+  pub(crate) corner_cases: SeparatorCornerCases,
 
   pub(crate) point: Yarn,
 
-  pub(super) affixes: Affixes,
+  pub(crate) affixes: Affixes,
 }
 
 /// Places in which a separator in a [`Digital`] is allowed.
@@ -951,8 +949,8 @@ impl Digital {
 pub struct Digits {
   pub(crate) radix: u8,
   pub(crate) signs: Vec<(Yarn, Sign)>,
-  pub(super) min_chunks: u32,
-  pub(super) max_chunks: u32,
+  pub(crate) min_chunks: u32,
+  pub(crate) max_chunks: u32,
 }
 
 impl Digits {
@@ -1055,10 +1053,10 @@ impl TryFrom<Any> for Digital {
 /// attached to the overall span of a token, and can be inspected through
 /// [`Span::comments()`][crate::Span::comments].
 #[derive(Debug)]
-pub struct Comment(pub(super) CommentKind);
+pub struct Comment(pub(crate) CommentKind);
 
 #[derive(Debug)]
-pub(super) enum CommentKind {
+pub(crate) enum CommentKind {
   Line(Yarn),
   Block(Bracket),
 }

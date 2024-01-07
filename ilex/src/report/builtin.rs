@@ -197,6 +197,8 @@ impl Builtins<'_> {
 }
 
 fn non_printable_note(found: Expected, diagnostic: Diagnostic) -> Diagnostic {
+  use std::fmt::Write;
+
   // Check to see if any of the characters are outside of the ASCII printable
   // range.
   let literal = match &found {
@@ -213,25 +215,23 @@ fn non_printable_note(found: Expected, diagnostic: Diagnostic) -> Diagnostic {
     return diagnostic;
   }
 
-  diagnostic.note_by(|f| {
-    write!(
-      f,
-      "found non-ASCII-printable code point{} ",
-      if count == 1 { "" } else { "s" }
-    )?;
+  let mut note = format!(
+    "found non-ASCII-printable code point{} ",
+    if count == 1 { "" } else { "s" }
+  );
 
-    for (pos, c) in PosIter::new(non_ascii) {
-      let c = c as u32;
-      match pos {
-        Pos::First | Pos::Only => write!(f, "U+{c:04}")?,
-        Pos::Middle => write!(f, ", U+{c:04}")?,
-        Pos::Last if count == 2 => write!(f, " and U+{c:04}")?,
-        Pos::Last => write!(f, ", and U+{c:04}")?,
-      }
+  for (pos, c) in PosIter::new(non_ascii) {
+    let c = c as u32;
+    match pos {
+      Pos::First | Pos::Only => {}
+      Pos::Middle => note.push_str(", "),
+      Pos::Last if count == 2 => note.push_str(" and "),
+      Pos::Last => note.push_str(", and "),
     }
+    let _ = write!(note, "U+{c:04}");
+  }
 
-    Ok(())
-  })
+  diagnostic.note(note)
 }
 
 fn disjunction_to_string<'a>(

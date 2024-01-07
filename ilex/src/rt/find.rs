@@ -380,28 +380,7 @@ impl<'l> Finder<'l, '_> {
 
         rule::Any::Ident(ident) => {
           let aff =
-            self.take_ident(ident, Some(self.action.prefix_len as usize));
-
-          if let Some(aff) = &aff {
-            if aff.pre.end == aff.suf.start {
-              self.diagnose(|this| {
-                this
-                  .lexer
-                  .report()
-                  .builtins()
-                  .expected(
-                    this.lexer.spec(),
-                    [this.action.lexeme],
-                    &this.lexer.text()[this.lexer.cursor()..this.cursor()],
-                    Loc::new(
-                      this.lexer.file(),
-                      this.lexer.cursor()..this.cursor(),
-                    ),
-                  )
-                  .note("this appears to be an empty identifier")
-              });
-            }
-          }
+            self.take_ident(ident, Some(self.action.prefix_len as usize), true);
 
           (aff, None, None)
         }
@@ -436,6 +415,7 @@ impl<'l> Finder<'l, '_> {
     &mut self,
     rule: &'l rule::Ident,
     prefix_len: Option<usize>,
+    is_top_level: bool,
   ) -> Option<Affixes> {
     let start = self.cursor();
     let pre = start
@@ -451,9 +431,10 @@ impl<'l> Finder<'l, '_> {
         };
 
     // Consume the largest prefix of "valid" characters for this value.
-    let start = self.cursor();
+    let chars_start = self.cursor();
+    let mut total = 0;
     for c in self.lexer.rest()[self.sub_cursor..].chars() {
-      if self.cursor() == start {
+      if total == 0 {
         if !rule.is_valid_start(c) {
           break;
         }
@@ -462,14 +443,49 @@ impl<'l> Finder<'l, '_> {
       }
 
       self.sub_cursor += c.len_utf8();
+      total += 1;
     }
+    let chars_end = self.cursor();
 
-    let start = self.cursor();
-    let suf = start
-      ..start
+    let suf = self.cursor()
+      ..self.cursor()
         + self
           .must_take_longest(rule.affixes.suffixes())
           .map(|(_, y)| y.len())?;
+
+    let mut min_len = rule.min_len;
+    if min_len == 0 && is_top_level {
+      min_len = 1;
+    }
+
+    if total < min_len {
+      self.diagnose(|this| {
+        let mut d = this.lexer.report().builtins().expected(
+          this.lexer.spec(),
+          [Expected::Name(if min_len == 1 {
+            yarn!("at least 1 character in identifier")
+          } else {
+            yarn!("at least {min_len} characters in identifier")
+          })],
+          Expected::Name(if total == 0 {
+            yarn!("none")
+          } else {
+            yarn!("only {total}")
+          }),
+          if total == 0 {
+            Loc::new(this.lexer.file(), start..this.cursor())
+          } else {
+            Loc::new(this.lexer.file(), chars_start..chars_end)
+          },
+        );
+
+        if total == 0 {
+          d = d.help("this appears to be an empty identifier");
+        }
+
+        d
+      })
+    }
 
     Some(Affixes { pre, suf })
   }
@@ -488,6 +504,7 @@ impl<'l> Finder<'l, '_> {
 
       rule::BracketKind::RustLike {
         repeating,
+        min_count,
         open: (prefix, suffix),
         close,
       } => {
@@ -505,19 +522,22 @@ impl<'l> Finder<'l, '_> {
         }
         let rep_end = self.cursor() - suffix.len();
 
-        if total < rule.min_len {
+        if total < *min_count {
           self.diagnose(|this| {
-            this.lexer.report().builtins().expected(
-              this.lexer.spec(),
-              [Expected::Name(yarn!(
-                "at least {} `{}`{}",
-                rule.min_len,
-                repeating,
-                if rule.min_len > 1 { "s" } else { "" }
-              ))],
-              Expected::Name(yarn!("only {total}")),
-              Loc::new(this.lexer.file(), rep_start..rep_end),
-            )
+            this
+              .lexer
+              .report()
+              .builtins()
+              .expected(
+                this.lexer.spec(),
+                [Expected::Literal(repeating.repeat(*min_count).into())],
+                Expected::Literal(repeating.repeat(total).into()),
+                Loc::new(this.lexer.file(), rep_start..rep_end),
+              )
+              .help(f!(
+                "at least {min_count} `{repeating}`{} required",
+                if *min_count == 1 { " is" } else { "s are" }
+              ))
           })
         }
 
@@ -541,32 +561,10 @@ impl<'l> Finder<'l, '_> {
         self.must_take(prefix)?;
 
         let rep_start = self.cursor();
-        let _ = self.take_ident(ident_rule, None);
+        let _ = self.take_ident(ident_rule, None, false);
         let rep_end = self.cursor();
 
         self.must_take(suffix)?;
-
-        let total = self.lexer.text()[rep_start..rep_end].chars().count();
-        if total < rule.min_len {
-          self.diagnose(|this| {
-            let mut d = this.lexer.report().builtins().expected(
-              this.lexer.spec(),
-              [Expected::Name(yarn!(
-                "at least {} character{} in identifier",
-                rule.min_len,
-                if rule.min_len > 1 { "s" } else { "" }
-              ))],
-              Expected::Name(yarn!("only {total}")),
-              Loc::new(this.lexer.file(), rep_start..rep_end),
-            );
-
-            if total == 0 {
-              d = d.note("this appears to be an empty identifier");
-            }
-
-            d
-          })
-        }
 
         Some((
           YarnBox::new(&self.lexer.text()[start..self.cursor()]),

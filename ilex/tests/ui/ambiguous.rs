@@ -8,17 +8,17 @@ ilex::spec! {
     kw2: Keyword = "-null",
     kw3: Keyword = ")null",
 
-    cm: Comment = Bracket::rust_raw_string(
-      "/",
+    cm: Comment = Bracket::rust_style(
+      ("/", 0),
       ("-", ""),
       ("", "-"),
     ),
-    cm2: Comment = Bracket::cxx_raw_string(
+    cm2: Comment = Bracket::cxx_style(
       Ident::new(),
       ("--", ""),
       ("", ""),
     ),
-    br: Bracket = Bracket::cxx_raw_string(
+    br: Bracket = Bracket::cxx_style(
       Ident::new(),
       ("$", "["),
       ("]", ""),
@@ -32,7 +32,7 @@ ilex::spec! {
     st: Quoted = Quoted::new("'")
       .prefixes(["%", "q"])
       .suffixes(["", "%", "q"]),
-    st2: Quoted = Quoted::with(Bracket::cxx_raw_string(
+    st2: Quoted = Quoted::with(Bracket::cxx_style(
         Ident::new(),
         ("q", "("),
         (")", ""),

@@ -6,13 +6,13 @@ use ilex::testing::Matcher;
 #[test]
 fn greedy() {
   let mut spec = ilex::Spec::builder();
-  let rust_like = spec.rule(Quoted::with(Bracket::rust_raw_string(
-    "#%",
+  let rust_like = spec.rule(Quoted::with(Bracket::rust_style(
+    ("#%", 0),
     ("poisonous", "["),
     ("]", ">"),
   )));
 
-  let cpp_like = spec.rule(Quoted::with(Bracket::cxx_raw_string(
+  let cpp_like = spec.rule(Quoted::with(Bracket::cxx_style(
     Ident::new(),
     ("R\"", "("),
     (")", "\""),

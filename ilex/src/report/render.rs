@@ -55,7 +55,7 @@ impl State {
   }
 
   pub fn insert_diagnostic(&self, info: Info) {
-    if let Some(Kind::Error) = info.kind {
+    if info.kind == Kind::Error {
       self.has_error.store(true, Ordering::SeqCst);
     }
 
@@ -117,20 +117,15 @@ pub fn render_fmt(
   };
 
   for e in report.state.sorted_diagnostics.lock().unwrap().iter() {
-    let kind = match e.kind.unwrap() {
-      Kind::Note => AnnotationType::Note,
-      Kind::Warning => AnnotationType::Warning,
-      Kind::Error => {
-        errors += 1;
-        AnnotationType::Error
-      }
+    if e.kind == Kind::Error {
+      errors += 1;
     };
 
     let mut snippet = Snippet {
       title: Some(Annotation {
         id: None,
         label: Some(&e.message),
-        annotation_type: kind,
+        annotation_type: e.kind,
       }),
       footer: Vec::new(),
       slices: Vec::new(),
@@ -139,7 +134,7 @@ pub fn render_fmt(
     for snips in &e.snippets {
       let mut cur_file = None;
       let mut cur_slice = None;
-      for (span, text, is_remark) in snips {
+      for (span, text, kind) in snips {
         let file = report.ctx.file(span.file).unwrap();
         if cur_file != Some(file) {
           cur_file = Some(file);
@@ -175,11 +170,7 @@ pub fn render_fmt(
         slice.annotations.push(SourceAnnotation {
           range: (start, end),
           label: text,
-          annotation_type: if *is_remark {
-            AnnotationType::Help
-          } else {
-            kind
-          },
+          annotation_type: *kind,
         });
       }
 
@@ -213,11 +204,11 @@ pub fn render_fmt(
       }
     }
 
-    for note in &e.notes {
+    for (note, kind) in &e.notes {
       snippet.footer.push(Annotation {
         id: None,
         label: Some(note),
-        annotation_type: AnnotationType::Note,
+        annotation_type: *kind,
       });
     }
 
