@@ -26,7 +26,7 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
     rule::Any::Keyword(_) => lexer.add_token(rt::Token {
       kind: rt::Kind::Keyword,
       span,
-      lexeme: Some(best.lexeme),
+      lexeme: best.lexeme,
       prefix: None,
       suffix: None,
     }),
@@ -45,7 +45,7 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
           offset_to_close: !0,
         },
         span,
-        lexeme: Some(best.lexeme),
+        lexeme: best.lexeme,
         prefix: None,
         suffix: None,
       });
@@ -59,7 +59,7 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
       lexer.add_token(rt::Token {
         kind: rt::Kind::Ident(core),
         span,
-        lexeme: Some(best.lexeme),
+        lexeme: best.lexeme,
         prefix,
         suffix,
       });
@@ -107,7 +107,7 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
             .collect(),
         },
         span,
-        lexeme: Some(best.lexeme),
+        lexeme: best.lexeme,
         prefix,
         suffix,
       };
@@ -137,7 +137,7 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
 
       lexer.add_token(rt::Token {
         span,
-        lexeme: Some(best.lexeme),
+        lexeme: best.lexeme,
         prefix,
         suffix,
         kind: rt::Kind::Quoted {

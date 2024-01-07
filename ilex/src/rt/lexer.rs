@@ -152,7 +152,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
         self.add_token(rt::Token {
           kind: rt::Kind::Close { offset_to_open },
           span,
-          lexeme: None,
+          lexeme: close.lexeme.any(),
           prefix: None,
           suffix: None,
         });
@@ -177,28 +177,25 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
 
   /// Adds new unexpected tokens, starting from `start`. This may generate
   /// multiple tokens, since it does not include whitespace in them.
-  pub fn add_unexpected(&mut self, mut start: usize) {
-    let mut end = start;
+  pub fn add_unexpected(&mut self, mut start: usize, end: usize) {
+    let mut idx = start;
     // Can't use a for loop, since that takes ownership of the iterator
     // and that makes the self. calls below a problem.
-    while let Some(c) = self.text()[end..self.cursor].chars().next() {
+    while let Some(c) = self.text()[idx..end].chars().next() {
       if c.is_whitespace() {
-        if end > start {
-          let span = self.mksp(start..end);
-          // Don't use add_token, since that drains the comment queue, and we don't
-          // want to attach comments to unexpecteds.
-          self.tokens.push(rt::Token {
-            kind: rt::Kind::Unexpected,
-            span,
-            lexeme: None,
-            prefix: None,
-            suffix: None,
-          });
+        if idx > start {
+          let span = self.mksp(start..idx);
+          self.report().builtins().unexpected_token(span);
         }
-        start = end + c.len_utf8();
+        start = idx + c.len_utf8();
       }
 
-      end += c.len_utf8();
+      idx += c.len_utf8();
+    }
+
+    if idx > start {
+      let span = self.mksp(start..idx);
+      self.report().builtins().unexpected_token(span);
     }
   }
 
@@ -206,7 +203,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
     self.add_token(rt::Token {
       kind: rt::Kind::Eof,
       span: self.eof,
-      lexeme: None,
+      lexeme: Lexeme::eof().cast(),
       prefix: None,
       suffix: None,
     });

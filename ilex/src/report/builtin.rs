@@ -11,7 +11,6 @@ use byteyarn::yarn;
 use byteyarn::YarnBox;
 
 use crate::file::Context;
-use crate::file::Spanned;
 use crate::report::Diagnostic;
 use crate::report::Report;
 use crate::report::ToLoc;
@@ -45,7 +44,22 @@ impl Builtins<'_> {
       unexpected_in.into().for_user_diagnostic(spec, &self.0.ctx),
     ));
 
-    non_printable_note(&self.0.ctx, found, diagnostic)
+    non_printable_note(found, diagnostic)
+      .at(at)
+      .reported_at(Location::caller())
+  }
+
+  #[track_caller]
+  pub(crate) fn unexpected_token(&self, at: impl ToLoc) -> Diagnostic {
+    let at = at.to_loc(&self.0.ctx);
+    let found = at.text(&self.0.ctx);
+
+    let diagnostic = self.0.error(f!(
+      "unrecognized character{}",
+      if found.chars().count() == 1 { "" } else { "s" },
+    ));
+
+    non_printable_note(found.into(), diagnostic)
       .at(at)
       .reported_at(Location::caller())
   }
@@ -77,8 +91,7 @@ impl Builtins<'_> {
         "maybe you meant to include a space here",
       );
 
-    non_printable_note(&self.0.ctx, found.into(), diagnostic)
-      .reported_at(Location::caller())
+    non_printable_note(found.into(), diagnostic).reported_at(Location::caller())
   }
 
   /// Generates an "expected one of these tokens but got something else"
@@ -103,8 +116,7 @@ impl Builtins<'_> {
       ))
       .saying(at, f!("expected {alts}"));
 
-    non_printable_note(&self.0.ctx, found, diagnostic)
-      .reported_at(Location::caller())
+    non_printable_note(found, diagnostic).reported_at(Location::caller())
   }
 
   /// Generates an "unclosed delimiter" diagnostic, for when a delimiter is
@@ -184,16 +196,11 @@ impl Builtins<'_> {
   }
 }
 
-fn non_printable_note(
-  ctx: &Context,
-  found: Expected,
-  diagnostic: Diagnostic,
-) -> Diagnostic {
+fn non_printable_note(found: Expected, diagnostic: Diagnostic) -> Diagnostic {
   // Check to see if any of the characters are outside of the ASCII printable
   // range.
   let literal = match &found {
     Expected::Literal(y) => y,
-    Expected::Token(token::Any::Unexpected(span, ..)) => span.text(ctx),
     _ => return diagnostic,
   };
 

@@ -51,23 +51,19 @@ pub trait Token<'lex>:
   /// The spec that lexed this token.
   fn spec(self) -> &'lex Spec;
 
-  /// Returns this token's [`Lexeme`], unless it's an [`Any::Unexpected`],
-  /// in which case it returns `None`.
-  fn lexeme(self) -> Option<Lexeme<Self::Rule>>;
+  /// Returns this token's [`Lexeme`].
+  fn lexeme(self) -> Lexeme<Self::Rule>;
 
   /// The rule inside of [`Token::spec()`] that this token refers to.
+  ///
+  /// Returns `None` for [`Eof`].
   fn rule(self) -> Option<&'lex Self::Rule> {
-    let lexeme = self.lexeme()?;
+    let lexeme = self.lexeme();
     if lexeme.any() == Lexeme::eof().any() {
       return None;
     }
 
     Some(self.spec().rule(lexeme))
-  }
-
-  /// Checks whether this token has a particular [`Lexeme`].
-  fn is(self, lexeme: Lexeme<rule::Any>) -> bool {
-    self.lexeme().map(Lexeme::any) == Some(lexeme)
   }
 
   // /// Returns this token's raw [`LexerId`], if it has one.
@@ -85,7 +81,6 @@ pub trait Token<'lex>:
 #[derive(Copy, Clone)]
 #[allow(missing_docs)]
 pub enum Any<'lex> {
-  Unexpected(Span, &'lex Spec),
   Eof(Eof<'lex>),
   Keyword(Keyword<'lex>),
   Bracket(Bracket<'lex>),
@@ -97,21 +92,19 @@ pub enum Any<'lex> {
 impl<'lex> Token<'lex> for Any<'lex> {
   type Rule = rule::Any;
 
-  fn lexeme(self) -> Option<Lexeme<Self::Rule>> {
+  fn lexeme(self) -> Lexeme<Self::Rule> {
     match self {
-      Self::Unexpected(..) => None,
-      Self::Eof(tok) => tok.lexeme().map(Lexeme::any),
-      Self::Bracket(tok) => tok.lexeme().map(Lexeme::any),
-      Self::Keyword(tok) => tok.lexeme().map(Lexeme::any),
-      Self::Ident(tok) => tok.lexeme().map(Lexeme::any),
-      Self::Digital(tok) => tok.lexeme().map(Lexeme::any),
-      Self::Quoted(tok) => tok.lexeme().map(Lexeme::any),
+      Self::Eof(tok) => tok.lexeme().any(),
+      Self::Bracket(tok) => tok.lexeme().any(),
+      Self::Keyword(tok) => tok.lexeme().any(),
+      Self::Ident(tok) => tok.lexeme().any(),
+      Self::Digital(tok) => tok.lexeme().any(),
+      Self::Quoted(tok) => tok.lexeme().any(),
     }
   }
 
   fn spec(self) -> &'lex Spec {
     match self {
-      Self::Unexpected(_, spec) => spec,
       Self::Eof(tok) => tok.spec,
       Self::Bracket(tok) => tok.spec,
       Self::Keyword(tok) => tok.spec,
@@ -131,7 +124,6 @@ impl<'lex> Any<'lex> {
   /// The bare name shown for whatever this token is in `fmt::Debug`.
   pub(crate) fn debug_name(self) -> &'static str {
     match self {
-      Any::Unexpected(..) => "Unexpected",
       Any::Eof(_) => "Eof",
       Any::Keyword(_) => "Keyword",
       Any::Bracket(_) => "Bracket",
@@ -211,7 +203,6 @@ impl<'lex> Any<'lex> {
 impl fmt::Debug for Any<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
-      Self::Unexpected(span, ..) => write!(f, "token::Unexpected({span:?})"),
       Self::Eof(tok) => write!(f, "token::{tok:?}"),
       Self::Keyword(tok) => write!(f, "token::{tok:?}"),
       Self::Ident(tok) => write!(f, "token::{tok:?}"),
@@ -229,7 +220,6 @@ impl fmt::Debug for Any<'_> {
 impl Spanned for Any<'_> {
   fn span(&self, ctx: &Context) -> Span {
     match self {
-      Self::Unexpected(span, ..) => *span,
       Self::Eof(tok) => tok.span(ctx),
       Self::Keyword(tok) => tok.span(ctx),
       Self::Bracket(tok) => tok.span(ctx),
@@ -259,8 +249,8 @@ impl<'lex> Token<'lex> for Eof<'lex> {
     self.spec
   }
 
-  fn lexeme(self) -> Option<Lexeme<Self::Rule>> {
-    Some(Lexeme::eof())
+  fn lexeme(self) -> Lexeme<Self::Rule> {
+    Lexeme::eof()
   }
 
   #[doc(hidden)]
@@ -314,8 +304,8 @@ impl<'lex> Token<'lex> for Keyword<'lex> {
     self.spec
   }
 
-  fn lexeme(self) -> Option<Lexeme<Self::Rule>> {
-    Some(self.lexeme)
+  fn lexeme(self) -> Lexeme<Self::Rule> {
+    self.lexeme
   }
 
   #[doc(hidden)]
@@ -395,8 +385,8 @@ impl<'lex> Token<'lex> for Bracket<'lex> {
     self.spec
   }
 
-  fn lexeme(self) -> Option<Lexeme<Self::Rule>> {
-    Some(self.lexeme)
+  fn lexeme(self) -> Lexeme<Self::Rule> {
+    self.lexeme
   }
 
   #[doc(hidden)]
@@ -488,8 +478,8 @@ impl<'lex> Token<'lex> for Ident<'lex> {
     self.spec
   }
 
-  fn lexeme(self) -> Option<Lexeme<Self::Rule>> {
-    self.tok.lexeme.map(Lexeme::cast)
+  fn lexeme(self) -> Lexeme<Self::Rule> {
+    self.tok.lexeme.cast()
   }
 
   #[doc(hidden)]
@@ -653,18 +643,15 @@ impl<'lex> Digital<'lex> {
       report.builtins().unexpected(
         self.spec,
         "extra digits",
-        self.lexeme().unwrap(),
+        self.lexeme(),
         extra,
       );
     }
 
     for extra in self.exponents() {
-      report.builtins().unexpected(
-        self.spec,
-        "exponent",
-        self.lexeme().unwrap(),
-        extra,
-      );
+      report
+        .builtins()
+        .unexpected(self.spec, "exponent", self.lexeme(), extra);
     }
 
     self.to_ints(ctx, range, report).drain(..).next().unwrap()
@@ -910,8 +897,8 @@ impl<'lex> Token<'lex> for Digital<'lex> {
     self.spec
   }
 
-  fn lexeme(self) -> Option<Lexeme<Self::Rule>> {
-    self.tok.lexeme.map(Lexeme::cast)
+  fn lexeme(self) -> Lexeme<Self::Rule> {
+    self.tok.lexeme.cast()
   }
 
   #[doc(hidden)]
@@ -1117,8 +1104,8 @@ impl<'lex> Token<'lex> for Quoted<'lex> {
     self.spec
   }
 
-  fn lexeme(self) -> Option<Lexeme<Self::Rule>> {
-    self.tok.lexeme.map(Lexeme::cast)
+  fn lexeme(self) -> Lexeme<Self::Rule> {
+    self.tok.lexeme.cast()
   }
 
   #[doc(hidden)]
@@ -1172,7 +1159,7 @@ impl<'lex> Token<'lex> for Never {
     self.from_nothing_anything()
   }
 
-  fn lexeme(self) -> Option<Lexeme<Self::Rule>> {
+  fn lexeme(self) -> Lexeme<Self::Rule> {
     self.from_nothing_anything()
   }
 
@@ -1202,12 +1189,11 @@ impl From<Never> for Any<'_> {
 impl<'lex> Any<'lex> {
   pub(crate) fn to_yarn(self, ctx: &Context) -> YarnBox<'lex, str> {
     let spec = self.spec();
-    if let Some(name) = self.lexeme().and_then(|l| spec.rule_name(l)) {
+    if let Some(name) = spec.rule_name(self.lexeme()) {
       return name.to_box();
     }
 
     let (pre, suf, kind) = match self {
-      Any::Unexpected(sp, _) => return yarn!("`{}`", sp.text(ctx)),
       Any::Eof(_) => return yarn!("<eof>"),
       Any::Keyword(tok) => return yarn!("`{}`", tok.text(ctx)),
       Any::Bracket(d) => {
