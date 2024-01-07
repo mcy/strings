@@ -885,17 +885,18 @@ impl<'l> Finder<'l, '_> {
           });
         }
 
+
         // Even if there are more digits to follow, we are done. This means
         // we got something like `123.`
         if digit_data.blocks.len() as u32 + 1 == digits.max_chunks {
           break;
         }
 
+        digits_this_block = 0;
         digit_data
           .blocks
           .push(block_start..self.cursor() - rule.point.len());
 
-        digits_this_block = 0;
         block_start = self.cursor();
         continue;
       }
@@ -921,27 +922,26 @@ impl<'l> Finder<'l, '_> {
         )
       });
       return None;
-    } else {
+    }
+
+    if self.lexer.text()[..self.cursor()].ends_with(rule.point.as_str()) {
       // This means we parsed something like `1.2.`. We need to give back
       // that extra dot.
       self.sub_cursor -= rule.point.len();
     }
 
-    if (digit_data.blocks.len() as u32) < digits.min_chunks {
+    if (dbg!(&digit_data.blocks).len() as u32) < dbg!(digits.min_chunks) {
       self.diagnose(|this| {
         this
           .lexer
           .report()
           .error(f!(
-            "expected at least {} point{}, but saw only {}",
+            "expected at least {} `{}`{}",
             digits.min_chunks - 1,
-            if digits.min_chunks == 2 { "s" } else { "" },
-            digit_data.blocks.len() - 1,
+            rule.point,
+            if digits.min_chunks > 2 { "s" } else { "" },
           ))
-          .saying(
-            Loc::new(this.lexer.file(), start..this.cursor()),
-            f!("expected at least three `{}`", rule.point),
-          )
+          .at(Loc::new(this.lexer.file(), start..this.cursor()))
       });
     }
 

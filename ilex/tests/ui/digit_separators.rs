@@ -3,7 +3,7 @@ use ilex::testing;
 use ilex::Context;
 
 #[test]
-fn separator_positions() {
+fn digit_separators() {
   let ctx = Context::new();
   let report = ctx.new_report();
   let _ = ctx
@@ -19,7 +19,7 @@ no_exp@_123_._456_e_789_._012_
     )
     .lex(Spec::get().spec(), &report);
 
-  testing::check_report(&report, "tests/ui/goldens/separator_positions.stdout");
+  testing::check_report(&report, "tests/ui/goldens/digit_separators.stdout");
 }
 
 ilex::spec! {
