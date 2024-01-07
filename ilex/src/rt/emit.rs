@@ -6,17 +6,19 @@ use crate::token::Content;
 use super::lexer::Lexer;
 
 /// Takes a match and reifies it with spans.
-pub fn emit(lexer: &mut Lexer, mut best: find::Match) {
+pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
   let start = lexer.cursor();
-  lexer.advance(best.full_len);
+  assert!(start == best.full.start);
+
+  lexer.advance(best.full.end - best.full.start);
   let span = lexer.mksp(start..lexer.cursor());
 
   // Commit all of the diagnostics.
-  for d in best.diagnostics.drain(..) {
-    d.commit();
-  }
-
-  if best.not_ok {
+  if !best.diagnostics.is_empty() {
+    for d in best.diagnostics.drain(..) {
+      d.commit();
+    }
+    lexer.advance(best.skip.end - best.skip.start);
     return;
   }
 
@@ -32,10 +34,10 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match) {
     rule::Any::Bracket(_) => {
       lexer.push_closer(
         best.lexeme.cast(),
-        match best.data {
-          Some(find::MatchData::CloseDelim(close)) => close,
-          _ => bug!("incorrect match data in Bracket"),
-        },
+        best
+          .delims
+          .unwrap_or_else(|| bug!("incorrect match data in Bracket"))
+          .1,
       );
 
       lexer.add_token(rt::Token {
@@ -52,7 +54,7 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match) {
     rule::Any::Comment(_) => lexer.add_comment(span),
 
     rule::Any::Ident(_) => {
-      let (core, prefix, suffix) = best.compute_affix_spans(lexer, start);
+      let (core, prefix, suffix) = best.compute_affix_spans(lexer);
       let core = lexer.mksp(core);
       lexer.add_token(rt::Token {
         kind: rt::Kind::Ident(core),
@@ -69,14 +71,7 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match) {
         _ => bug!("incorrect match data in Digital"),
       };
 
-      let affix_start = start
-        + blocks[0]
-          .sign
-          .as_ref()
-          .map(|(r, _)| r.end - r.start)
-          .unwrap_or(0);
-
-      let (_, prefix, suffix) = best.compute_affix_spans(lexer, affix_start);
+      let (_, prefix, suffix) = best.compute_affix_spans(lexer);
 
       let (mant, exps) = blocks.split_first().unwrap();
       let tok = rt::Token {
@@ -120,7 +115,7 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match) {
     }
 
     rule::Any::Quoted(_) => {
-      let (core, prefix, suffix) = best.compute_affix_spans(lexer, start);
+      let (core, prefix, suffix) = best.compute_affix_spans(lexer);
 
       let (unquoted, content) = match best.data {
         Some(find::MatchData::Quote { unquoted, content }) => {
@@ -153,4 +148,6 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match) {
       });
     }
   }
+
+  lexer.advance(best.skip.end - best.skip.start);
 }

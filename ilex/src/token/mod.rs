@@ -1211,11 +1211,18 @@ impl<'lex> Any<'lex> {
       Any::Eof(_) => return yarn!("<eof>"),
       Any::Keyword(tok) => return yarn!("`{}`", tok.text(ctx)),
       Any::Bracket(d) => {
-        return yarn!("`{} .. {}`", d.open().text(ctx), d.close().text(ctx));
+        return yarn!("`{} ... {}`", d.open().text(ctx), d.close().text(ctx));
+      }
+
+      Any::Quoted(tok) => {
+        let pre = tok.prefix().map(|s| s.text(ctx)).unwrap_or("");
+        let suf = tok.suffix().map(|s| s.text(ctx)).unwrap_or("");
+        let open = tok.open().text(ctx);
+        let close = tok.close().text(ctx);
+        return yarn!("`{pre}{open}...{close}{suf}`");
       }
 
       Any::Ident(tok) => (tok.prefix(), tok.suffix(), "identifier"),
-      Any::Quoted(tok) => (tok.prefix(), tok.suffix(), "string"),
       Any::Digital(tok) => (tok.prefix(), tok.suffix(), "number"),
     };
 
@@ -1223,8 +1230,8 @@ impl<'lex> Any<'lex> {
       (Some(pre), Some(suf)) => {
         yarn!("`{pre}`-prefixed, `{suf}`-suffixed {kind}")
       }
-      (Some(pre), None) => yarn!("`{pre}`-prefixed, {kind}"),
-      (None, Some(suf)) => yarn!("`{suf}`-suffixed {kind}"),
+      (Some(pre), None) => yarn!("`{pre}`-{kind}"),
+      (None, Some(suf)) => yarn!("`{suf}`-{kind}"),
       (None, None) => yarn!("`{kind}`"),
     }
   }

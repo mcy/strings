@@ -20,6 +20,8 @@ use crate::spec::Lexeme;
 use crate::spec::Spec;
 use crate::token;
 
+use super::Loc;
+
 /// A wrapper over [`Report`] for generating diagnostics.
 ///
 /// See [`Report::builtins()`].
@@ -48,6 +50,7 @@ impl Builtins<'_> {
       .reported_at(Location::caller())
   }
 
+  #[track_caller]
   pub(crate) fn extra_chars<'a>(
     &self,
     spec: &Spec,
@@ -60,11 +63,19 @@ impl Builtins<'_> {
     let diagnostic = self
       .0
       .error(f!(
-        "unexpected extra character{} in {}",
+        "extraneous character{} after {}",
         if found.chars().count() == 1 { "" } else { "s" },
         unexpected_in.into().for_user_diagnostic(spec, &self.0.ctx),
       ))
-      .saying(at, "you may have meant to add a space here");
+      .at(at)
+      .remark(
+        Loc {
+          file: at.file,
+          start: at.start.saturating_sub(1),
+          end: at.start.saturating_add(1),
+        },
+        "maybe you meant to include a space here",
+      );
 
     non_printable_note(&self.0.ctx, found.into(), diagnostic)
       .reported_at(Location::caller())

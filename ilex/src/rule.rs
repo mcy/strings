@@ -1,7 +1,6 @@
 //! Lexer rules.
 
 use core::fmt;
-use std::mem;
 use std::ops::Range;
 use std::ops::RangeBounds;
 
@@ -205,11 +204,21 @@ impl Bracket {
   ///
   /// To specify the exact syntax from C++, you would write
   /// `Bracket::cxx_raw_string(Ident::new(), "R\"", '(', ')', '"')`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `ident` has any affixes.
+  #[track_caller]
   pub fn cxx_raw_string(
     ident: Ident,
     (open_start, open_end): (impl Into<Yarn>, impl Into<Yarn>),
     (close_start, close_end): (impl Into<Yarn>, impl Into<Yarn>),
   ) -> Self {
+    assert!(
+      ident.affixes.prefixes.is_empty() && ident.affixes.prefixes.is_empty(),
+      "Bracket::cxx_raw_string() requires an identifier with no affixes"
+    );
+
     Self(BracketKind::CxxLike {
       ident_rule: ident,
       open: (open_start.into(), open_end.into()),
@@ -273,17 +282,31 @@ impl TryFrom<Any> for Bracket {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(super) struct Affixes {
-  pub prefixes: Vec<Yarn>,
-  pub suffixes: Vec<Yarn>,
-  pub has_prefixes: bool,
-  pub has_suffixes: bool,
+  prefixes: Vec<Yarn>,
+  suffixes: Vec<Yarn>,
+}
+
+impl Affixes {
+  const EMPTY: &[Yarn] = &[Yarn::new("")];
+  pub fn prefixes(&self) -> &[Yarn] {
+    if self.prefixes.is_empty() {
+      return Self::EMPTY;
+    }
+    &self.prefixes
+  }
+  pub fn suffixes(&self) -> &[Yarn] {
+    if self.suffixes.is_empty() {
+      return Self::EMPTY;
+    }
+    &self.suffixes
+  }
 }
 
 impl fmt::Display for Affixes {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    if self.has_prefixes {
+    if !self.prefixes.is_empty() {
       for (i, pre) in self.prefixes.iter().enumerate() {
         if i != 0 {
           f.write_str(", ")?;
@@ -294,8 +317,8 @@ impl fmt::Display for Affixes {
       f.write_str("prefixed")?;
     }
 
-    if self.has_suffixes {
-      if self.has_prefixes {
+    if !self.suffixes.is_empty() {
+      if !self.prefixes.is_empty() {
         f.write_str(", ")?;
       }
 
@@ -309,25 +332,13 @@ impl fmt::Display for Affixes {
       f.write_str("suffixed")?;
     }
 
-    if self.has_prefixes || self.has_suffixes {
+    if !self.prefixes.is_empty() || !self.suffixes.is_empty() {
       f.write_str(" ")?;
     }
 
     Ok(())
   }
 }
-
-impl Default for Affixes {
-  fn default() -> Self {
-    Self {
-      prefixes: vec!["".into()],
-      suffixes: vec!["".into()],
-      has_prefixes: false,
-      has_suffixes: false,
-    }
-  }
-}
-
 macro_rules! affixes {
   () => {
     /// Adds a prefix for this rule.
@@ -354,9 +365,6 @@ macro_rules! affixes {
       mut self,
       prefixes: impl IntoIterator<Item = Y>,
     ) -> Self {
-      if !mem::replace(&mut self.affixes.has_prefixes, true) {
-        self.affixes.prefixes.clear();
-      }
       self
         .affixes
         .prefixes
@@ -372,9 +380,6 @@ macro_rules! affixes {
       mut self,
       suffixes: impl IntoIterator<Item = Y>,
     ) -> Self {
-      if !mem::replace(&mut self.affixes.has_suffixes, true) {
-        self.affixes.suffixes.clear();
-      }
       self
         .affixes
         .suffixes

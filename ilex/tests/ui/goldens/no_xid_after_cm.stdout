@@ -1,8 +1,9 @@
-error: unexpected extra characters in `--null ... null`
+error: extraneous characters after `--null ... null`
  --> <input>:1:51
   |
 1 | --null some stuff null --null some more stuff nullable
-  |                                                   ^^^^ you may have meant to add a space here
+  |                                                   ^^^^
+  |                                                  -- help: maybe you meant to include a space here
   |
 
 error: aborting due to previous error

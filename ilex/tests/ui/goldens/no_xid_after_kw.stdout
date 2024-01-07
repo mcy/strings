@@ -1,0 +1,9 @@
+error: extraneous characters after `null`
+ --> <input>:1:10
+  |
+1 | null nullable
+  |          ^^^^
+  |         -- help: maybe you meant to include a space here
+  |
+
+error: aborting due to previous error

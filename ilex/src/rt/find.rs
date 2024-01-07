@@ -4,7 +4,6 @@ use std::ops::Range;
 use format_args as f;
 
 use byteyarn::yarn;
-use byteyarn::Yarn;
 use byteyarn::YarnBox;
 use unicode_xid::UnicodeXID;
 
@@ -21,9 +20,11 @@ use crate::token::Sign;
 use crate::rt::lexer::Lexer;
 
 /// A raw match from `Spec::best_len()`.
-pub struct Match {
-  pub prefix_len: usize,
-  pub full_len: usize,
+pub struct Match<'a> {
+  pub prefix: Range<usize>,
+  pub full: Range<usize>,
+  /// Extra characters to skip after this rule.
+  pub skip: Range<usize>,
 
   /// The lexeme of the rule we matched.
   pub lexeme: Lexeme<rule::Any>,
@@ -31,6 +32,7 @@ pub struct Match {
   pub data: Option<MatchData>,
   /// The lengths of the affixes on the parsed chunk.
   pub affixes: Option<Affixes>,
+  pub delims: Option<(YarnBox<'a, str>, YarnBox<'a, str>)>,
 
   /// Speculative diagnostics for this match, assuming it is picked.
   pub diagnostics: Vec<Diagnostic>,
@@ -38,16 +40,14 @@ pub struct Match {
   pub not_ok: bool,
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 pub struct Affixes {
-  pub pre: usize,
-  pub suf: usize,
+  pub pre: Range<usize>,
+  pub suf: Range<usize>,
 }
 
 // Extra data from a `Match`.
 pub enum MatchData {
-  /// Indicates that a close delimiter may be incoming.
-  CloseDelim(Yarn),
   /// Digit data, namely ranges of digits.
   Digits(Vec<DigitData>),
   /// Quote data, namely the "unquoted" range as well as the content and
@@ -67,20 +67,51 @@ pub struct DigitData {
   pub which_exp: usize,
 }
 
-impl Match {
+impl Match<'_> {
   pub fn compute_affix_spans(
     &self,
     lexer: &mut Lexer,
-    start: usize,
   ) -> (Range<usize>, Option<Span>, Option<Span>) {
-    let Affixes { pre, suf } = self.affixes.unwrap_or_default();
-    let end = lexer.cursor();
+    let Affixes { pre, suf } = self.affixes.clone().unwrap_or_default();
+    let prefix = (pre.start < pre.end).then(|| lexer.mksp(pre.clone()));
+    let suffix = (suf.start < suf.end).then(|| lexer.mksp(suf.clone()));
+    (pre.end..suf.start, prefix, suffix)
+  }
 
-    let core_start = start + pre;
-    let core_end = end - suf;
-    let prefix = (pre > 0).then(|| lexer.mksp(start..core_start));
-    let suffix = (suf > 0).then(|| lexer.mksp(core_end..end));
-    (core_start..core_end, prefix, suffix)
+  pub fn to_yarn<'a>(&self, lexer: &'a Lexer) -> YarnBox<'a, str> {
+    if let Some(name) = lexer.spec().rule_name(self.lexeme) {
+      return name.to_box();
+    }
+
+    let text = lexer.text();
+    let Affixes { pre, suf } = self.affixes.clone().unwrap_or_default();
+    let pre = &text[pre];
+    let suf = &text[suf];
+
+    let kind = match lexer.spec().rule(self.lexeme) {
+      rule::Any::Keyword(_) => return yarn!("`{}`", &text[self.full.clone()]),
+      rule::Any::Comment(rule::Comment(rule::CommentKind::Line(open))) => {
+        return yarn!("`{open} ...`")
+      }
+      rule::Any::Bracket(_) | rule::Any::Comment(_) => {
+        let (open, close) = self.delims.clone().unwrap();
+        return yarn!("`{open} ... {close}`");
+      }
+      rule::Any::Quoted(_) => {
+        let (open, close) = self.delims.clone().unwrap();
+        return yarn!("`{pre}{open}...{close}{suf}`");
+      }
+
+      rule::Any::Ident(_) => "identifier",
+      rule::Any::Digital(_) => "number",
+    };
+
+    match (pre, suf) {
+      ("", "") => yarn!("`{kind}`"),
+      ("", suf) => yarn!("`{suf}`-{kind}"),
+      (pre, "") => yarn!("`{pre}`-{kind}"),
+      (pre, suf) => yarn!("`{pre}`-prefixed, `{suf}`-suffixed {kind}"),
+    }
   }
 }
 
@@ -88,24 +119,92 @@ impl Match {
 ///
 /// It does so by lexing all tokens that could possibly start at `src`, and
 /// then choosing the largest match, with some tie-breaking options.
-pub fn find(lexer: &Lexer) -> Option<Match> {
-  let choices = lexer.spec().possible_rules(lexer.rest());
+pub fn find(lexer: &Lexer) -> Option<Match<'static>> {
+  find0(lexer, 0, false).map(|found| Match {
+    delims: found
+      .delims
+      .map(|(a, b)| (a.immortalize(), b.immortalize())),
+    ..found
+  })
+}
+
+fn find0<'a>(
+  lexer: &'a Lexer,
+  start: usize,
+  recursive: bool,
+) -> Option<Match<'a>> {
+  let choices = lexer.spec().possible_rules(&lexer.rest()[start..]);
 
   let mut best = None::<Match>;
   for (prefix, action) in choices {
-    let found = Finder {
+    let mut found = Finder {
       lexer,
       prefix,
       action: *action,
-      sub_cursor: 0,
+      sub_cursor: start,
       diagnostics: Vec::new(),
       not_ok: false,
-      prev_ok: best.as_ref().is_some_and(|b| !b.not_ok),
+      // In recursive mode, we don't want to trigger any diagnostics.
+      prev_ok: !recursive && best.as_ref().is_some_and(|b| !b.not_ok),
     }
     .take_any();
 
-    if found.full_len == 0 {
+    if found.full.start == found.full.end {
       continue;
+    }
+
+    if let Some(len) = expect_non_xid(lexer, found.full.end) {
+      let d = lexer.report().builtins().extra_chars(
+        lexer.spec(),
+        Expected::Name(found.to_yarn(lexer)),
+        Loc::new(lexer.file(), found.full.end..found.full.end + len),
+      );
+      found.diagnostics.push(d.speculate());
+
+      found.skip.end += len;
+    } else if !recursive && !found.not_ok && found.diagnostics.is_empty() {
+      // For each token going backwards until we hit an XID continue, look for
+      // another best-match.
+      //
+      // Matching a single token without doing this is O(log lexemes). This
+      // instead slightly worsens performance by a factor of the longest non-XID
+      // suffix of a token. However, there is special dispensation for quoteds,
+      // in that we stop searching once we exhaust the suffix; this helps keep
+      // this check from running the lexer inside of a string, which would be
+      // problematic. We exclude comments from this check altogether for
+      // the same reason.
+
+      let range = match lexer.spec().rule(action.lexeme) {
+        rule::Any::Quoted(..) => found.affixes.clone().unwrap_or_default().suf,
+        rule::Any::Comment(..) => 0..0,
+        _ => found.full.clone(),
+      };
+
+      let search_in = &lexer.text()[range];
+      let mut offset = found.full.end - found.full.start;
+      for c in search_in.chars().take_while(|c| !c.is_xid_continue()) {
+        offset -= c.len_utf8();
+
+        if let Some(extra) = find0(lexer, offset, true) {
+          if extra.full.end <= found.full.end {
+            continue;
+          }
+
+          found.diagnostics.push(
+            lexer
+              .report()
+              .builtins()
+              .extra_chars(
+                lexer.spec(),
+                Expected::Name(found.to_yarn(lexer)),
+                Loc::new(lexer.file(), found.full.end..extra.full.end),
+              )
+              .speculate(),
+          );
+          found.skip.end = extra.full.end;
+          break;
+        }
+      }
     }
 
     if let Some(best) = &mut best {
@@ -120,8 +219,15 @@ pub fn find(lexer: &Lexer) -> Option<Match> {
             |r| matches!(lexer.spec().rule(r), &rule::Any::Comment(..));
           bool::cmp(&is_comment(best.lexeme), &is_comment(found.lexeme))
         })
-        .then(usize::cmp(&best.full_len, &found.full_len))
-        .then(usize::cmp(&best.prefix_len, &found.prefix_len));
+        .then(usize::cmp(&best.full.end, &found.full.end))
+        .then(
+          // If the rules are equal in length, prefer one without diagnostics.
+          bool::cmp(
+            &best.diagnostics.is_empty(),
+            &found.diagnostics.is_empty(),
+          ),
+        )
+        .then(usize::cmp(&best.prefix.end, &found.prefix.end));
 
       if cmp.is_lt() {
         *best = found;
@@ -137,9 +243,9 @@ pub fn find(lexer: &Lexer) -> Option<Match> {
 /// A wrapper over uncommitted changes to a lexer.
 ///
 /// One of these is generated for each prefix we want to "attempt".
-pub struct Finder<'a, 'ctx> {
-  lexer: &'a Lexer<'a, 'a, 'ctx>,
-  prefix: &'a str,
+pub struct Finder<'l, 'ctx> {
+  lexer: &'l Lexer<'l, 'l, 'ctx>,
+  prefix: &'l str,
   action: Action,
   sub_cursor: usize,
   diagnostics: Vec<Diagnostic>,
@@ -147,7 +253,7 @@ pub struct Finder<'a, 'ctx> {
   prev_ok: bool,
 }
 
-impl Finder<'_, '_> {
+impl<'l> Finder<'l, '_> {
   /// Like `Lexer::rest()`, but accounting for the speculative cursor.
   fn rest(&self) -> &str {
     &self.lexer.rest()[self.sub_cursor..]
@@ -249,92 +355,75 @@ impl Finder<'_, '_> {
     Some((idx, &prefixes[idx]))
   }
 
-  fn take_any(mut self) -> Match {
-    let (mut affixes, data) = match self.lexer.spec().rule(self.action.lexeme) {
-      rule::Any::Keyword(..) => {
-        self.sub_cursor += self.prefix.len();
-        (None, None)
-      }
+  fn take_any(mut self) -> Match<'l> {
+    let start = self.cursor();
 
-      rule::Any::Bracket(delimiter) => {
-        let data = self.take_open_delim(delimiter).unwrap_or(0..0);
-        (
-          None,
-          Some(MatchData::CloseDelim(
-            make_close_delim(delimiter, &self.lexer.text()[data]).immortalize(),
-          )),
-        )
-      }
-
-      rule::Any::Comment(rule::Comment(rule::CommentKind::Line(prefix))) => {
-        self.take_line_comment(prefix);
-        (None, None)
-      }
-
-      rule::Any::Comment(rule::Comment(rule::CommentKind::Block(bracket))) => {
-        self.take_block_comment(bracket);
-        (None, None)
-      }
-
-      rule::Any::Ident(ident) => {
-        let aff = self.take_ident(ident, Some(self.action.prefix_len as usize));
-
-        if let Some(aff) = &aff {
-          if self.sub_cursor == aff.pre + aff.suf {
-            self.diagnose(|this| {
-              this
-                .lexer
-                .report()
-                .builtins()
-                .expected(
-                  this.lexer.spec(),
-                  [this.action.lexeme],
-                  &this.lexer.text()[this.lexer.cursor()..this.cursor()],
-                  Loc::new(
-                    this.lexer.file(),
-                    this.lexer.cursor()..this.cursor(),
-                  ),
-                )
-                .note("this appears to be an empty identifier")
-            });
-          }
+    let (affixes, data, delims) =
+      match self.lexer.spec().rule(self.action.lexeme) {
+        rule::Any::Keyword(..) => {
+          self.sub_cursor += self.prefix.len();
+          (None, None, None)
         }
 
-        (aff, None)
-      }
+        rule::Any::Bracket(delimiter) => {
+          (None, None, self.take_open_delim(delimiter))
+        }
 
-      rule::Any::Digital(num) => self
-        .take_digital(num, self.action.prefix_len as usize)
-        .map(|(a, d)| (Some(a), Some(d)))
-        .unwrap_or_default(),
+        rule::Any::Comment(rule::Comment(rule::CommentKind::Line(prefix))) => {
+          self.take_line_comment(prefix);
+          (None, None, None)
+        }
 
-      rule::Any::Quoted(quote) => self
-        .take_quote(quote, self.action.prefix_len as usize)
-        .map(|(a, d)| (Some(a), Some(d)))
-        .unwrap_or_default(),
-    };
+        rule::Any::Comment(rule::Comment(rule::CommentKind::Block(
+          bracket,
+        ))) => (None, None, self.take_block_comment(bracket)),
 
-    if let Some(len) = expect_non_xid(self.lexer, self.sub_cursor) {
-      self.diagnose(|this| {
-        this.lexer.report().builtins().extra_chars(
-          this.lexer.spec(),
-          this.action.lexeme,
-          Loc::new(this.lexer.file(), this.cursor()..this.cursor() + len),
-        )
-      });
+        rule::Any::Ident(ident) => {
+          let aff =
+            self.take_ident(ident, Some(self.action.prefix_len as usize));
 
-      self.sub_cursor += len;
-      if let Some(Affixes { suf, .. }) = &mut affixes {
-        // Lengthen the suffix if we saw some extraneous characters.
-        *suf += len;
-      }
-    }
+          if let Some(aff) = &aff {
+            if aff.pre.end == aff.suf.start {
+              self.diagnose(|this| {
+                this
+                  .lexer
+                  .report()
+                  .builtins()
+                  .expected(
+                    this.lexer.spec(),
+                    [this.action.lexeme],
+                    &this.lexer.text()[this.lexer.cursor()..this.cursor()],
+                    Loc::new(
+                      this.lexer.file(),
+                      this.lexer.cursor()..this.cursor(),
+                    ),
+                  )
+                  .note("this appears to be an empty identifier")
+              });
+            }
+          }
+
+          (aff, None, None)
+        }
+
+        rule::Any::Digital(num) => self
+          .take_digital(num, self.action.prefix_len as usize)
+          .map(|(a, d)| (Some(a), Some(d), None))
+          .unwrap_or_default(),
+
+        rule::Any::Quoted(quote) => self
+          .take_quote(quote, self.action.prefix_len as usize)
+          .map(|(a, d, q)| (Some(a), Some(d), Some(q)))
+          .unwrap_or_default(),
+      };
 
     Match {
-      prefix_len: self.prefix.len(),
-      full_len: self.sub_cursor,
+      prefix: start..start + self.prefix.len(),
+      full: start..self.cursor(),
+      skip: self.cursor()..self.cursor(),
       lexeme: self.action.lexeme,
       affixes,
+      delims,
       data,
       diagnostics: self.diagnostics,
       not_ok: self.not_ok,
@@ -345,18 +434,21 @@ impl Finder<'_, '_> {
   /// of the affixes.
   fn take_ident(
     &mut self,
-    rule: &rule::Ident,
+    rule: &'l rule::Ident,
     prefix_len: Option<usize>,
   ) -> Option<Affixes> {
-    let pre = match prefix_len {
-      Some(pre) => {
-        self.sub_cursor += pre;
-        pre
-      }
-      None => self
-        .must_take_longest(&rule.affixes.prefixes)
-        .map(|(_, y)| y.len())?,
-    };
+    let start = self.cursor();
+    let pre = start
+      ..start
+        + match prefix_len {
+          Some(pre) => {
+            self.sub_cursor += pre;
+            pre
+          }
+          None => self
+            .must_take_longest(rule.affixes.prefixes())
+            .map(|(_, y)| y.len())?,
+        };
 
     // Consume the largest prefix of "valid" characters for this value.
     let start = self.cursor();
@@ -372,53 +464,79 @@ impl Finder<'_, '_> {
       self.sub_cursor += c.len_utf8();
     }
 
-    let suf = self
-      .must_take_longest(&rule.affixes.suffixes)
-      .map(|(_, y)| y.len())?;
+    let start = self.cursor();
+    let suf = start
+      ..start
+        + self
+          .must_take_longest(rule.affixes.suffixes())
+          .map(|(_, y)| y.len())?;
 
     Some(Affixes { pre, suf })
   }
 
   /// Lexes an identifier starting at `src` and returns the range of "data"
   /// needed to construct the closer with `make_close_delim`.
-  fn take_open_delim(&mut self, rule: &rule::Bracket) -> Option<Range<usize>> {
+  fn take_open_delim(
+    &mut self,
+    rule: &'l rule::Bracket,
+  ) -> Option<(YarnBox<'l, str>, YarnBox<'l, str>)> {
     match &rule.0 {
-      rule::BracketKind::Paired(open, _) => {
+      rule::BracketKind::Paired(open, close) => {
         self.must_take(open)?;
-        Some(0..0)
+        Some((open.as_ref().to_box(), close.as_ref().to_box()))
       }
 
       rule::BracketKind::RustLike {
         repeating,
         open: (prefix, suffix),
-        ..
+        close,
       } => {
+        let start = self.cursor();
         self.must_take(prefix)?;
 
-        let start = self.cursor();
+        let rep_start = self.cursor();
         loop {
           let (i, _) = self.must_take_longest(&[repeating, suffix])?;
           if i > 0 {
             break;
           }
         }
-        let end = self.cursor() - suffix.len();
-        Some(start..end)
+        let rep_end = self.cursor() - suffix.len();
+
+        Some((
+          YarnBox::new(&self.lexer.text()[start..self.cursor()]),
+          yarn!(
+            "{}{}{}",
+            close.0,
+            &self.lexer.text()[rep_start..rep_end],
+            close.1
+          ),
+        ))
       }
 
       rule::BracketKind::CxxLike {
         ident_rule,
         open: (prefix, suffix),
-        ..
+        close,
       } => {
+        let start = self.cursor();
         self.must_take(prefix)?;
 
-        let start = self.cursor();
+        let rep_start = self.cursor();
         let _ = self.take_ident(ident_rule, None);
-        let end = self.cursor();
+        let rep_end = self.cursor();
 
         self.must_take(suffix)?;
-        Some(start..end)
+
+        Some((
+          YarnBox::new(&self.lexer.text()[start..self.cursor()]),
+          yarn!(
+            "{}{}{}",
+            close.0,
+            &self.lexer.text()[rep_start..rep_end],
+            close.1
+          ),
+        ))
       }
     }
   }
@@ -437,18 +555,17 @@ impl Finder<'_, '_> {
 
   /// Lexes a block comment and returns its length and whether it fully closed
   /// successfully.
-  fn take_block_comment(&mut self, bracket: &rule::Bracket) -> Option<()> {
-    let start = self.cursor();
-    let data = self.take_open_delim(bracket)?;
-    let open = &self.lexer.text()[start..self.cursor()];
+  fn take_block_comment(
+    &mut self,
+    bracket: &'l rule::Bracket,
+  ) -> Option<(YarnBox<'l, str>, YarnBox<'l, str>)> {
+    let (open, close) = self.take_open_delim(bracket)?;
 
     // We want to implement nested comments, but we only need to find the
     // matching end delimiter for `rule`. So, as a simplifying assumption,
     // we assume that all comments we need to care about are exactly those
     // which match `rule`.
     let mut comment_depth = 1;
-    let close = make_close_delim(bracket, &self.lexer.text()[data]);
-
     loop {
       if comment_depth == 0 {
         break;
@@ -462,7 +579,7 @@ impl Finder<'_, '_> {
         continue;
       }
 
-      if self.try_take(open).is_some() {
+      if self.try_take(&open).is_some() {
         comment_depth += 1;
         continue;
       }
@@ -483,45 +600,29 @@ impl Finder<'_, '_> {
       break;
     }
 
-    // Do the xid check here, so we can use the comment's actual brackets in
-    // the error.
-
-    if let Some(len) = expect_non_xid(self.lexer, self.sub_cursor) {
-      self.diagnose(|this| {
-        this.lexer.report().builtins().extra_chars(
-          this.lexer.spec(),
-          this
-            .lexer
-            .spec()
-            .rule_name_or(this.action.lexeme, f!("{open} ... {close}")),
-          Loc::new(this.lexer.file(), this.cursor()..this.cursor() + len),
-        )
-      });
-
-      self.sub_cursor += len;
-    }
-
-    Some(())
+    Some((open, close))
   }
 
   /// Lexes a digital literal and returns its prefix length and suffix
   /// length. Also, returns the relevant match data.
   fn take_digital(
     &mut self,
-    rule: &rule::Digital,
+    rule: &'l rule::Digital,
     prefix_len: usize,
   ) -> Option<(Affixes, MatchData)> {
+    let start = self.cursor();
     // First, consume the mantissa.
     let mant = self.take_digits(prefix_len, rule, &rule.mant, !0, true)?;
 
     // Separate out the prefix from the sign; this logic is specific to the
     // mantissa, where the prefix can look like -0x, not e- as for an exponent.
-    let prefix_len_without_sign = prefix_len
-      - mant
-        .sign
-        .as_ref()
-        .map(|(r, _)| r.end - r.start)
-        .unwrap_or(0);
+    let sign_len = mant
+      .sign
+      .as_ref()
+      .map(|(r, _)| r.end - r.start)
+      .unwrap_or(0);
+
+    let pre = start + sign_len..start + prefix_len;
 
     // The start of a separator at the end of a digit block, if any. Updated
     // each loop spin.
@@ -582,17 +683,14 @@ impl Finder<'_, '_> {
       });
     }
 
-    let suf = self
-      .must_take_longest(&rule.affixes.suffixes)
-      .map(|(_, y)| y.len())?;
+    let start = self.cursor();
+    let suf = start
+      ..start
+        + self
+          .must_take_longest(rule.affixes.suffixes())
+          .map(|(_, y)| y.len())?;
 
-    Some((
-      Affixes {
-        pre: prefix_len_without_sign,
-        suf,
-      },
-      MatchData::Digits(blocks),
-    ))
+    Some((Affixes { pre, suf }, MatchData::Digits(blocks)))
   }
 
   /// Lexes blocks of digits and returns its length. Also, returns the spans of
@@ -600,8 +698,8 @@ impl Finder<'_, '_> {
   fn take_digits(
     &mut self,
     prefix_len: usize,
-    rule: &rule::Digital,
-    digits: &rule::Digits,
+    rule: &'l rule::Digital,
+    digits: &'l rule::Digits,
     which_exp: usize,
     is_mant: bool,
   ) -> Option<DigitData> {
@@ -790,19 +888,17 @@ impl Finder<'_, '_> {
 
   /// Lexes a quoted literal and returns its length, prefix length, and suffix length.
   /// Also, returns the relevant match data.
+  #[allow(clippy::type_complexity)]
   fn take_quote(
     &mut self,
-    rule: &rule::Quoted,
+    rule: &'l rule::Quoted,
     prefix_len: usize,
-  ) -> Option<(Affixes, MatchData)> {
+  ) -> Option<(Affixes, MatchData, (YarnBox<'l, str>, YarnBox<'l, str>))> {
     let start = self.cursor();
     self.sub_cursor += prefix_len;
-    let pre_str = &self.lexer.text()[start..self.cursor()];
+    let pre = start..self.cursor();
 
-    let start = self.cursor();
-    let close_data = self.take_open_delim(&rule.bracket)?;
-    let open = &self.lexer.text()[start..self.cursor()];
-    let close = make_close_delim(&rule.bracket, &self.lexer.text()[close_data]);
+    let (_, close) = self.take_open_delim(&rule.bracket)?;
 
     let uq_start = self.cursor(); // uq -> unquoted
 
@@ -905,11 +1001,10 @@ impl Finder<'_, '_> {
         }
 
         rule::Escape::Bracketed { bracket, parse } => 'delim: {
-          let Some(data) = self.take_open_delim(bracket) else {
+          let Some((_, close)) = self.take_open_delim(bracket) else {
             // take_open_delim diagnoses for us.
             break 'delim !0;
           };
-          let close = make_close_delim(bracket, &self.lexer.text()[data]);
 
           let arg_start = self.cursor();
           while self.try_take(&close).is_none() {
@@ -949,80 +1044,35 @@ impl Finder<'_, '_> {
       chunk_start = self.cursor();
     };
 
+    let unquoted = uq_start..uq_end;
     let start = self.cursor();
-    let suf = self
-      .must_take_longest(&rule.affixes.suffixes)
-      .map(|(_, y)| y.len())?;
-    let suf_str = &self.lexer.text()[start..self.cursor()];
+    let suf = start
+      ..start
+        + self
+          .must_take_longest(rule.affixes.suffixes())
+          .map(|(_, y)| y.len())?;
 
-    if let Some(len) = expect_non_xid(self.lexer, self.sub_cursor) {
-      self.diagnose(|this| {
-        this.lexer.report().builtins().extra_chars(
-          this.lexer.spec(),
-          this.lexer.spec().rule_name_or(
-            this.action.lexeme,
-            f!("{pre_str}{open} ... {close}{suf_str}"),
-          ),
-          Loc::new(this.lexer.file(), this.cursor()..this.cursor() + len),
-        )
-      });
-
-      self.sub_cursor += len;
-    }
-
+    let text = self.lexer.text();
+    let delims = (
+      YarnBox::new(&text[pre.end..unquoted.start]),
+      YarnBox::new(&text[unquoted.end..suf.start]),
+    );
     Some((
-      Affixes {
-        pre: prefix_len,
-        suf,
-      },
-      MatchData::Quote {
-        unquoted: uq_start..uq_end,
-        content,
-      },
+      Affixes { pre, suf },
+      MatchData::Quote { unquoted, content },
+      delims,
     ))
   }
 }
 
-fn make_close_delim<'a>(
-  rule: &'a rule::Bracket,
-  data: &str,
-) -> YarnBox<'a, str> {
-  match &rule.0 {
-    rule::BracketKind::Paired(_, close) => close.as_ref().to_box(),
-    rule::BracketKind::RustLike {
-      close: (prefix, suffix),
-      ..
-    }
-    | rule::BracketKind::CxxLike {
-      close: (prefix, suffix),
-      ..
-    } => {
-      yarn!("{}{}{}", prefix, data, suffix)
-    }
-  }
-}
-
-pub fn expect_non_xid(lex: &Lexer, offset: usize) -> Option<usize> {
-  // Find the previous character. Thanks to how UTF-8 works, we can just
-  // try to slice the string at growing intervals until we successfully parse
-  // one full UTF-8 code point.
-  let prev_char = if lex.cursor() + offset == 0 {
-    return None;
-  } else {
-    let mut prev_start = lex.cursor() + offset - 1;
-    while lex.text().get(prev_start..).is_none() {
-      prev_start -= 1;
-    }
-    lex.text()[prev_start..].chars().next().unwrap()
-  };
-
+pub fn expect_non_xid(lex: &Lexer, start: usize) -> Option<usize> {
+  let prev_char = lex.text()[..start].chars().next_back()?;
   if !prev_char.is_xid_continue() {
     return None;
   }
 
   // Consume as many xid continues as possible and emit a diagnostic if
   // non-empty.
-  let start = lex.cursor() + offset;
   let bytes = lex.text()[start..]
     .chars()
     .take_while(|c| c.is_xid_continue())

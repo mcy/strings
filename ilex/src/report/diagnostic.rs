@@ -68,6 +68,7 @@ impl Loc {
   ///
   /// Panics if `start > end`, or if `end` is greater than the length of the
   /// file.
+  #[track_caller]
   pub fn new(file: File<'_>, range: Range<usize>) -> Loc {
     let Range { start, end } = range;
     let len = file.text().len();
