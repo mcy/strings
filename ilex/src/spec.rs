@@ -376,7 +376,7 @@ impl Spec {
           //
           // However, this does mean that `08` matches as a decimal integer.
           // Hopefully users are writing good tests. :D
-          let mut insert_with_digit = |digit: char| {
+          let mut insert_with_digit = |digit: YarnRef<str>| {
             for sign in rule
               .mant
               .signs
@@ -387,28 +387,12 @@ impl Spec {
               for prefix in rule.affixes.prefixes() {
                 add_action(
                   &mut self.trie,
-                  Yarn::concat(&[sign, prefix, &Yarn::from(digit)]),
+                  Yarn::concat(&[sign, prefix, &digit]),
                   Action {
                     lexeme,
                     prefix_len: (sign.len() + prefix.len()) as u32,
                   },
                 );
-
-                if rule.corner_cases.prefix {
-                  add_action(
-                    &mut self.trie,
-                    Yarn::concat(&[
-                      sign,
-                      prefix,
-                      &rule.separator,
-                      &Yarn::from(digit),
-                    ]),
-                    Action {
-                      lexeme,
-                      prefix_len: (sign.len() + prefix.len()) as u32,
-                    },
-                  );
-                }
               }
             }
           };
@@ -416,11 +400,16 @@ impl Spec {
           for lower in ALPHABET[..rule.mant.radix as usize].chars() {
             let upper = lower.to_ascii_uppercase();
 
-            insert_with_digit(lower);
+            insert_with_digit(lower.into());
             if upper != lower {
-              insert_with_digit(upper);
+              insert_with_digit(upper.into());
             }
           }
+
+          // We add a version with a leading separator unconditionally,
+          // since this improves diagnostics in the case that a prefix
+          // separator is forbidden.
+          insert_with_digit(rule.separator.as_ref());
         }
       }
     }
