@@ -216,11 +216,6 @@ impl<'lex> Iterator for Cursor<'lex> {
   fn next(&mut self) -> Option<Self::Item> {
     let tok = self.toks.get(self.cursor)?;
     let next = match &tok.kind {
-      Kind::Unexpected => {
-        self.cursor += 1;
-        token::Any::Unexpected(tok.span, self.spec)
-      }
-
       Kind::Eof => {
         self.cursor += 1;
         token::Any::Eof(token::Eof {
@@ -232,7 +227,7 @@ impl<'lex> Iterator for Cursor<'lex> {
       Kind::Keyword => {
         self.cursor += 1;
         token::Any::Keyword(token::Keyword {
-          lexeme: tok.lexeme.unwrap().cast(),
+          lexeme: tok.lexeme.cast(),
           spec: self.spec,
           span: tok.span,
           _ph: PhantomData,
@@ -252,7 +247,7 @@ impl<'lex> Iterator for Cursor<'lex> {
         token::Any::Bracket(token::Bracket {
           open: tok.span,
           close: close.span,
-          lexeme: tok.lexeme.unwrap().cast(),
+          lexeme: tok.lexeme.cast(),
           spec: self.spec,
           contents: Cursor {
             spec: self.spec,
@@ -471,7 +466,7 @@ pub mod switch {
     ) -> Option<T> {
       if let Some(prev) = self.prev.apply(any, cursor) {
         Some(prev)
-      } else if !self.lexemes.iter().any(|&l| any.is(l.any())) {
+      } else if !self.lexemes.iter().any(|&l| any.lexeme() == l.any()) {
         None
       } else {
         Some((self.then)(Token::from_any(any), cursor))

@@ -477,7 +477,7 @@ impl Digital<'_> {
       report.builtins().unexpected(
         self.spec(),
         "extra digits",
-        self.lexeme().unwrap(),
+        self.lexeme(),
         extra,
       );
     }
@@ -489,7 +489,7 @@ impl Digital<'_> {
         report.builtins().unexpected(
           self.spec(),
           "extra digits",
-          self.lexeme().unwrap(),
+          self.lexeme(),
           extra,
         );
       }
@@ -499,7 +499,7 @@ impl Digital<'_> {
       report.builtins().unexpected(
         self.spec(),
         "extra exponent",
-        self.lexeme().unwrap(),
+        self.lexeme(),
         extra,
       );
     }

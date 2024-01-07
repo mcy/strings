@@ -29,10 +29,8 @@ pub fn lex<'spec>(
 
       lexer.pop_closer();
       if lexer.cursor() != start {
-        // TODO(mcyoung): This happens a touch too late. The unexpected tokens
-        // will appear outside the bracket, instead of inside.
-        if let Some(start) = unexpected_start.take() {
-          lexer.add_unexpected(start);
+        if let Some(ustart) = unexpected_start.take() {
+          lexer.add_unexpected(ustart, start);
         }
 
         continue;
@@ -40,7 +38,7 @@ pub fn lex<'spec>(
 
       if let Some(best) = find::find(&lexer) {
         if let Some(start) = unexpected_start.take() {
-          lexer.add_unexpected(start);
+          lexer.add_unexpected(start, lexer.cursor());
         }
 
         emit::emit(&mut lexer, best);
@@ -57,7 +55,7 @@ pub fn lex<'spec>(
   }
 
   if let Some(start) = unexpected_start {
-    lexer.add_unexpected(start);
+    lexer.add_unexpected(start, lexer.cursor());
   }
 
   report.fatal_or(lexer.finish())
@@ -68,7 +66,7 @@ pub fn lex<'spec>(
 pub struct Token {
   pub kind: Kind,
   pub span: Span,
-  pub lexeme: Option<Lexeme<rule::Any>>,
+  pub lexeme: Lexeme<rule::Any>,
   pub prefix: Option<Span>,
   pub suffix: Option<Span>,
 }
@@ -78,7 +76,6 @@ pub struct Token {
 pub enum Kind {
   Eof,
   Keyword,
-  Unexpected,
   Ident(Span),
   Quoted {
     content: Vec<Content>,
