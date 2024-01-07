@@ -304,8 +304,8 @@ impl Spec {
         rule::Any::Comment(rule::Comment(rule::CommentKind::Block(
           bracket,
         ))) => {
-          let (open, _) = make_delim_prefixes(bracket);
-          add_lexeme(&mut self.trie, open, lexeme);
+          let open = make_open(bracket);
+          add_lexeme(&mut self.trie, open.immortalize(), lexeme);
         }
 
         rule::Any::Keyword(rule) => {
@@ -313,8 +313,8 @@ impl Spec {
         }
 
         rule::Any::Bracket(rule) => {
-          let (open, _) = make_delim_prefixes(rule);
-          add_lexeme(&mut self.trie, open, lexeme);
+          let open = make_open(rule);
+          add_lexeme(&mut self.trie, open.immortalize(), lexeme);
         }
 
         rule::Any::Ident(rule) => {
@@ -331,7 +331,7 @@ impl Spec {
         }
 
         rule::Any::Quoted(rule) => {
-          let (open, _) = make_delim_prefixes(&rule.bracket);
+          let open = make_open(&rule.bracket);
           for prefix in rule.affixes.prefixes() {
             add_action(
               &mut self.trie,
@@ -423,19 +423,22 @@ impl Spec {
       trie.get_or_insert_default(key).push(action);
     }
 
-    fn make_delim_prefixes(delim: &rule::Bracket) -> (Yarn, Yarn) {
-      match &delim.0 {
-        rule::BracketKind::Paired(open, close) => (open.clone(), close.clone()),
+    fn make_open(delim: &rule::Bracket) -> YarnBox<str> {
+      match &delim.kind {
+        rule::BracketKind::Paired(open, ..) => open.aliased(),
         rule::BracketKind::RustLike {
+          repeating,
           open: (open, _),
-          close: (close, _),
           ..
+        } => {
+          match delim.min_len {
+            0 => open.aliased(),
+            _ => yarn!("{open}{repeating}"),
+          }
         }
-        | rule::BracketKind::CxxLike {
-          open: (open, _),
-          close: (close, _),
-          ..
-        } => (open.clone(), close.clone()),
+        rule::BracketKind::CxxLike {
+          open: (open, _), ..
+        } => open.aliased(),
       }
     }
   }
@@ -475,7 +478,7 @@ impl Lexeme<rule::Any> {
       }
       rule::Any::Bracket(d)
       | rule::Any::Comment(rule::Comment(rule::CommentKind::Block(d))) => {
-        match &d.0 {
+        match &d.kind {
           rule::BracketKind::Paired(open, close) => {
             yarn!("`{open} ... {close}`")
           }
