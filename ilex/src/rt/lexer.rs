@@ -134,7 +134,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
         }
         let open_sp = self.tokens[close.open_idx].span;
 
-        if let Some(len) = find::expect_non_xid(self, 0) {
+        if let Some(len) = find::expect_non_xid(self, self.cursor()) {
           let sp = self.mksp(self.cursor()..self.cursor() + len);
           self.report().builtins().extra_chars(
             self.spec(),

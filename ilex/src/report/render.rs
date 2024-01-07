@@ -113,7 +113,7 @@ pub fn render_fmt(
       .warning(Style::new().fg_color(Some(AnsiColor::BrightYellow.into())).bold())
       .note(Style::new().fg_color(Some(AnsiColor::BrightGreen.into())).bold())
       .info(Style::new().fg_color(Some(AnsiColor::BrightBlue.into())).bold())
-      .help(Style::new().fg_color(Some(AnsiColor::BrightCyan.into())).bold());
+      .help(Style::new().fg_color(Some(AnsiColor::BrightBlue.into())).bold());
   };
 
   for e in report.state.sorted_diagnostics.lock().unwrap().iter() {
@@ -176,7 +176,7 @@ pub fn render_fmt(
           range: (start, end),
           label: text,
           annotation_type: if *is_remark {
-            AnnotationType::Info
+            AnnotationType::Help
           } else {
             kind
           },

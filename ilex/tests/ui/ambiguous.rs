@@ -6,24 +6,21 @@ ilex::spec! {
   struct Spec {
     kw: Keyword = "null",
     br: Comment = Bracket::cxx_raw_string(
-      Ident::new()
-        .prefixes(["", "%"])
-        .suffixes(["", "%"]),
+      Ident::new(),
       ("--", ""),
       ("", ""),
     ),
     cm: Bracket = Bracket::cxx_raw_string(
-      Ident::new()
-        .prefixes(["", "%"])
-        .suffixes(["", "%"]),
+      Ident::new(),
       ("$", "["),
       ("]", ""),
     ),
     id: Ident = Ident::new()
-      .suffixes(["", "%q"]),
+      .prefix("/")
+      .suffixes(["", "%q", "/"]),
     nm: Digital = Digital::new(10)
       .prefixes(["%"])
-      .suffixes(["", "%", "q"]),
+      .suffixes(["", "%", "q", "/"]),
     st: Quoted = Quoted::new("'")
       .prefixes(["%", "q"])
       .suffixes(["", "%", "q"]),
@@ -71,7 +68,7 @@ fn no_xid_after_id() {
   let ctx = Context::new();
   let report = ctx.new_report();
   let _ = ctx
-    .new_file("<input>", "foo%q null%q foo%qua")
+    .new_file("<input>", "/foo%q /null%q /foo%qua")
     .lex(Spec::get().spec(), &report);
 
   testing::check_report(&report, "tests/ui/goldens/no_xid_after_id.stdout");
@@ -97,4 +94,26 @@ fn no_xid_after_st() {
     .lex(Spec::get().spec(), &report);
 
   testing::check_report(&report, "tests/ui/goldens/no_xid_after_st.stdout");
+}
+
+#[test]
+fn ambiguous_idents() {
+  let ctx = Context::new();
+  let report = ctx.new_report();
+  let _ = ctx
+    .new_file("<input>", "/foo/bar/")
+    .lex(Spec::get().spec(), &report);
+
+  testing::check_report(&report, "tests/ui/goldens/ambiguous_idents.stdout");
+}
+
+#[test]
+fn ambiguous_nums() {
+  let ctx = Context::new();
+  let report = ctx.new_report();
+  let _ = ctx
+    .new_file("<input>", "%1234%1234 %1234/xyz")
+    .lex(Spec::get().spec(), &report);
+
+  testing::check_report(&report, "tests/ui/goldens/ambiguous_nums.stdout");
 }

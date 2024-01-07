@@ -1,0 +1,9 @@
+error: extraneous characters after `/`-prefixed, `/`-suffixed identifier
+ --> <input>:1:6
+  |
+1 | /foo/bar/
+  |      ^^^^
+  |     -- help: maybe you meant to include a space here
+  |
+
+error: aborting due to previous error

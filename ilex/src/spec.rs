@@ -293,25 +293,7 @@ pub(crate) struct Action {
 
 impl Spec {
   fn build_trie(&mut self) {
-    fn add_lexeme(
-      trie: &mut Trie<str, Vec<Action>>,
-      key: Yarn,
-      lexeme: Lexeme<rule::Any>,
-    ) {
-      trie.get_or_insert_default(key).push(Action {
-        lexeme,
-        prefix_len: 0,
-      });
-    }
-
-    fn add_action(
-      trie: &mut Trie<str, Vec<Action>>,
-      key: Yarn,
-      action: Action,
-    ) {
-      trie.get_or_insert_default(key).push(action);
-    }
-
+    // First, insert all of the rules into the trie.
     for (lexeme, rule) in self.builder.rules.iter().enumerate() {
       let lexeme = Lexeme::new(lexeme as u32);
       match rule {
@@ -336,7 +318,7 @@ impl Spec {
         }
 
         rule::Any::Ident(rule) => {
-          for prefix in &rule.affixes.prefixes {
+          for prefix in rule.affixes.prefixes() {
             add_action(
               &mut self.trie,
               prefix.clone(),
@@ -350,7 +332,7 @@ impl Spec {
 
         rule::Any::Quoted(rule) => {
           let (open, _) = make_delim_prefixes(&rule.bracket);
-          for prefix in &rule.affixes.prefixes {
+          for prefix in rule.affixes.prefixes() {
             add_action(
               &mut self.trie,
               Yarn::concat(&[prefix, &open]),
@@ -381,7 +363,7 @@ impl Spec {
               .map(|(s, _)| s.as_str())
               .chain(Some(""))
             {
-              for prefix in &rule.affixes.prefixes {
+              for prefix in rule.affixes.prefixes() {
                 add_action(
                   &mut self.trie,
                   Yarn::concat(&[sign, prefix, &Yarn::from(digit)]),
@@ -420,6 +402,25 @@ impl Spec {
           }
         }
       }
+    }
+
+    fn add_lexeme(
+      trie: &mut Trie<str, Vec<Action>>,
+      key: Yarn,
+      lexeme: Lexeme<rule::Any>,
+    ) {
+      trie.get_or_insert_default(key).push(Action {
+        lexeme,
+        prefix_len: 0,
+      });
+    }
+
+    fn add_action(
+      trie: &mut Trie<str, Vec<Action>>,
+      key: Yarn,
+      action: Action,
+    ) {
+      trie.get_or_insert_default(key).push(action);
     }
 
     fn make_delim_prefixes(delim: &rule::Bracket) -> (Yarn, Yarn) {

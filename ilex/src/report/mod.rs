@@ -173,6 +173,7 @@ impl Report {
   }
 
   pub(crate) fn write_out_for_test(&self) -> String {
+    eprintln!("{}", self.fatal::<()>().unwrap_err());
     let mut sink = String::new();
     render::render_fmt(
       self,
