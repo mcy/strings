@@ -1,5 +1,6 @@
 use std::fmt;
 use std::io;
+use std::mem;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
@@ -133,17 +134,21 @@ pub fn render_fmt(
 
     for snips in &e.snippets {
       let mut cur_file = None;
-      let mut cur_slice = None;
+      let mut cur_slice = None::<Slice>;
+      let mut has_eof = false;
       for (span, text, kind) in snips {
         let file = report.ctx.file(span.file).unwrap();
         if cur_file != Some(file) {
           cur_file = Some(file);
-          if let Some(slice) = cur_slice.take() {
+          if let Some(mut slice) = cur_slice.take() {
+            if !mem::take(&mut has_eof) {
+              slice.source = &slice.source[..slice.source.len() - 1];
+            }
             snippet.slices.push(slice);
           }
 
           cur_slice = Some(Slice {
-            source: file.text(),
+            source: file.text_with_extra_space(),
             line_start: 1,
             origin: Some(file.path().as_str()),
             annotations: Vec::new(),
@@ -156,15 +161,27 @@ pub fn render_fmt(
           mut start, mut end, ..
         } = span;
 
-        if start == end && !slice.source.is_empty() {
-          // Normalize the range so that it is never just one space long.
-          // If this would cause range.1 to go past the end of the input length,
-          // we swap them around instead.
-          if end == slice.source.len() {
-            start = end - 1;
-          } else {
-            end = start + 1;
-          }
+        // Ensure that all spans have length at least one, and try to get them
+        // to point just after non-whitespace.
+        // If this is the EOF, it will point at the extra space.
+        if start == end {
+          let chunk = &slice.source[..end];
+          let ws_suf =
+            chunk.len() - chunk.trim_end_matches(char::is_whitespace).len();
+          start -= ws_suf;
+          end -= ws_suf;
+          end += 1;
+          has_eof |= end == slice.source.len();
+        } else {
+          // Crop a span so that it does not contain leading or trailing
+          // whitespace.
+          let chunk = &slice.source[start..end];
+          let ws_pre =
+            chunk.len() - chunk.trim_start_matches(char::is_whitespace).len();
+          let ws_suf =
+            chunk.len() - chunk.trim_end_matches(char::is_whitespace).len();
+          start += ws_pre;
+          end -= ws_suf;
         }
 
         slice.annotations.push(SourceAnnotation {
@@ -174,7 +191,10 @@ pub fn render_fmt(
         });
       }
 
-      if let Some(slice) = cur_slice.take() {
+      if let Some(mut slice) = cur_slice.take() {
+        if !mem::take(&mut has_eof) {
+          slice.source = &slice.source[..slice.source.len() - 1];
+        }
         snippet.slices.push(slice);
       }
     }

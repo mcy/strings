@@ -39,6 +39,12 @@ impl<'ctx> File<'ctx> {
 
   /// Returns the textual contents of this file.
   pub fn text(self) -> &'ctx str {
+    // Text contains an extra space at the very end for the EOF
+    // span to use if necessary.
+    &self.text[..self.text.len() - 1]
+  }
+
+  pub(crate) fn text_with_extra_space(self) -> &'ctx str {
     self.text
   }
 

@@ -93,9 +93,14 @@ impl Context {
     name: impl Into<Utf8PathBuf>,
     text: impl Into<String>,
   ) -> File {
+    let mut text = text.into();
+    text.push(' '); // This space only exists to be somewhere for an EOF span
+                    // to point to in diagnostics; user code will never see
+                    // it.
+
     let idx = {
       let mut state = self.state.write().unwrap();
-      state.files.push((name.into(), text.into()));
+      state.files.push((name.into(), text));
       state.files.len() - 1
     };
 

@@ -1,3 +1,4 @@
+use std::mem;
 use std::ops::Range;
 
 use format_args as f;
@@ -35,6 +36,7 @@ pub struct Lexer<'a, 'spec, 'ctx> {
 pub struct Closer {
   lexeme: Lexeme<rule::Bracket>,
   open_idx: usize,
+  original_open_idx: usize, // For diagnostics.
   close: Yarn,
 }
 
@@ -110,55 +112,77 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
       lexeme,
       close,
       open_idx: self.tokens.len(),
+      original_open_idx: self.tokens.len(),
     });
   }
 
   /// Pops a closer, if it is time for it.
   pub fn pop_closer(&mut self) {
-    match self.closers.last() {
-      Some(close) if self.rest().starts_with(close.close.as_str()) => {
-        let close = self.closers.pop().unwrap();
+    let idx = self
+      .closers
+      .iter()
+      .rposition(|close| self.rest().starts_with(close.close.as_str()));
+    let Some(idx) = idx else { return };
+    let len = self.closers.len();
 
-        self.advance(close.close.len());
-
-        let close_idx = self.tokens.len();
-        let offset_to_open = (close_idx - close.open_idx) as u32;
-
-        match &mut self.tokens[close.open_idx].kind {
-          rt::Kind::Open {
-            offset_to_close, ..
-          } => *offset_to_close = offset_to_open,
-          _ => {
-            panic!("ilex: lexer.closers.last().open_idx did not point to an rt::Kind::Open; this is a bug")
-          }
-        }
-        let open_sp = self.tokens[close.open_idx].span;
-
-        if let Some(len) = find::expect_non_xid(self, self.cursor()) {
-          let sp = self.mksp(self.cursor()..self.cursor() + len);
-          self.report().builtins().extra_chars(
-            self.spec(),
-            self.spec().rule_name_or(
-              close.lexeme.any(),
-              f!("{} ... {}", open_sp.text(self.file.context()), close.close),
-            ),
-            sp,
-          );
-
-          self.advance(len);
-        }
-
-        let span = self.mksp(self.cursor - close.close.len()..self.cursor);
-        self.add_token(rt::Token {
-          kind: rt::Kind::Close { offset_to_open },
-          span,
-          lexeme: close.lexeme.any(),
-          prefix: None,
-          suffix: None,
-        });
-      }
-      _ => {}
+    // Pull out our to-be-closed. Swap it with the outermost one so that when
+    // we close "mixed delimiters", we still generate all the right tokens.
+    self.closers.swap(idx, len - 1);
+    let mut close = self.closers.pop().unwrap();
+    if idx != self.closers.len() {
+      mem::swap(&mut close.open_idx, &mut self.closers[idx].open_idx);
     }
+
+    let start = self.cursor();
+    self.advance(close.close.len());
+
+    let close_idx = self.tokens.len();
+    let offset_to_open = (close_idx - close.open_idx) as u32;
+
+    match &mut self.tokens[close.open_idx].kind {
+      rt::Kind::Open {
+        offset_to_close, ..
+      } => *offset_to_close = offset_to_open,
+      _ => {
+        panic!("ilex: lexer.closers.last().open_idx did not point to an rt::Kind::Open; this is a bug")
+      }
+    }
+    let open_sp = self.tokens[close.open_idx].span;
+
+    if let Some(len) = find::expect_non_xid(self, self.cursor()) {
+      let sp = self.mksp(self.cursor()..self.cursor() + len);
+      self.report().builtins().extra_chars(
+        self.spec(),
+        self.spec().rule_name_or(
+          close.lexeme.any(),
+          f!("{} ... {}", open_sp.text(self.file.context()), close.close),
+        ),
+        sp,
+      );
+
+      self.advance(len);
+    }
+
+    let span = self.mksp(start..self.cursor);
+    if idx != self.closers.len() {
+      // This is a so-called "mixed delimiter", and an error we need to
+      // diagnose.
+      self.report().builtins().unclosed(
+        self.spec(),
+        open_sp,
+        &self.closers.last().unwrap().close,
+        close.close.as_str(),
+        span,
+      );
+    }
+
+    self.add_token(rt::Token {
+      kind: rt::Kind::Close { offset_to_open },
+      span,
+      lexeme: close.lexeme.any(),
+      prefix: None,
+      suffix: None,
+    });
   }
 
   /// Adds a new token, draining all of the saved-up comments.
@@ -208,12 +232,15 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
       suffix: None,
     });
 
-    for close in self.closers.drain(..) {
-      let open = self.tokens[close.open_idx].span;
-      self
-        .report
-        .builtins()
-        .unclosed(self.spec, close.lexeme, open, self.eof);
+    for close in mem::take(&mut self.closers) {
+      let open = self.tokens[close.original_open_idx].span;
+      self.report.builtins().unclosed(
+        self.spec(),
+        open,
+        &close.close,
+        Lexeme::eof(),
+        self.eof(),
+      );
     }
 
     token::Stream {
