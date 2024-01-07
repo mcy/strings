@@ -50,6 +50,16 @@ pub fn check_report(report: &Report, path: &(impl AsRef<Path> + ?Sized)) {
   similar_asserts::assert_eq!(want, got);
 }
 
+/// Checks that `report` contains no diagnostics.
+///
+/// If it does, it will print them to stderr and panic.
+#[track_caller]
+pub fn check_report_ok(report: &Report) {
+  if let Err(e) = report.fatal_or(()) {
+    e.panic();
+  }
+}
+
 /// A matcher for a token stream.
 ///
 /// For usage examples, see the `ilex/tests` directory.
