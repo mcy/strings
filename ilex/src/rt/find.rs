@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::mem;
 use std::ops::Range;
 
 use format_args as f;
@@ -366,7 +367,28 @@ impl<'l> Finder<'l, '_> {
         }
 
         rule::Any::Bracket(delimiter) => {
-          (None, None, self.take_open_delim(delimiter))
+          if self.action.prefix_len == u32::MAX {
+            match self.take_delim(delimiter, true) {
+              Some((open, close)) => {
+                self.diagnose(|this| {
+                  this.lexer.report().builtins().unopened(
+                    this.lexer.spec(),
+                    &open,
+                    close.as_str(),
+                    Loc::new(this.lexer.file(), start..this.cursor()),
+                  )
+                });
+                (None, None, Some((open, close)))
+              }
+              None => {
+                // Too malformed to even diagnose.
+                self.sub_cursor = start - self.lexer.cursor();
+                (None, None, None)
+              }
+            }
+          } else {
+            (None, None, self.take_delim(delimiter, false))
+          }
         }
 
         rule::Any::Comment(rule::Comment(rule::CommentKind::Line(prefix))) => {
@@ -492,35 +514,44 @@ impl<'l> Finder<'l, '_> {
 
   /// Lexes an identifier starting at `src` and returns the range of "data"
   /// needed to construct the closer with `make_close_delim`.
-  fn take_open_delim(
+  fn take_delim(
     &mut self,
     rule: &'l rule::Bracket,
+    is_close: bool,
   ) -> Option<(YarnBox<'l, str>, YarnBox<'l, str>)> {
-    match &rule.kind {
+    let (open, close) = match &rule.kind {
       rule::BracketKind::Paired(open, close) => {
-        self.must_take(open)?;
-        Some((open.as_ref().to_box(), close.as_ref().to_box()))
+        self.must_take(if !is_close { open } else { close })?;
+        return Some((open.as_ref().to_box(), close.as_ref().to_box()));
       }
+      rule::BracketKind::RustLike { open, close, .. }
+      | rule::BracketKind::CxxLike { open, close, .. } => (open, close),
+    };
 
+    let (searching, computing) = match is_close {
+      true => (close, open),
+      false => (open, close),
+    };
+
+    let start = self.cursor();
+    self.must_take(&searching.0)?;
+
+    let core_start = self.cursor();
+    let core_end = match &rule.kind {
       rule::BracketKind::RustLike {
         repeating,
         min_count,
-        open: (prefix, suffix),
-        close,
+        ..
       } => {
-        let start = self.cursor();
-        self.must_take(prefix)?;
-
-        let rep_start = self.cursor();
         let mut total = 0;
         loop {
-          let (i, _) = self.must_take_longest(&[repeating, suffix])?;
+          let (i, _) = self.must_take_longest(&[repeating, &searching.1])?;
           if i > 0 {
             break;
           }
           total += 1;
         }
-        let rep_end = self.cursor() - suffix.len();
+        let core_end = self.cursor() - searching.1.len();
 
         if total < *min_count {
           self.diagnose(|this| {
@@ -532,7 +563,7 @@ impl<'l> Finder<'l, '_> {
                 this.lexer.spec(),
                 [Expected::Literal(repeating.repeat(*min_count).into())],
                 Expected::Literal(repeating.repeat(total).into()),
-                Loc::new(this.lexer.file(), rep_start..rep_end),
+                Loc::new(this.lexer.file(), core_start..core_end),
               )
               .help(f!(
                 "at least {min_count} `{repeating}`{} required",
@@ -541,42 +572,33 @@ impl<'l> Finder<'l, '_> {
           })
         }
 
-        Some((
-          YarnBox::new(&self.lexer.text()[start..self.cursor()]),
-          yarn!(
-            "{}{}{}",
-            close.0,
-            &self.lexer.text()[rep_start..rep_end],
-            close.1
-          ),
-        ))
+        core_end
       }
 
-      rule::BracketKind::CxxLike {
-        ident_rule,
-        open: (prefix, suffix),
-        close,
-      } => {
-        let start = self.cursor();
-        self.must_take(prefix)?;
-
-        let rep_start = self.cursor();
+      rule::BracketKind::CxxLike { ident_rule, .. } => {
         let _ = self.take_ident(ident_rule, None, false);
-        let rep_end = self.cursor();
-
-        self.must_take(suffix)?;
-
-        Some((
-          YarnBox::new(&self.lexer.text()[start..self.cursor()]),
-          yarn!(
-            "{}{}{}",
-            close.0,
-            &self.lexer.text()[rep_start..rep_end],
-            close.1
-          ),
-        ))
+        let end = self.cursor();
+        self.must_take(&searching.1)?;
+        end
       }
+      _ => unreachable!(),
+    };
+
+    let mut result = (
+      YarnBox::new(&self.lexer.text()[start..self.cursor()]),
+      yarn!(
+        "{}{}{}",
+        computing.0,
+        &self.lexer.text()[core_start..core_end],
+        computing.1
+      ),
+    );
+
+    if is_close {
+      mem::swap(&mut result.0, &mut result.1)
     }
+
+    Some(result)
   }
 
   /// Lexes a line comment.
@@ -597,7 +619,8 @@ impl<'l> Finder<'l, '_> {
     &mut self,
     bracket: &'l rule::Bracket,
   ) -> Option<(YarnBox<'l, str>, YarnBox<'l, str>)> {
-    let (open, close) = self.take_open_delim(bracket)?;
+    let (open, close) = self.take_delim(bracket, false)?;
+    let open_range = self.cursor() - open.len()..self.cursor();
 
     // We want to implement nested comments, but we only need to find the
     // matching end delimiter for `rule`. So, as a simplifying assumption,
@@ -628,10 +651,11 @@ impl<'l> Finder<'l, '_> {
       }
 
       self.diagnose(|this| {
-        this.lexer.report().builtins().unexpected(
+        this.lexer.report().builtins().unclosed(
           this.lexer.spec(),
+          Loc::new(this.lexer.file(), open_range),
+          &close,
           Lexeme::eof(),
-          this.action.lexeme,
           this.lexer.eof(),
         )
       });
@@ -936,7 +960,8 @@ impl<'l> Finder<'l, '_> {
     self.sub_cursor += prefix_len;
     let pre = start..self.cursor();
 
-    let (_, close) = self.take_open_delim(&rule.bracket)?;
+    let (open, close) = self.take_delim(&rule.bracket, false)?;
+    let open_range = self.cursor() - open.len()..self.cursor();
 
     let uq_start = self.cursor(); // uq -> unquoted
 
@@ -962,11 +987,12 @@ impl<'l> Finder<'l, '_> {
           }
           None => {
             self.diagnose(|this| {
-              this.lexer.report().builtins().expected(
+              this.lexer.report().builtins().unclosed(
                 this.lexer.spec(),
-                [Expected::Literal(close.as_ref().to_box())],
+                Loc::new(this.lexer.file(), open_range),
+                &close,
                 Lexeme::eof(),
-                Loc::new(this.lexer.file(), this.cursor()..this.cursor()),
+                this.lexer.eof(),
               )
             });
             break self.cursor();
@@ -1039,7 +1065,7 @@ impl<'l> Finder<'l, '_> {
         }
 
         rule::Escape::Bracketed { bracket, parse } => 'delim: {
-          let Some((_, close)) = self.take_open_delim(bracket) else {
+          let Some((_, close)) = self.take_delim(bracket, false) else {
             // take_open_delim diagnoses for us.
             break 'delim !0;
           };

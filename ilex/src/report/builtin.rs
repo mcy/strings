@@ -38,15 +38,17 @@ impl Builtins<'_> {
   ) -> Diagnostic {
     let found = found.into();
 
-    let diagnostic = self.0.error(f!(
-      "unexpected {} in {}",
-      found.for_user_diagnostic(spec, &self.0.ctx),
-      unexpected_in.into().for_user_diagnostic(spec, &self.0.ctx),
-    ));
+    let diagnostic = self
+      .0
+      .error(f!(
+        "unexpected {} in {}",
+        found.for_user_diagnostic(spec, &self.0.ctx),
+        unexpected_in.into().for_user_diagnostic(spec, &self.0.ctx),
+      ))
+      .at(at)
+      .reported_at(Location::caller());
 
     non_printable_note(found, diagnostic)
-      .at(at)
-      .reported_at(Location::caller())
   }
 
   #[track_caller]
@@ -54,14 +56,16 @@ impl Builtins<'_> {
     let at = at.to_loc(&self.0.ctx);
     let found = at.text(&self.0.ctx);
 
-    let diagnostic = self.0.error(f!(
-      "unrecognized character{}",
-      if found.chars().count() == 1 { "" } else { "s" },
-    ));
+    let diagnostic = self
+      .0
+      .error(f!(
+        "unrecognized character{}",
+        if found.chars().count() == 1 { "" } else { "s" },
+      ))
+      .at(at)
+      .reported_at(Location::caller());
 
     non_printable_note(found.into(), diagnostic)
-      .at(at)
-      .reported_at(Location::caller())
   }
 
   #[track_caller]
@@ -89,9 +93,10 @@ impl Builtins<'_> {
           end: at.start.saturating_add(1),
         },
         "maybe you meant to include a space here",
-      );
+      )
+      .reported_at(Location::caller());
 
-    non_printable_note(found.into(), diagnostic).reported_at(Location::caller())
+    non_printable_note(found.into(), diagnostic)
   }
 
   /// Generates an "expected one of these tokens but got something else"
@@ -114,30 +119,60 @@ impl Builtins<'_> {
         "expected {alts}, but found {}",
         found.for_user_diagnostic(spec, &self.0.ctx)
       ))
-      .saying(at, f!("expected {alts}"));
+      .saying(at, f!("expected {alts}"))
+      .reported_at(Location::caller());
 
-    non_printable_note(found, diagnostic).reported_at(Location::caller())
+    non_printable_note(found, diagnostic)
+  }
+
+  /// Generates an "unopened delimiter" diagnostic, for when a delimiter is
+  /// not opened before expected.
+  #[track_caller]
+  pub(crate) fn unopened<'a>(
+    &self,
+    spec: &Spec,
+    expected: &str,
+    found: impl Into<Expected<'a>>,
+    at: impl ToLoc,
+  ) -> Diagnostic {
+    let found = found.into();
+
+    let diagnostic = self
+      .0
+      .error(f!(
+        "unexpected closing {}",
+        found.for_user_diagnostic(spec, &self.0.ctx)
+      ))
+      .saying(at, f!("expected to be opened by `{expected}`"))
+      .reported_at(Location::caller());
+
+    non_printable_note(found, diagnostic)
   }
 
   /// Generates an "unclosed delimiter" diagnostic, for when a delimiter is
-  /// not closed before the end of the input.
+  /// not closed before expected.
   #[track_caller]
-  pub fn unclosed<'a>(
+  pub(crate) fn unclosed<'a>(
     &self,
     spec: &Spec,
-    what: impl Into<Expected<'a>>,
     open: impl ToLoc,
-    eof: impl ToLoc,
+    expected: &str,
+    found: impl Into<Expected<'a>>,
+    at: impl ToLoc,
   ) -> Diagnostic {
-    self
+    let found = found.into();
+
+    let diagnostic = self
       .0
       .error(f!(
-        "found an unclosed {}",
-        what.into().for_user_diagnostic(spec, &self.0.ctx)
+        "expected closing `{expected}`, but found {}",
+        found.for_user_diagnostic(spec, &self.0.ctx)
       ))
-      .remark(open, "opened here")
-      .saying(eof, "expected it to be closed here")
-      .reported_at(Location::caller())
+      .saying(at, f!("expected `{expected}` here"))
+      .remark(open, "previously opened here")
+      .reported_at(Location::caller());
+
+    non_printable_note(found, diagnostic)
   }
 
   /// Generates an "invalid escape sequence" diagnostic.

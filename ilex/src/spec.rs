@@ -288,6 +288,9 @@ pub(crate) struct Action {
   pub lexeme: Lexeme<rule::Any>,
   /// How much of the actually matched prefix in the trie is actual skippable
   /// prefix.
+  ///
+  /// However, if this is u32::MAX, it means this is a bracket's closer. This
+  /// action exists only for generating diagnostics.
   pub prefix_len: u32,
 }
 
@@ -315,6 +318,24 @@ impl Spec {
         rule::Any::Bracket(rule) => {
           let open = make_open(rule);
           add_lexeme(&mut self.trie, open.immortalize(), lexeme);
+
+          let close = match &rule.kind {
+            rule::BracketKind::Paired(.., close) => close.aliased(),
+            rule::BracketKind::CxxLike {
+              close: (close, _), ..
+            }
+            | rule::BracketKind::RustLike {
+              close: (close, _), ..
+            } => close.aliased(),
+          };
+          add_action(
+            &mut self.trie,
+            close.immortalize(),
+            Action {
+              lexeme,
+              prefix_len: u32::MAX,
+            },
+          );
         }
 
         rule::Any::Ident(rule) => {
