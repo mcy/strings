@@ -1,0 +1,17 @@
+error: expected `#`, but found ``
+ --> <input>:1:11
+  |
+1 | r#'foo'# r'foo' q###'bar'### q##'bar'##
+  |           ^ expected `#`
+  |
+  = help: at least 1 `#` is required
+
+error: expected `###`, but found `##`
+ --> <input>:1:31
+  |
+1 | r#'foo'# r'foo' q###'bar'### q##'bar'##
+  |                               ^^ expected `###`
+  |
+  = help: at least 3 `#`s are required
+
+error: aborting due to 2 errors

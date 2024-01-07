@@ -426,17 +426,10 @@ impl Spec {
     fn make_open(delim: &rule::Bracket) -> YarnBox<str> {
       match &delim.kind {
         rule::BracketKind::Paired(open, ..) => open.aliased(),
-        rule::BracketKind::RustLike {
-          repeating,
-          open: (open, _),
-          ..
-        } => {
-          match delim.min_len {
-            0 => open.aliased(),
-            _ => yarn!("{open}{repeating}"),
-          }
-        }
         rule::BracketKind::CxxLike {
+          open: (open, _), ..
+        }
+        | rule::BracketKind::RustLike {
           open: (open, _), ..
         } => open.aliased(),
       }
@@ -486,6 +479,7 @@ impl Lexeme<rule::Any> {
             repeating,
             open: (o1, o2),
             close: (c1, c2),
+            ..
           } => yarn!("`{o1}{repeating}{o2} ... {c1}{repeating}{c2}`"),
           rule::BracketKind::CxxLike {
             open: (o1, o2),

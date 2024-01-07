@@ -9,7 +9,6 @@
 //! typically passed by reference into functions, but can be copied to simplify
 //! lifetimes, since it's reference-counted.
 
-use std::cell::Cell;
 use std::fmt;
 use std::io;
 use std::panic;
@@ -85,16 +84,6 @@ impl Report {
     self.new_diagnostic(Kind::Error, message.to_string())
   }
 
-  /// Like [`Report::error()`], but accepts a closure for generating the
-  /// diagnostic message.
-  #[track_caller]
-  pub fn error_by(
-    &self,
-    fmt: impl FnOnce(&mut fmt::Formatter) -> fmt::Result,
-  ) -> Diagnostic {
-    self.new_diagnostic(Kind::Error, display_by(fmt).to_string())
-  }
-
   /// Adds a new warning to this report.
   ///
   /// The returned [`Diagnostic`] object can be used to add spans, notes, and
@@ -104,16 +93,6 @@ impl Report {
     self.new_diagnostic(Kind::Warning, message.to_string())
   }
 
-  /// Like [`Report::warn()`], but accepts a closure for generating the
-  /// diagnostic message.
-  #[track_caller]
-  pub fn warn_by(
-    &self,
-    fmt: impl FnOnce(&mut fmt::Formatter) -> fmt::Result,
-  ) -> Diagnostic {
-    self.new_diagnostic(Kind::Warning, display_by(fmt).to_string())
-  }
-
   /// Adds a new top-level note to this report.
   ///
   /// The returned [`Diagnostic`] object can be used to add spans, notes, and
@@ -121,16 +100,6 @@ impl Report {
   #[track_caller]
   pub fn note(&self, message: impl fmt::Display) -> Diagnostic {
     self.new_diagnostic(Kind::Note, message.to_string())
-  }
-
-  /// Like [`Report::note()`], but accepts a closure for generating the
-  /// diagnostic message.
-  #[track_caller]
-  pub fn note_by(
-    &self,
-    fmt: impl FnOnce(&mut fmt::Formatter) -> fmt::Result,
-  ) -> Diagnostic {
-    self.new_diagnostic(Kind::Note, display_by(fmt).to_string())
   }
 
   #[track_caller]
@@ -225,20 +194,4 @@ impl fmt::Display for Fatal {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     fmt::Debug::fmt(self, f)
   }
-}
-
-/// Returns a `Display`-able value that displays itself by executing a closure.
-fn display_by(
-  body: impl FnOnce(&mut fmt::Formatter) -> fmt::Result,
-) -> impl fmt::Display {
-  use std::fmt::*;
-
-  struct By<F>(Cell<Option<F>>);
-  impl<F: FnOnce(&mut Formatter) -> Result> Display for By<F> {
-    fn fmt(&self, f: &mut Formatter) -> Result {
-      self.0.take().unwrap()(f)
-    }
-  }
-
-  By(Cell::new(Some(body)))
 }
