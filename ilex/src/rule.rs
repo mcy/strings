@@ -161,13 +161,19 @@ impl TryFrom<Any> for Keyword {
 /// Brackets are pairs of delimiters with tokens between them. They are used as
 /// both standalone rules and to define other rules, such as [`Quoted`]s
 #[derive(Debug)]
-pub struct Bracket(pub(super) BracketKind);
+pub struct Bracket {
+  pub(crate) kind: BracketKind,
+  pub(crate) min_len: usize,
+}
 
 impl Bracket {
   /// An ordinary pair of delimiters: an opening string and its matching
   /// closing string.
   pub fn paired(open: impl Into<Yarn>, close: impl Into<Yarn>) -> Self {
-    Self(BracketKind::Paired(open.into(), close.into()))
+    Self {
+      kind: BracketKind::Paired(open.into(), close.into()),
+      min_len: 0,
+    }
   }
 
   /// A Rust raw string-like bracket. This corresponds to `##"foo"##` raw
@@ -187,11 +193,14 @@ impl Bracket {
     (open_start, open_end): (impl Into<Yarn>, impl Into<Yarn>),
     (close_start, close_end): (impl Into<Yarn>, impl Into<Yarn>),
   ) -> Self {
-    Self(BracketKind::RustLike {
-      repeating: repeating.into(),
-      open: (open_start.into(), open_end.into()),
-      close: (close_start.into(), close_end.into()),
-    })
+    Self {
+      kind: BracketKind::RustLike {
+        repeating: repeating.into(),
+        open: (open_start.into(), open_end.into()),
+        close: (close_start.into(), close_end.into()),
+      },
+      min_len: 0,
+    }
   }
 
   /// A C++ raw string-like bracket. This corresponds to `R"xyz(foo)xyz"` raw
@@ -219,11 +228,31 @@ impl Bracket {
       "Bracket::cxx_raw_string() requires an identifier with no affixes"
     );
 
-    Self(BracketKind::CxxLike {
-      ident_rule: ident,
-      open: (open_start.into(), open_end.into()),
-      close: (close_start.into(), close_end.into()),
-    })
+    Self {
+      kind: BracketKind::CxxLike {
+        ident_rule: ident,
+        open: (open_start.into(), open_end.into()),
+        close: (close_start.into(), close_end.into()),
+      },
+      min_len: 0,
+    }
+  }
+
+  /// Sets the minimum length of the "tag" part of the delimiters (e.g. the
+  /// number of copies of the repeated string in [`Bracket::rust_raw_string()`]),
+  /// or the number of characters in the identifier in [`Bracket::cxx_raw_string()`])
+  ///
+  /// # Panics
+  ///
+  /// Panics if this is a [`Bracket::paired()`].
+  pub fn min_len(mut self, len: usize) -> Self {
+    assert!(
+      matches!(&self.kind, BracketKind::Paired(..)),
+      "cannot call min_len() on a Bracket::paired()"
+    );
+
+    self.min_len = len;
+    self
   }
 }
 

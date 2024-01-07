@@ -625,6 +625,10 @@ impl AlignedBox {
 impl Drop for AlignedBox {
   fn drop(&mut self) {
     let len = self.data.len();
+    if len == 0 {
+      return;
+    }
+
     let ptr =
       ManuallyDrop::new(mem::replace(&mut self.data, [].into())).as_mut_ptr();
 

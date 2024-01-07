@@ -480,7 +480,7 @@ impl<'l> Finder<'l, '_> {
     &mut self,
     rule: &'l rule::Bracket,
   ) -> Option<(YarnBox<'l, str>, YarnBox<'l, str>)> {
-    match &rule.0 {
+    match &rule.kind {
       rule::BracketKind::Paired(open, close) => {
         self.must_take(open)?;
         Some((open.as_ref().to_box(), close.as_ref().to_box()))
@@ -495,13 +495,31 @@ impl<'l> Finder<'l, '_> {
         self.must_take(prefix)?;
 
         let rep_start = self.cursor();
+        let mut total = 0;
         loop {
           let (i, _) = self.must_take_longest(&[repeating, suffix])?;
           if i > 0 {
             break;
           }
+          total += 1;
         }
         let rep_end = self.cursor() - suffix.len();
+
+        if total < rule.min_len {
+          self.diagnose(|this| {
+            this.lexer.report().builtins().expected(
+              this.lexer.spec(),
+              [Expected::Name(yarn!(
+                "at least {} `{}`{}",
+                rule.min_len,
+                repeating,
+                if rule.min_len > 1 { "s" } else { "" }
+              ))],
+              Expected::Name(yarn!("only {total}")),
+              Loc::new(this.lexer.file(), rep_start..rep_end),
+            )
+          })
+        }
 
         Some((
           YarnBox::new(&self.lexer.text()[start..self.cursor()]),
@@ -527,6 +545,28 @@ impl<'l> Finder<'l, '_> {
         let rep_end = self.cursor();
 
         self.must_take(suffix)?;
+
+        let total = self.lexer.text()[rep_start..rep_end].chars().count();
+        if total < rule.min_len {
+          self.diagnose(|this| {
+            let mut d = this.lexer.report().builtins().expected(
+              this.lexer.spec(),
+              [Expected::Name(yarn!(
+                "at least {} character{} in identifier",
+                rule.min_len,
+                if rule.min_len > 1 { "s" } else { "" }
+              ))],
+              Expected::Name(yarn!("only {total}")),
+              Loc::new(this.lexer.file(), rep_start..rep_end),
+            );
+
+            if total == 0 {
+              d = d.note("this appears to be an empty identifier");
+            }
+
+            d
+          })
+        }
 
         Some((
           YarnBox::new(&self.lexer.text()[start..self.cursor()]),
