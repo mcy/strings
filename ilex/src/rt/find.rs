@@ -162,7 +162,7 @@ fn find0<'a>(
       found.diagnostics.push(d.speculate());
 
       found.skip.end += len;
-    } else if !recursive && !found.not_ok && found.diagnostics.is_empty() {
+    } else if !recursive && !found.not_ok {
       // For each token going backwards until we hit an XID continue, look for
       // another best-match.
       //
@@ -182,7 +182,7 @@ fn find0<'a>(
 
       let search_in = &lexer.text()[range];
       let mut offset = found.full.end - found.full.start;
-      for c in search_in.chars().take_while(|c| !c.is_xid_continue()) {
+      for c in search_in.chars().rev().take_while(|c| !c.is_xid_continue()) {
         offset -= c.len_utf8();
 
         if let Some(extra) = find0(lexer, offset, true) {

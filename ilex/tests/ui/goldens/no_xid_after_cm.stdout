@@ -1,7 +1,7 @@
 error: extraneous characters after `--null ... null`
  --> <input>:1:51
   |
-1 | --null some stuff null --null some more stuff nullable
+1 | --null some stuff null --null some more stuff nullnull
   |                                                   ^^^^
   |                                                  -- help: maybe you meant to include a space here
   |
