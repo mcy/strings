@@ -183,7 +183,7 @@ impl Builtins<'_> {
     why: impl fmt::Display,
   ) -> Diagnostic {
     let at = at.to_loc(&self.0.ctx);
-    let seq = &&self.0.ctx.file(at.file).unwrap().text()[at.start..at.end];
+    let seq = &&self.0.ctx.file(at.file).unwrap().text(at.start..at.end);
     self
       .0
       .error(f!("found an invalid escape sequence: `{seq}`"))

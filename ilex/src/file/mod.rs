@@ -5,6 +5,7 @@ use std::fmt;
 use std::fmt::Write;
 use std::iter;
 use std::ops::Range;
+use std::ops::RangeBounds;
 use std::ptr;
 use std::slice;
 use std::sync::RwLockReadGuard;
@@ -37,11 +38,34 @@ impl<'ctx> File<'ctx> {
     self.path
   }
 
-  /// Returns the textual contents of this file.
-  pub fn text(self) -> &'ctx str {
+  /// Returns the textual contents of this file. This function takes a range,
+  /// since immediately slicing the file text is an extremely common operation.
+  /// 
+  /// To get the whole file, use `file.text(..)`.
+  pub fn text(self, range: impl RangeBounds<usize>) -> &'ctx str where {
     // Text contains an extra space at the very end for the EOF
     // span to use if necessary.
-    &self.text[..self.text.len() - 1]
+    let text = &self.text[..self.text.len() - 1];
+
+    let start = match range.start_bound() {
+      std::ops::Bound::Included(&x) => x,
+      std::ops::Bound::Excluded(&x) => x.saturating_add(1),
+      std::ops::Bound::Unbounded => 0,
+    };
+
+    let end = match range.end_bound() {
+      std::ops::Bound::Included(&x) => x,
+      std::ops::Bound::Excluded(&x) => x.saturating_sub(1),
+      std::ops::Bound::Unbounded => text.len(),
+    };
+
+    &text[start..=end]
+  }
+
+  /// Returns the length of this file in bytes.
+  #[allow(clippy::len_without_is_empty)]
+  pub fn len(self) -> usize {
+    self.text(..).len()
   }
 
   pub(crate) fn text_with_extra_space(self) -> &'ctx str {

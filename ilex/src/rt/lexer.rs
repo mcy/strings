@@ -1,5 +1,6 @@
 use std::mem;
 use std::ops::Range;
+use std::ops::RangeBounds;
 
 use format_args as f;
 
@@ -44,7 +45,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   /// Creates a new lexer.
   pub fn new(file: File<'ctx>, report: &'a Report, spec: &'spec Spec) -> Self {
     Lexer {
-      eof: file.new_span(file.text().len()..file.text().len()),
+      eof: file.new_span(file.len()..file.len()),
 
       file,
       report,
@@ -59,7 +60,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
 
   pub fn advance(&mut self, by: usize) {
     assert!(
-      self.cursor.saturating_add(by) <= self.text().len(),
+      self.cursor.saturating_add(by) <= self.text(..).len(),
       "ilex: advanced cursor beyond the end of text; this is a bug"
     );
 
@@ -81,9 +82,9 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
     self.file
   }
 
-  /// Returns the full text of the current file being lexed.
-  pub fn text(&self) -> &str {
-    self.file.text()
+  /// Returns a slice of the current file being lexed.
+  pub fn text(&self, range: impl RangeBounds<usize>) -> &str {
+    self.file.text(range)
   }
 
   /// Returns the current cursor position.
@@ -93,7 +94,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
 
   /// Returns everything after the current cursor position.
   pub fn rest(&self) -> &str {
-    &self.text()[self.cursor..]
+    self.text(self.cursor..)
   }
 
   /// Returns the EOF span.
@@ -205,7 +206,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
     let mut idx = start;
     // Can't use a for loop, since that takes ownership of the iterator
     // and that makes the self. calls below a problem.
-    while let Some(c) = self.text()[idx..end].chars().next() {
+    while let Some(c) = self.text(idx..end).chars().next() {
       if c.is_whitespace() {
         if idx > start {
           let span = self.mksp(start..idx);
