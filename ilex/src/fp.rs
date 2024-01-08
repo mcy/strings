@@ -524,7 +524,9 @@ impl Digital<'_> {
       let mut int_digits = 0i64;
       let mut frac_digits = 0i64;
       for (span, digits) in [(int, &mut int_digits), (frac, &mut frac_digits)] {
-        let Some(mut text) = span.map(|s| s.text(ctx)) else { continue; };
+        let Some(mut text) = span.map(|s| s.text(ctx)) else {
+          continue;
+        };
         while let Some(c) = text.chars().next() {
           if let Some(suf) = text.strip_prefix(rule.separator.as_str()) {
             text = suf;

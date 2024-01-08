@@ -72,7 +72,7 @@ impl Report {
   ///
   /// See [`Builtins`].
   pub fn builtins(&self) -> Builtins {
-    Builtins(self.clone())
+    Builtins(self)
   }
 
   /// Adds a new error to this report.

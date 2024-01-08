@@ -299,7 +299,7 @@ pub(crate) struct Affixes {
 }
 
 impl Affixes {
-  const EMPTY: &[Yarn] = &[Yarn::new("")];
+  const EMPTY: &'static[Yarn] = &[Yarn::new("")];
   pub fn prefixes(&self) -> &[Yarn] {
     if self.prefixes.is_empty() {
       return Self::EMPTY;

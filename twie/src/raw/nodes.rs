@@ -75,11 +75,7 @@ impl<I: Index> Nodes<I> {
     Prefixes {
       nodes: self,
       path: suffix,
-      node: if self.sparse.is_empty() {
-        Node::EMPTY
-      } else {
-        node
-      },
+      node: if self.sparse.is_empty() { Node::EMPTY } else { node },
     }
   }
 

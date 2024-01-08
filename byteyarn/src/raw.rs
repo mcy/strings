@@ -59,11 +59,7 @@ impl RawYarn {
     let bytes_usable = mem::size_of::<usize>() * 2 - 1;
     let max_len = 1 << (8 - 2);
 
-    let sso_len = if bytes_usable < max_len {
-      bytes_usable
-    } else {
-      max_len
-    };
+    let sso_len = if bytes_usable < max_len { bytes_usable } else { max_len };
 
     assert!(
       sso_len >= 4,

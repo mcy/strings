@@ -863,11 +863,10 @@ macro_rules! impl_radix {
             bug!("an invalid digit slipped past the lexer: {:?}", next)
           });
 
-          let Some(new_total) = total
+          total = total
             .checked_mul(radix as Self)
-            .and_then(|i| i.checked_add(digit as Self)) else { return None };
+            .and_then(|i| i.checked_add(digit as Self))?;
 
-          total = new_total;
           count += 1;
         }
 

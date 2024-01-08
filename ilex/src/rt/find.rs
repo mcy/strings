@@ -927,12 +927,16 @@ impl<'l> Finder<'l, '_> {
         continue;
       }
 
-      let Some(next) = self.rest().chars().next() else { break };
+      let Some(next) = self.rest().chars().next() else {
+        break;
+      };
       if rule.exps.iter().any(|(e, _)| e.starts_with(next)) {
         break;
       }
 
-      let Some(digit) = next.to_digit(16) else { break };
+      let Some(digit) = next.to_digit(16) else {
+        break;
+      };
       if digit as u8 >= digits.radix {
         invalid_digits.push((next, self.cursor()));
       }
