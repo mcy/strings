@@ -20,7 +20,7 @@ ilex::spec! {
       .separator('_')
       .plus().minus()
       .point_limit(0..2)
-      .exponent("2", Digits::new(10).plus().minus())
+      .exponent("2", Digits::new(2).plus().minus())
       .prefixes(["0b", "0B", "%"]),
 
     #[named = "octal number"]
@@ -63,7 +63,7 @@ fn numbers() {
     9e-9,
     -0777,
     0o777,
-    %122,
+    %1210,
     0b0.0000000101,
     0o0.0024,
     0O1.01p01,

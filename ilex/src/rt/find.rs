@@ -108,9 +108,9 @@ impl Match<'_> {
     };
 
     match (pre, suf) {
-      ("", "") => yarn!("`{kind}`"),
-      ("", suf) => yarn!("`{suf}`-{kind}"),
-      (pre, "") => yarn!("`{pre}`-{kind}"),
+      ("", "") => kind.into(),
+      ("", suf) => yarn!("`{suf}`-suffixed {kind}"),
+      (pre, "") => yarn!("`{pre}`-prefixed {kind}"),
       (pre, suf) => yarn!("`{pre}`-prefixed, `{suf}`-suffixed {kind}"),
     }
   }
@@ -138,7 +138,6 @@ fn find0<'a>(
 
   let mut best = None::<Match>;
   for (prefix, action) in choices {
-    dbg!(prefix);
     let mut found = Finder {
       lexer,
       prefix,
@@ -773,7 +772,6 @@ impl<'l> Finder<'l, '_> {
       which_exp,
     };
 
-    dbg!(self.rest(), prefix_len, self.action.lexeme);
     let start = self.cursor();
 
     if is_mant {
@@ -809,6 +807,7 @@ impl<'l> Finder<'l, '_> {
     let mut digits_this_block = 0;
     let mut block_start = self.cursor();
     let mut prev_sep = None;
+    let mut invalid_digits = Vec::new();
     loop {
       if !rule.separator.is_empty() {
         let start = self.cursor();
@@ -902,12 +901,35 @@ impl<'l> Finder<'l, '_> {
       }
 
       let Some(next) = self.rest().chars().next() else { break };
-      if next.to_digit(digits.radix as u32).is_none() {
+      if rule.exps.iter().any(|(e, _)| e.starts_with(next)) {
         break;
-      };
+      }
+
+      let Some(digit) = next.to_digit(16) else { break };
+      if digit as u8 >= digits.radix {
+        invalid_digits.push((next, self.cursor()));
+      }
 
       digits_this_block += 1;
       self.sub_cursor += next.len_utf8();
+    }
+
+    for (c, at) in invalid_digits {
+      self.diagnose(|this| {
+        this.lexer.report().builtins().unexpected(
+          this.lexer.spec(),
+          Expected::Literal(c.into()),
+          this.action.lexeme,
+          Loc::new(this.lexer.file(), at..at+1),
+        )
+        .remark(
+          Loc::new(this.lexer.file(), start..this.cursor()),
+          f!(
+            "because this value is {} (base {}), digits should be within '0'..='{:x}'",
+            digits.radix_name(), digits.radix, digits.radix - 1,
+          ),
+        )
+      });
     }
 
     if digits_this_block != 0 {
