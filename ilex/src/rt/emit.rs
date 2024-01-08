@@ -1,9 +1,8 @@
 use crate::rt;
 use crate::rt::find;
+use crate::rt::lexer::Lexer;
 use crate::rule;
 use crate::token::Content;
-
-use super::lexer::Lexer;
 
 /// Takes a match and reifies it with spans.
 pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {

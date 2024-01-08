@@ -13,6 +13,7 @@ use std::panic::UnwindSafe;
 use std::sync::Mutex;
 use std::thread;
 
+use crate::f;
 use crate::file::Context;
 use crate::report::Fatal;
 use crate::report::Report;
@@ -187,8 +188,6 @@ impl Ice {
 
   /// Dumps this ICE into a report.
   pub fn report(self, report: &Report) {
-    use format_args as f;
-
     report.error(f!(
       "internal compiler error: {}",
       self.what.as_deref().unwrap_or("unknown panic")

@@ -5,22 +5,20 @@ use std::ops::Bound;
 use std::ops::RangeBounds;
 use std::panic::Location;
 
-use format_args as f;
-
 use byteyarn::yarn;
 use byteyarn::YarnBox;
 
+use crate::f;
 use crate::file::Context;
 use crate::plural;
 use crate::report::Diagnostic;
+use crate::report::Loc;
 use crate::report::Report;
 use crate::report::ToLoc;
 use crate::rule;
 use crate::spec::Lexeme;
 use crate::spec::Spec;
 use crate::token;
-
-use super::Loc;
 
 /// A wrapper over [`Report`] for generating diagnostics.
 ///

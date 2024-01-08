@@ -8,6 +8,7 @@ use byteyarn::Yarn;
 use twie::Trie;
 use unicode_xid::UnicodeXID as _;
 
+use crate::f;
 use crate::token;
 use crate::Never;
 use crate::WrongKind;
@@ -708,12 +709,12 @@ impl fmt::Debug for Escape {
       Self::Fixed { char_count, parse } => f
         .debug_struct("Fixed")
         .field("char_count", char_count)
-        .field("parse", &format_args!("{parse:p}"))
+        .field("parse", &f!("{parse:p}"))
         .finish(),
       Self::Bracketed { bracket, parse } => f
         .debug_struct("Bracketed")
         .field("bracket", bracket)
-        .field("parse", &format_args!("{parse:p}"))
+        .field("parse", &f!("{parse:p}"))
         .finish(),
     }
   }

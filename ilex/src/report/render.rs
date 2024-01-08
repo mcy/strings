@@ -18,10 +18,9 @@ use annotate_snippets::SourceAnnotation;
 use crate::report::diagnostic;
 use crate::report::diagnostic::Info;
 use crate::report::diagnostic::Kind;
+use crate::report::Loc;
 use crate::report::Options;
 use crate::report::Report;
-
-use super::diagnostic::Loc;
 
 pub struct State {
   pub opts: Options,

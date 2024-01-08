@@ -19,6 +19,7 @@ use byteyarn::yarn;
 use byteyarn::YarnBox;
 use num_traits::Bounded;
 
+use crate::f;
 use crate::file::Context;
 use crate::file::Span;
 use crate::file::Spanned;
@@ -401,7 +402,7 @@ impl<'lex> IntoIterator for Bracket<'lex> {
 impl fmt::Debug for Bracket<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     f.debug_struct("Bracket")
-      .field("delimiters", &format_args!("({:?}, {:?})", self.open, self.close))
+      .field("delimiters", &f!("({:?}, {:?})", self.open, self.close))
       .field("contents", &self.contents)
       .finish()
   }
