@@ -272,3 +272,11 @@ impl Never {
     match self.0 {}
   }
 }
+
+fn plural<T: Eq + From<u8>>(count: T) -> &'static str {
+  if count == 1.into() {
+    ""
+  } else {
+    "s"
+  }
+}

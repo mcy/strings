@@ -146,11 +146,7 @@ fn llvm() {
       llvm.string,
       "c",
       ('"', '"'),
-      [
-        C::lit("hello world"),
-        C::esc(r"\0A", 0xAu32),
-        C::esc(r"\00", 0u32),
-      ],
+      [C::lit("hello world"), C::esc(r"\0A", 0xAu32), C::esc(r"\00", 0u32)],
     )
     //
     .then1(llvm.declare, "declare")
@@ -216,11 +212,7 @@ fn llvm() {
     )
     .prefix1(llvm.bare, "!", "foo")
     .then1(llvm.equal, "=")
-    .then2(
-      llvm.meta,
-      ("!{", "}"),
-      Matcher::new().prefix1(llvm.bare, "!", "0"),
-    )
+    .then2(llvm.meta, ("!{", "}"), Matcher::new().prefix1(llvm.bare, "!", "0"))
     //
     .prefix1(llvm.bare, "@", "glb")
     .then1(llvm.equal, "=")

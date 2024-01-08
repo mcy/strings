@@ -23,12 +23,8 @@ pub struct Prefix<'a> {
 }
 
 impl<'a> Prefix<'a> {
-  pub const ROOT: Prefix<'static> = Prefix {
-    prev: None,
-    chunk: b"",
-    len: 0,
-    node: 0,
-  };
+  pub const ROOT: Prefix<'static> =
+    Prefix { prev: None, chunk: b"", len: 0, node: 0 };
 
   /// Constructs a new prefix relative to `prefix`.
   ///

@@ -565,10 +565,7 @@ impl AlignedBox {
   // SAFETY: `align` must be a power of two.
   unsafe fn from_vec(align: usize, data: Vec<u8>) -> Self {
     if align == 1 {
-      return Self {
-        data: data.into(),
-        align,
-      };
+      return Self { data: data.into(), align };
     }
 
     Self::new(

@@ -479,10 +479,7 @@ where
   ///
   /// If `raw` is heap-allocated, no other yarn must be holding it.
   pub(crate) const unsafe fn from_raw(raw: RawYarn) -> Self {
-    Self {
-      raw,
-      _ph: PhantomData,
-    }
+    Self { raw, _ph: PhantomData }
   }
 
   /// Consumes self, inhibits the destructor, and returns the raw yarn.

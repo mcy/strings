@@ -79,27 +79,12 @@ impl Matcher {
 
     match (&self.kind, tok) {
       (Kind::Eof, Any::Eof(..)) | (Kind::Keyword, Any::Keyword(..)) => {}
-      (
-        Kind::Ident {
-          name,
-          prefix,
-          suffix,
-        },
-        Any::Ident(tok),
-      ) => {
+      (Kind::Ident { name, prefix, suffix }, Any::Ident(tok)) => {
         state.match_spans("identifier name", name, tok.name());
         state.match_options("prefix", prefix.as_ref(), tok.prefix());
         state.match_options("suffix", suffix.as_ref(), tok.suffix());
       }
-      (
-        Kind::Quoted {
-          delims,
-          content,
-          prefix,
-          suffix,
-        },
-        Any::Quoted(tok),
-      ) => {
+      (Kind::Quoted { delims, content, prefix, suffix }, Any::Quoted(tok)) => {
         let (open, close) = tok.delimiters();
         state.match_spans("open quote", &delims.0, open);
         state.match_spans("close quote", &delims.1, close);
@@ -195,10 +180,8 @@ impl Matcher {
 
 impl fmt::Debug for Matcher {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let print_spans = matches!(
-      std::env::var("ILEX_SPANS").as_deref(),
-      Ok("ranges" | "text")
-    );
+    let print_spans =
+      matches!(std::env::var("ILEX_SPANS").as_deref(), Ok("ranges" | "text"));
 
     let req_field = |d: &mut DebugStruct, name, span| {
       if print_spans {
@@ -235,21 +218,12 @@ impl fmt::Debug for Matcher {
     let mut d = f.debug_struct(&name);
 
     match &self.kind {
-      Kind::Ident {
-        name,
-        prefix,
-        suffix,
-      } => {
+      Kind::Ident { name, prefix, suffix } => {
         req_field(&mut d, "name", name);
         opt_field(&mut d, "prefix", prefix);
         opt_field(&mut d, "suffix", suffix);
       }
-      Kind::Quoted {
-        content,
-        delims,
-        prefix,
-        suffix,
-      } => {
+      Kind::Quoted { content, delims, prefix, suffix } => {
         d.field("content", content);
         req_field(&mut d, "open", &delims.0);
         req_field(&mut d, "close", &delims.1);

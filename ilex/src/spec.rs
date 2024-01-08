@@ -49,10 +49,7 @@ impl<R> Lexeme<R> {
 
   /// Creates a new lexeme.
   fn new(id: u32) -> Self {
-    Self {
-      id,
-      _ph: PhantomData,
-    }
+    Self { id, _ph: PhantomData }
   }
 }
 
@@ -143,10 +140,7 @@ impl SpecBuilder {
   /// Panics if any of the invariants of a [`Spec`] are violated, or if any rule
   /// combinations are ambiguous (e.g., they have the same prefix).
   pub fn compile(self) -> Spec {
-    let mut spec = Spec {
-      builder: self,
-      trie: Trie::new(),
-    };
+    let mut spec = Spec { builder: self, trie: Trie::new() };
     spec.build_trie();
     spec
   }
@@ -321,20 +315,15 @@ impl Spec {
 
           let close = match &rule.kind {
             rule::BracketKind::Paired(.., close) => close.aliased(),
-            rule::BracketKind::CxxLike {
-              close: (close, _), ..
+            rule::BracketKind::CxxLike { close: (close, _), .. }
+            | rule::BracketKind::RustLike { close: (close, _), .. } => {
+              close.aliased()
             }
-            | rule::BracketKind::RustLike {
-              close: (close, _), ..
-            } => close.aliased(),
           };
           add_action(
             &mut self.trie,
             close.immortalize(),
-            Action {
-              lexeme,
-              prefix_len: u32::MAX,
-            },
+            Action { lexeme, prefix_len: u32::MAX },
           );
         }
 
@@ -343,10 +332,7 @@ impl Spec {
             add_action(
               &mut self.trie,
               prefix.clone(),
-              Action {
-                lexeme,
-                prefix_len: prefix.len() as u32,
-              },
+              Action { lexeme, prefix_len: prefix.len() as u32 },
             );
           }
         }
@@ -357,10 +343,7 @@ impl Spec {
             add_action(
               &mut self.trie,
               Yarn::concat(&[prefix, &open]),
-              Action {
-                lexeme,
-                prefix_len: prefix.len() as u32,
-              },
+              Action { lexeme, prefix_len: prefix.len() as u32 },
             );
           }
         }
@@ -394,10 +377,7 @@ impl Spec {
                 add_action(
                   &mut self.trie,
                   key,
-                  Action {
-                    lexeme,
-                    prefix_len: prefix.len() as u32,
-                  },
+                  Action { lexeme, prefix_len: prefix.len() as u32 },
                 );
               }
             }
@@ -431,10 +411,9 @@ impl Spec {
       key: Yarn,
       lexeme: Lexeme<rule::Any>,
     ) {
-      trie.get_or_insert_default(key).push(Action {
-        lexeme,
-        prefix_len: 0,
-      });
+      trie
+        .get_or_insert_default(key)
+        .push(Action { lexeme, prefix_len: 0 });
     }
 
     fn add_action(
@@ -448,12 +427,8 @@ impl Spec {
     fn make_open(delim: &rule::Bracket) -> YarnBox<str> {
       match &delim.kind {
         rule::BracketKind::Paired(open, ..) => open.aliased(),
-        rule::BracketKind::CxxLike {
-          open: (open, _), ..
-        }
-        | rule::BracketKind::RustLike {
-          open: (open, _), ..
-        } => open.aliased(),
+        rule::BracketKind::CxxLike { open: (open, _), .. }
+        | rule::BracketKind::RustLike { open: (open, _), .. } => open.aliased(),
       }
     }
   }

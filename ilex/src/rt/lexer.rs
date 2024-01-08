@@ -141,9 +141,9 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
     let offset_to_open = (close_idx - close.open_idx) as u32;
 
     match &mut self.tokens[close.open_idx].kind {
-      rt::Kind::Open {
-        offset_to_close, ..
-      } => *offset_to_close = offset_to_open,
+      rt::Kind::Open { offset_to_close, .. } => {
+        *offset_to_close = offset_to_open
+      }
       _ => {
         panic!("ilex: lexer.closers.last().open_idx did not point to an rt::Kind::Open; this is a bug")
       }
@@ -244,9 +244,6 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
       );
     }
 
-    token::Stream {
-      spec: self.spec,
-      toks: self.tokens,
-    }
+    token::Stream { spec: self.spec, toks: self.tokens }
   }
 }

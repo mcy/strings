@@ -11,6 +11,7 @@ use byteyarn::YarnBox;
 use unicode_xid::UnicodeXID;
 
 use crate::file::Span;
+use crate::plural;
 use crate::report::Builtins;
 use crate::report::Diagnostic;
 use crate::report::Expected;
@@ -567,11 +568,7 @@ impl<'l> Finder<'l, '_> {
 
     let core_start = self.cursor();
     let core_end = match &rule.kind {
-      rule::BracketKind::RustLike {
-        repeating,
-        min_count,
-        ..
-      } => {
+      rule::BracketKind::RustLike { repeating, min_count, .. } => {
         let mut total = 0;
         loop {
           let (i, _) = self.must_take_longest(&[repeating, &searching.1])?;
@@ -1001,7 +998,7 @@ impl<'l> Finder<'l, '_> {
             "expected at least {} `{}`{}",
             digits.min_chunks - 1,
             rule.point,
-            if digits.min_chunks > 2 { "s" } else { "" },
+            plural(digits.min_chunks)
           ))
           .at(self.mksp(start..self.cursor()))
       });
@@ -1105,7 +1102,7 @@ impl<'l> Finder<'l, '_> {
                 self.mksp(esc_start..self.cursor()),
                 f!(
                   "expected exactly {char_count} character{} here",
-                  if *char_count == 1 { "s" } else { "" }
+                  plural(*char_count)
                 ),
               )
             })
@@ -1180,11 +1177,7 @@ impl<'l> Finder<'l, '_> {
       YarnBox::new(self.text(pre.end..unquoted.start)),
       YarnBox::new(self.text(unquoted.end..suf.start)),
     );
-    Some((
-      Affixes { pre, suf },
-      MatchData::Quote { unquoted, content },
-      delims,
-    ))
+    Some((Affixes { pre, suf }, MatchData::Quote { unquoted, content }, delims))
   }
 }
 

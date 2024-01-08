@@ -24,10 +24,7 @@ impl<'a> Utf8Chunks<'a> {
   }
 
   pub(crate) fn new(buf: &'a [u8]) -> Self {
-    Self {
-      buf,
-      invalid_prefix: None,
-    }
+    Self { buf, invalid_prefix: None }
   }
 
   unsafe fn take(&mut self, len: usize) -> &'a [u8] {
@@ -119,15 +116,9 @@ pub const fn encode_utf8(c: char) -> ([u8; 4], usize) {
 
   match c.len_utf8() {
     1 => ([sextet(c, 0) & B1_MASK | B1, 0, 0, 0], 1),
-    2 => (
-      [
-        sextet(c, 1) & B2_MASK | B2,
-        sextet(c, 0) & CONT_MASK | CONT,
-        0,
-        0,
-      ],
-      2,
-    ),
+    2 => {
+      ([sextet(c, 1) & B2_MASK | B2, sextet(c, 0) & CONT_MASK | CONT, 0, 0], 2)
+    }
     3 => (
       [
         sextet(c, 2) & B3_MASK | B3,

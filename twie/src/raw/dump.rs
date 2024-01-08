@@ -190,11 +190,8 @@ fn dump0<K: Buf + ?Sized, V: fmt::Debug, I: Index>(
       bus.push(false);
     }
 
-    let nybbles = if is_hi {
-      [Some(i as u8), None]
-    } else {
-      [nybbles[0], Some(i as u8)]
-    };
+    let nybbles =
+      if is_hi { [Some(i as u8), None] } else { [nybbles[0], Some(i as u8)] };
 
     if let Some(hi) = nybbles[0].filter(|_| !is_hi) {
       let ch = hi << 4 | (i as u8);

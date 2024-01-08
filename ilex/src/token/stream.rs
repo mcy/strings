@@ -218,10 +218,7 @@ impl<'lex> Iterator for Cursor<'lex> {
     let next = match &tok.kind {
       Kind::Eof => {
         self.cursor += 1;
-        token::Any::Eof(token::Eof {
-          span: tok.span,
-          spec: self.spec,
-        })
+        token::Any::Eof(token::Eof { span: tok.span, spec: self.spec })
       }
 
       Kind::Keyword => {
@@ -263,27 +260,17 @@ impl<'lex> Iterator for Cursor<'lex> {
 
       Kind::Ident { .. } => {
         self.cursor += 1;
-        token::Any::Ident(token::Ident {
-          tok,
-          spec: self.spec,
-        })
+        token::Any::Ident(token::Ident { tok, spec: self.spec })
       }
 
       Kind::Quoted { .. } => {
         self.cursor += 1;
-        token::Any::Quoted(token::Quoted {
-          tok,
-          spec: self.spec,
-        })
+        token::Any::Quoted(token::Quoted { tok, spec: self.spec })
       }
 
       Kind::Digital { .. } => {
         self.cursor += 1;
-        token::Any::Digital(token::Digital {
-          tok,
-          idx: 0,
-          spec: self.spec,
-        })
+        token::Any::Digital(token::Digital { tok, idx: 0, spec: self.spec })
       }
     };
 
@@ -332,11 +319,7 @@ pub mod switch {
     where
       X: Impl<'lex, T>,
     {
-      Switch(Case {
-        prev: self.0,
-        lexemes: [lexeme],
-        then,
-      })
+      Switch(Case { prev: self.0, lexemes: [lexeme], then })
     }
 
     /// Adds multiple cases to this token switch.
@@ -351,11 +334,7 @@ pub mod switch {
     where
       X: Impl<'lex, T>,
     {
-      Switch(Case {
-        prev: self.0,
-        lexemes,
-        then,
-      })
+      Switch(Case { prev: self.0, lexemes, then })
     }
 
     /// Takes the next token from `cursor` and matches it against this switch.

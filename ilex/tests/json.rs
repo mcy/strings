@@ -256,9 +256,7 @@ fn parse0(
     .case(json.null, |_, _| Json::Null)
     .case(json.false_, |_, _| Json::Bool(false))
     .case(json.true_, |_, _| Json::Bool(true))
-    .case(json.string, |str: token::Quoted, _| {
-      Json::Str(quote2str(ctx, str))
-    })
+    .case(json.string, |str: token::Quoted, _| Json::Str(quote2str(ctx, str)))
     .case(json.number, |num: token::Digital, _| {
       Json::Num(num.to_float::<Fp64>(ctx, .., report).unwrap().to_hard())
     })

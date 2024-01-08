@@ -49,9 +49,7 @@ impl Context {
   }
 
   pub(crate) fn copy(&self) -> Context {
-    Self {
-      state: self.state.clone(),
-    }
+    Self { state: self.state.clone() }
   }
 
   /// Sets this thread to use this [`Context`] in `fmt::Debug`.
@@ -143,18 +141,10 @@ impl Context {
     let (path, text) = unsafe {
       // SAFETY: The pointer to the file's text is immutable and pointer-stable,
       // so we can safely extend its lifetime here.
-      (
-        &*(path.as_path() as *const Utf8Path),
-        &*(text.as_str() as *const str),
-      )
+      (&*(path.as_path() as *const Utf8Path), &*(text.as_str() as *const str))
     };
 
-    Some(File {
-      path,
-      text,
-      ctx: self,
-      idx,
-    })
+    Some(File { path, text, ctx: self, idx })
   }
 
   /// Gets the number of files currently tracked by this source context.
@@ -240,11 +230,7 @@ impl Context {
     let mut state = self.state.write().unwrap();
     assert!(state.ranges.len() < (i32::MAX as usize), "ran out of spans");
     assert!(start <= end, "invalid range for span: {start} > {end}");
-    assert!(
-      end <= file.len(),
-      "span out of bounds: {end} > {}",
-      file.len()
-    );
+    assert!(end <= file.len(), "span out of bounds: {end} > {}", file.len());
 
     let span = Span {
       start: state.ranges.len() as i32,
@@ -261,10 +247,7 @@ impl Context {
   pub(crate) fn new_synthetic_span(&self, text: String) -> Span {
     let mut state = self.state.write().unwrap();
 
-    assert!(
-      state.synthetics.len() < (i32::MAX as usize),
-      "ran out of spans",
-    );
+    assert!(state.synthetics.len() < (i32::MAX as usize), "ran out of spans",);
 
     let span = Span {
       start: !state.synthetics.len() as i32,
@@ -317,10 +300,7 @@ impl Context {
     }
 
     let best = best.expect("attempted to join zero spans");
-    let mut span = Span {
-      start: best.start,
-      end: best.end,
-    };
+    let mut span = Span { start: best.start, end: best.end };
 
     if span.end == span.start {
       span.end = -1;

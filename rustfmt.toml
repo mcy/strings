@@ -1,5 +1,7 @@
 max_width = 80
 tab_spaces = 2
 
-single_line_if_else_max_width = 70
-single_line_let_else_max_width = 70
+struct_lit_width = 40
+struct_variant_width = 40
+chain_width = 60
+use_small_heuristics = "Max"
