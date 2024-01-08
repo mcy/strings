@@ -3,6 +3,26 @@ use ilex::testing;
 use ilex::Context;
 
 #[test]
+fn digit_points() {
+  let ctx = Context::new();
+  let report = ctx.new_report();
+  let _ = ctx
+    .new_file(
+      "<input>",
+      "
+1/2/3e4/5
+1/2/3/4e4/5
+1/2e4/5
+1/2/3e4/5/6
+1/2/3e4
+      ",
+    )
+    .lex(Spec::get().spec(), &report);
+
+  testing::check_report(&report, "tests/ui/goldens/digit_points.stdout");
+}
+
+#[test]
 fn digit_separators() {
   let ctx = Context::new();
   let report = ctx.new_report();
@@ -22,12 +42,29 @@ no_exp@_123_._456_e_789_._012_
   testing::check_report(&report, "tests/ui/goldens/digit_separators.stdout");
 }
 
+#[test]
+fn missing_digits() {
+  let ctx = Context::new();
+  let report = ctx.new_report();
+  let _ = ctx
+    .new_file(
+      "<input>",
+      "
+0xdeadbeef
+0x 0xf
+      ",
+    )
+    .lex(Spec::get().spec(), &report);
+
+  testing::check_report(&report, "tests/ui/goldens/missing_digits.stdout");
+}
+
 ilex::spec! {
   struct Spec {
-    n0: Digital = Digital::new(10)
-      .prefix("all_ok@")
-      .point_limit(0..3)
-      .exponent("e", Digits::new(10).point_limit(0..3))
+    m0: Digital = Digital::new(10)
+      .point_limit(2..3)
+      .point('/')
+      .exponent("e", Digits::new(10).point_limit(1..2))
       .separator_with("_",
         SeparatorCornerCases {
           prefix: true,
@@ -35,6 +72,20 @@ ilex::spec! {
           around_point: true,
           around_exp: true,
         }),
+
+    m1: Digital = Digital::new(16).prefix("0x"),
+
+    n0: Digital = Digital::new(10)
+    .prefix("all_ok@")
+    .point_limit(0..3)
+    .exponent("e", Digits::new(10).point_limit(0..3))
+    .separator_with("_",
+      SeparatorCornerCases {
+        prefix: true,
+        suffix: true,
+        around_point: true,
+        around_exp: true,
+      }),
     n1: Digital = Digital::new(10)
     .prefix("no_prefix@")
     .point_limit(0..3)

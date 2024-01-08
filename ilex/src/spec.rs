@@ -376,6 +376,8 @@ impl Spec {
           //
           // However, this does mean that `08` matches as a decimal integer.
           // Hopefully users are writing good tests. :D
+          //
+          // TODO(mcyoung): Add an API for disallowing leading zeros?
           let mut insert_with_digit = |digit: YarnRef<str>| {
             for sign in rule
               .mant
@@ -385,12 +387,16 @@ impl Spec {
               .chain(Some(""))
             {
               for prefix in rule.affixes.prefixes() {
+                let key = Yarn::concat(&[sign, prefix, &digit]);
+                if key.is_empty() {
+                  continue;
+                }
                 add_action(
                   &mut self.trie,
-                  Yarn::concat(&[sign, prefix, &digit]),
+                  key,
                   Action {
                     lexeme,
-                    prefix_len: (sign.len() + prefix.len()) as u32,
+                    prefix_len: prefix.len() as u32,
                   },
                 );
               }
@@ -409,7 +415,13 @@ impl Spec {
           // We add a version with a leading separator unconditionally,
           // since this improves diagnostics in the case that a prefix
           // separator is forbidden.
-          insert_with_digit(rule.separator.as_ref());
+          if !rule.separator.is_empty() {
+            insert_with_digit(rule.separator.as_ref());
+          }
+
+          // Throw in extra rules consisting of just the prefixes to catch
+          // potential ambiguities.
+          insert_with_digit("".into());
         }
       }
     }
