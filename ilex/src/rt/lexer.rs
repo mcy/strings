@@ -2,21 +2,19 @@ use std::mem;
 use std::ops::Range;
 use std::ops::RangeBounds;
 
-use format_args as f;
-
 use byteyarn::Yarn;
 
+use crate::f;
 use crate::file::File;
 use crate::file::Span;
 use crate::report::Report;
 use crate::rt;
+use crate::rt::find;
 use crate::rule;
 use crate::rule::Bracket;
 use crate::spec::Lexeme;
 use crate::spec::Spec;
 use crate::token;
-
-use super::find;
 
 /// The lexer state struct, that tracks everything going on during a lexing
 /// operation.

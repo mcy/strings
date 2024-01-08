@@ -7,17 +7,16 @@ use std::fmt;
 use std::fmt::DebugStruct;
 use std::fmt::Display;
 
-use std::format_args as f;
-
+use crate::f;
 use crate::file::Context;
 use crate::file::Span;
 use crate::file::Spanned;
 use crate::rule;
 use crate::spec::Lexeme;
+use crate::testing::Text;
 use crate::token;
 use crate::token::Any;
-
-use super::*;
+use crate::token::Sign;
 
 pub struct Matcher {
   pub which: Option<Lexeme<rule::Any>>,

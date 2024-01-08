@@ -4,26 +4,24 @@ use std::mem;
 use std::ops::Range;
 use std::ops::RangeBounds;
 
-use format_args as f;
-
 use byteyarn::yarn;
 use byteyarn::YarnBox;
 use unicode_xid::UnicodeXID;
 
+use crate::f;
 use crate::file::Span;
 use crate::plural;
 use crate::report::Builtins;
 use crate::report::Diagnostic;
 use crate::report::Expected;
 use crate::report::Loc;
+use crate::rt::lexer::Lexer;
 use crate::rule;
 use crate::spec::Action;
 use crate::spec::Lexeme;
 use crate::spec::Spec;
 use crate::token::Content;
 use crate::token::Sign;
-
-use crate::rt::lexer::Lexer;
 
 /// A raw match from `Spec::best_len()`.
 pub struct Match<'a> {

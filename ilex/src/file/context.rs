@@ -5,11 +5,10 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::RwLockReadGuard;
 
-use std::format_args as f;
-
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
+use crate::f;
 use crate::file::File;
 use crate::file::Span;
 use crate::file::CTX_FOR_SPAN_DEBUG;
