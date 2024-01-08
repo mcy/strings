@@ -1,6 +1,8 @@
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::mem;
 use std::ops::Range;
+use std::ops::RangeBounds;
 
 use format_args as f;
 
@@ -9,12 +11,14 @@ use byteyarn::YarnBox;
 use unicode_xid::UnicodeXID;
 
 use crate::file::Span;
+use crate::report::Builtins;
 use crate::report::Diagnostic;
 use crate::report::Expected;
 use crate::report::Loc;
 use crate::rule;
 use crate::spec::Action;
 use crate::spec::Lexeme;
+use crate::spec::Spec;
 use crate::token::Content;
 use crate::token::Sign;
 
@@ -24,7 +28,7 @@ use crate::rt::lexer::Lexer;
 pub struct Match<'a> {
   pub prefix: Range<usize>,
   pub full: Range<usize>,
-  /// Extra characters to skip after this rule.
+  /// Extra characters to skip after self rule.
   pub skip: Range<usize>,
 
   /// The lexeme of the rule we matched.
@@ -35,9 +39,9 @@ pub struct Match<'a> {
   pub affixes: Option<Affixes>,
   pub delims: Option<(YarnBox<'a, str>, YarnBox<'a, str>)>,
 
-  /// Speculative diagnostics for this match, assuming it is picked.
+  /// Speculative diagnostics for self match, assuming it is picked.
   pub diagnostics: Vec<Diagnostic>,
-  /// Whether this match is "bad" and should be preferentially discarded.
+  /// Whether self match is "bad" and should be preferentially discarded.
   pub not_ok: bool,
 }
 
@@ -84,13 +88,14 @@ impl Match<'_> {
       return name.to_box();
     }
 
-    let text = lexer.text();
     let Affixes { pre, suf } = self.affixes.clone().unwrap_or_default();
-    let pre = &text[pre];
-    let suf = &text[suf];
+    let pre = lexer.text(pre);
+    let suf = lexer.text(suf);
 
     let kind = match lexer.spec().rule(self.lexeme) {
-      rule::Any::Keyword(_) => return yarn!("`{}`", &text[self.full.clone()]),
+      rule::Any::Keyword(_) => {
+        return yarn!("`{}`", lexer.text(self.full.clone()))
+      }
       rule::Any::Comment(rule::Comment(rule::CommentKind::Line(open))) => {
         return yarn!("`{open} ...`")
       }
@@ -143,8 +148,8 @@ fn find0<'a>(
       prefix,
       action: *action,
       sub_cursor: start,
-      diagnostics: Vec::new(),
-      not_ok: false,
+      diagnostics: Cell::default(),
+      not_ok: Cell::new(false),
       // In recursive mode, we don't want to trigger any diagnostics.
       prev_ok: !recursive && best.as_ref().is_some_and(|b| !b.not_ok),
     }
@@ -167,12 +172,12 @@ fn find0<'a>(
       // For each token going backwards until we hit an XID continue, look for
       // another best-match.
       //
-      // Matching a single token without doing this is O(log lexemes). This
+      // Matching a single token without doing self is O(log lexemes). This
       // instead slightly worsens performance by a factor of the longest non-XID
       // suffix of a token. However, there is special dispensation for quoteds,
-      // in that we stop searching once we exhaust the suffix; this helps keep
-      // this check from running the lexer inside of a string, which would be
-      // problematic. We exclude comments from this check altogether for
+      // in that we stop searching once we exhaust the suffix; self helps keep
+      // self check from running the lexer inside of a string, which would be
+      // problematic. We exclude comments from self check altogether for
       // the same reason.
 
       let range = match lexer.spec().rule(action.lexeme) {
@@ -181,7 +186,7 @@ fn find0<'a>(
         _ => found.full.clone(),
       };
 
-      let search_in = &lexer.text()[range];
+      let search_in = lexer.text(range);
       let mut offset = found.full.end - found.full.start;
       for c in search_in.chars().rev().take_while(|c| !c.is_xid_continue()) {
         offset -= c.len_utf8();
@@ -249,9 +254,13 @@ pub struct Finder<'l, 'ctx> {
   prefix: &'l str,
   action: Action,
   sub_cursor: usize,
-  diagnostics: Vec<Diagnostic>,
-  not_ok: bool,
   prev_ok: bool,
+
+  // These are in cells for the exclusive purpose of allowing
+  // `Finder::diagnose` to take &self, which makes the diagnostic-generating
+  // code far more readable.
+  diagnostics: Cell<Vec<Diagnostic>>,
+  not_ok: Cell<bool>,
 }
 
 impl<'l> Finder<'l, '_> {
@@ -272,12 +281,31 @@ impl<'l> Finder<'l, '_> {
     }
   }
 
-  fn diagnose(&mut self, cb: impl FnOnce(&mut Self) -> Diagnostic) {
-    self.not_ok = true;
+  fn diagnose(&self, cb: impl FnOnce() -> Diagnostic) {
+    self.not_ok.set(true);
     if !self.prev_ok {
-      let d = cb(self);
-      self.diagnostics.push(d.speculate());
+      let d = cb();
+      let mut ds = self.diagnostics.take();
+      ds.push(d.speculate());
+      self.diagnostics.set(ds);
     }
+  }
+
+  // Forwarding helpers to simplify some of the noisy code below.
+  fn spec(&self) -> &'l Spec {
+    self.lexer.spec()
+  }
+
+  fn builtins(&self) -> Builtins {
+    self.lexer.report().builtins()
+  }
+
+  fn text(&self, range: impl RangeBounds<usize>) -> &'l str {
+    self.lexer.text(range)
+  }
+
+  fn mksp(&self, range: Range<usize>) -> Loc {
+    Loc::new(self.lexer.file(), range)
   }
 
   /// Peels off `prefix`; returns `None` if it was not the next value.
@@ -324,12 +352,12 @@ impl<'l> Finder<'l, '_> {
   ) -> Option<(usize, &'a Y)> {
     let found = self.try_take_longest_by(prefixes, &as_str);
     if found.is_none() {
-      self.diagnose(|this| {
-        this.lexer.report().builtins().expected(
-          this.lexer.spec(),
+      self.diagnose(|| {
+        self.builtins().expected(
+          self.spec(),
           prefixes.iter().map(|y| Expected::Literal(as_str(y).into())),
-          this.next_expected(),
-          Loc::new(this.lexer.file(), this.cursor()..this.cursor()),
+          self.next_expected(),
+          self.mksp(self.cursor()..self.cursor()),
         )
       });
     }
@@ -359,64 +387,63 @@ impl<'l> Finder<'l, '_> {
   fn take_any(mut self) -> Match<'l> {
     let start = self.cursor();
 
-    let (affixes, data, delims) =
-      match self.lexer.spec().rule(self.action.lexeme) {
-        rule::Any::Keyword(..) => {
-          self.sub_cursor += self.prefix.len();
-          (None, None, None)
-        }
+    let (affixes, data, delims) = match self.spec().rule(self.action.lexeme) {
+      rule::Any::Keyword(..) => {
+        self.sub_cursor += self.prefix.len();
+        (None, None, None)
+      }
 
-        rule::Any::Bracket(delimiter) => {
-          if self.action.prefix_len == u32::MAX {
-            match self.take_delim(delimiter, true) {
-              Some((open, close)) => {
-                self.diagnose(|this| {
-                  this.lexer.report().builtins().unopened(
-                    this.lexer.spec(),
-                    &open,
-                    close.as_str(),
-                    Loc::new(this.lexer.file(), start..this.cursor()),
-                  )
-                });
-                (None, None, Some((open, close)))
-              }
-              None => {
-                // Too malformed to even diagnose.
-                self.sub_cursor = start - self.lexer.cursor();
-                (None, None, None)
-              }
+      rule::Any::Bracket(delimiter) => {
+        if self.action.prefix_len == u32::MAX {
+          match self.take_delim(delimiter, true) {
+            Some((open, close)) => {
+              self.diagnose(|| {
+                self.builtins().unopened(
+                  self.spec(),
+                  &open,
+                  close.as_str(),
+                  self.mksp(start..self.cursor()),
+                )
+              });
+              (None, None, Some((open, close)))
             }
-          } else {
-            (None, None, self.take_delim(delimiter, false))
+            None => {
+              // Too malformed to even diagnose.
+              self.sub_cursor = start - self.lexer.cursor();
+              (None, None, None)
+            }
           }
+        } else {
+          (None, None, self.take_delim(delimiter, false))
         }
+      }
 
-        rule::Any::Comment(rule::Comment(rule::CommentKind::Line(prefix))) => {
-          self.take_line_comment(prefix);
-          (None, None, None)
-        }
+      rule::Any::Comment(rule::Comment(rule::CommentKind::Line(prefix))) => {
+        self.take_line_comment(prefix);
+        (None, None, None)
+      }
 
-        rule::Any::Comment(rule::Comment(rule::CommentKind::Block(
-          bracket,
-        ))) => (None, None, self.take_block_comment(bracket)),
+      rule::Any::Comment(rule::Comment(rule::CommentKind::Block(bracket))) => {
+        (None, None, self.take_block_comment(bracket))
+      }
 
-        rule::Any::Ident(ident) => {
-          let aff =
-            self.take_ident(ident, Some(self.action.prefix_len as usize), true);
+      rule::Any::Ident(ident) => {
+        let aff =
+          self.take_ident(ident, Some(self.action.prefix_len as usize), true);
 
-          (aff, None, None)
-        }
+        (aff, None, None)
+      }
 
-        rule::Any::Digital(num) => self
-          .take_digital(num, self.action.prefix_len as usize)
-          .map(|(a, d)| (Some(a), Some(d), None))
-          .unwrap_or_default(),
+      rule::Any::Digital(num) => self
+        .take_digital(num, self.action.prefix_len as usize)
+        .map(|(a, d)| (Some(a), Some(d), None))
+        .unwrap_or_default(),
 
-        rule::Any::Quoted(quote) => self
-          .take_quote(quote, self.action.prefix_len as usize)
-          .map(|(a, d, q)| (Some(a), Some(d), Some(q)))
-          .unwrap_or_default(),
-      };
+      rule::Any::Quoted(quote) => self
+        .take_quote(quote, self.action.prefix_len as usize)
+        .map(|(a, d, q)| (Some(a), Some(d), Some(q)))
+        .unwrap_or_default(),
+    };
 
     Match {
       prefix: start..start + self.prefix.len(),
@@ -426,8 +453,8 @@ impl<'l> Finder<'l, '_> {
       affixes,
       delims,
       data,
-      diagnostics: self.diagnostics,
-      not_ok: self.not_ok,
+      diagnostics: self.diagnostics.take(),
+      not_ok: self.not_ok.take(),
     }
   }
 
@@ -452,10 +479,11 @@ impl<'l> Finder<'l, '_> {
             .map(|(_, y)| y.len())?,
         };
 
-    // Consume the largest prefix of "valid" characters for this value.
+    // Consume the largest prefix of "valid" characters for self value.
     let chars_start = self.cursor();
     let mut total = 0;
-    for c in self.lexer.rest()[self.sub_cursor..].chars() {
+    let mut total_bytes = 0;
+    for c in self.rest().chars() {
       if total == 0 {
         if !rule.is_valid_start(c) {
           break;
@@ -464,9 +492,10 @@ impl<'l> Finder<'l, '_> {
         break;
       }
 
-      self.sub_cursor += c.len_utf8();
+      total_bytes += c.len_utf8();
       total += 1;
     }
+    self.sub_cursor += total_bytes;
     let chars_end = self.cursor();
 
     let suf = self.cursor()
@@ -481,9 +510,9 @@ impl<'l> Finder<'l, '_> {
     }
 
     if total < min_len {
-      self.diagnose(|this| {
-        let mut d = this.lexer.report().builtins().expected(
-          this.lexer.spec(),
+      self.diagnose(|| {
+        let mut d = self.builtins().expected(
+          self.spec(),
           [Expected::Name(if min_len == 1 {
             yarn!("at least 1 character in identifier")
           } else {
@@ -495,14 +524,14 @@ impl<'l> Finder<'l, '_> {
             yarn!("only {total}")
           }),
           if total == 0 {
-            Loc::new(this.lexer.file(), start..this.cursor())
+            self.mksp(start..self.cursor())
           } else {
-            Loc::new(this.lexer.file(), chars_start..chars_end)
+            self.mksp(chars_start..chars_end)
           },
         );
 
         if total == 0 {
-          d = d.help("this appears to be an empty identifier");
+          d = d.help("self appears to be an empty identifier");
         }
 
         d
@@ -554,16 +583,14 @@ impl<'l> Finder<'l, '_> {
         let core_end = self.cursor() - searching.1.len();
 
         if total < *min_count {
-          self.diagnose(|this| {
-            this
-              .lexer
-              .report()
+          self.diagnose(|| {
+            self
               .builtins()
               .expected(
-                this.lexer.spec(),
+                self.spec(),
                 [Expected::Literal(repeating.repeat(*min_count).into())],
                 Expected::Literal(repeating.repeat(total).into()),
-                Loc::new(this.lexer.file(), core_start..core_end),
+                self.mksp(core_start..core_end),
               )
               .help(f!(
                 "at least {min_count} `{repeating}`{} required",
@@ -585,11 +612,11 @@ impl<'l> Finder<'l, '_> {
     };
 
     let mut result = (
-      YarnBox::new(&self.lexer.text()[start..self.cursor()]),
+      YarnBox::new(self.text(start..self.cursor())),
       yarn!(
         "{}{}{}",
         computing.0,
-        &self.lexer.text()[core_start..core_end],
+        self.text(core_start..core_end),
         computing.1
       ),
     );
@@ -650,13 +677,13 @@ impl<'l> Finder<'l, '_> {
         continue;
       }
 
-      self.diagnose(|this| {
-        this.lexer.report().builtins().unclosed(
-          this.lexer.spec(),
-          Loc::new(this.lexer.file(), open_range),
+      self.diagnose(|| {
+        self.builtins().unclosed(
+          self.spec(),
+          self.mksp(open_range),
           &close,
           Lexeme::eof(),
-          this.lexer.eof(),
+          self.lexer.eof(),
         )
       });
       break;
@@ -676,7 +703,7 @@ impl<'l> Finder<'l, '_> {
     // First, consume the mantissa.
     let mant = self.take_digits(prefix_len, rule, &rule.mant, !0, true)?;
 
-    // Separate out the prefix from the sign; this logic is specific to the
+    // Separate out the prefix from the sign; self logic is specific to the
     // mantissa, where the prefix can look like -0x, not e- as for an exponent.
     let sign_len = mant
       .sign
@@ -688,21 +715,21 @@ impl<'l> Finder<'l, '_> {
 
     // The start of a separator at the end of a digit block, if any. Updated
     // each loop spin.
-    let update_ending = |this: &Self, sep: &str| {
-      if sep.is_empty() {
+    let update_ending = |zelf: &Self| {
+      if rule.separator.is_empty() {
         return None;
       }
 
-      let mut ending = &this.lexer.text()[..this.cursor()];
-      while let Some(s) = ending.strip_suffix(sep) {
+      let mut ending = zelf.text(..zelf.cursor());
+      while let Some(s) = ending.strip_suffix(rule.separator.as_str()) {
         ending = s;
       }
-      if ending.len() == this.cursor() {
+      if ending.len() == zelf.cursor() {
         return None;
       }
-      Some(ending.len()..this.cursor())
+      Some(ending.len()..zelf.cursor())
     };
-    let mut ending_sep = update_ending(self, &rule.separator);
+    let mut ending_sep = update_ending(self);
 
     // Now, parse all the exponents that follow.
     let mut blocks = vec![mant];
@@ -712,12 +739,12 @@ impl<'l> Finder<'l, '_> {
       if let Some(ending) =
         ending_sep.take().filter(|_| !rule.corner_cases.around_exp)
       {
-        self.diagnose(|this| {
-          this.lexer.report().builtins().unexpected(
-            this.lexer.spec(),
+        self.diagnose(|| {
+          self.builtins().unexpected(
+            self.spec(),
             Expected::Name("digit separator".into()),
-            this.action.lexeme,
-            Loc::new(this.lexer.file(), ending),
+            self.action.lexeme,
+            self.mksp(ending),
           )
         });
       }
@@ -725,7 +752,7 @@ impl<'l> Finder<'l, '_> {
       self.sub_cursor -= prefix.len();
       blocks.push(self.take_digits(prefix.len(), rule, exp, i, false)?);
 
-      ending_sep = update_ending(self, &rule.separator);
+      ending_sep = update_ending(self);
 
       if blocks.len() as u32 + 1 >= rule.max_exps {
         break;
@@ -735,12 +762,12 @@ impl<'l> Finder<'l, '_> {
     if let Some(ending) =
       ending_sep.take().filter(|_| !rule.corner_cases.suffix)
     {
-      self.diagnose(|this| {
-        this.lexer.report().builtins().unexpected(
-          this.lexer.spec(),
+      self.diagnose(|| {
+        self.builtins().unexpected(
+          self.spec(),
           Expected::Name("digit separator".into()),
-          this.action.lexeme,
-          Loc::new(this.lexer.file(), ending),
+          self.action.lexeme,
+          self.mksp(ending),
         )
       });
     }
@@ -804,7 +831,7 @@ impl<'l> Finder<'l, '_> {
     }
 
     // Now we can move on to parsing some digit blocks.
-    let mut digits_this_block = 0;
+    let mut digits_self_block = 0;
     let mut block_start = self.cursor();
     let mut prev_sep = None;
     let mut invalid_digits = Vec::new();
@@ -813,7 +840,7 @@ impl<'l> Finder<'l, '_> {
         let start = self.cursor();
         while self.try_take(&rule.separator).is_some() {}
         if self.cursor() != start {
-          if digits_this_block == 0 {
+          if digits_self_block == 0 {
             // This is a prefix separator of some kind. Check if it's permitted.
             let allowed = if !digit_data.blocks.is_empty() {
               rule.corner_cases.around_point
@@ -824,16 +851,16 @@ impl<'l> Finder<'l, '_> {
             };
 
             if !allowed {
-              self.diagnose(|this| {
-                this.lexer.report().builtins().unexpected(
-                  this.lexer.spec(),
+              self.diagnose(|| {
+                self.builtins().unexpected(
+                  self.spec(),
                   Expected::Name("digit separator".into()),
-                  this.action.lexeme,
-                  Loc::new(this.lexer.file(), start..this.cursor()),
+                  self.action.lexeme,
+                  self.mksp(start..self.cursor()),
                 )
               });
 
-              // Avoid diagnosing this chunk twice.
+              // Avoid diagnosing self chunk twice.
               prev_sep = None;
               continue;
             }
@@ -852,18 +879,18 @@ impl<'l> Finder<'l, '_> {
         // taking the first point here, and a second one after we break out
         // if necessary.
         //
-        // *However*, if the previous character was a separator, this is x._.,
+        // *However*, if the previous character was a separator, self is x._.,
         // which is not allowed.
-        if digits_this_block == 0 {
+        if digits_self_block == 0 {
           self.sub_cursor -= rule.point.len();
 
           if let Some(prev) = prev_sep {
-            self.diagnose(|this| {
-              this.lexer.report().builtins().unexpected(
-                this.lexer.spec(),
+            self.diagnose(|| {
+              self.builtins().unexpected(
+                self.spec(),
                 Expected::Name("digit separator".into()),
-                this.action.lexeme,
-                Loc::new(this.lexer.file(), prev),
+                self.action.lexeme,
+                self.mksp(prev),
               )
             });
           }
@@ -875,12 +902,12 @@ impl<'l> Finder<'l, '_> {
 
         if let Some(prev) = prev_sep.filter(|_| !rule.corner_cases.around_point)
         {
-          self.diagnose(|this| {
-            this.lexer.report().builtins().unexpected(
-              this.lexer.spec(),
+          self.diagnose(|| {
+            self.builtins().unexpected(
+              self.spec(),
               Expected::Name("digit separator".into()),
-              this.action.lexeme,
-              Loc::new(this.lexer.file(), prev),
+              self.action.lexeme,
+              self.mksp(prev),
             )
           });
         }
@@ -891,7 +918,7 @@ impl<'l> Finder<'l, '_> {
           break;
         }
 
-        digits_this_block = 0;
+        digits_self_block = 0;
         digit_data
           .blocks
           .push(block_start..self.cursor() - rule.point.len());
@@ -910,62 +937,60 @@ impl<'l> Finder<'l, '_> {
         invalid_digits.push((next, self.cursor()));
       }
 
-      digits_this_block += 1;
+      digits_self_block += 1;
       self.sub_cursor += next.len_utf8();
     }
 
     for (c, at) in invalid_digits {
-      self.diagnose(|this| {
-        this.lexer.report().builtins().unexpected(
-          this.lexer.spec(),
+      self.diagnose(|| {
+        self.builtins().unexpected(
+          self.spec(),
           Expected::Literal(c.into()),
-          this.action.lexeme,
-          Loc::new(this.lexer.file(), at..at+1),
+          self.action.lexeme,
+          self.mksp( at..at+1),
         )
         .remark(
-          Loc::new(this.lexer.file(), start..this.cursor()),
+          self.mksp( start..self.cursor()),
           f!(
-            "because this value is {} (base {}), digits should be within '0'..='{:x}'",
+            "because self value is {} (base {}), digits should be within '0'..='{:x}'",
             digits.radix_name(), digits.radix, digits.radix - 1,
           ),
         )
       });
     }
 
-    if digits_this_block != 0 {
+    if digits_self_block != 0 {
       digit_data.blocks.push(block_start..self.cursor());
     } else if digit_data.blocks.is_empty() {
-      self.diagnose(|this| {
-        this
-          .lexer
-          .report()
+      self.diagnose(|| {
+        self
           .builtins()
           .expected(
-            this.lexer.spec(),
+            self.spec(),
             [Expected::Name(yarn!(
               "digits after `{}`",
-              &self.lexer.text()[digit_data.prefix.clone()]
+              self.text(digit_data.prefix.clone())
             ))],
-            this.next_expected(),
-            Loc::new(this.lexer.file(), this.cursor()..this.cursor()),
+            self.next_expected(),
+            self.mksp(self.cursor()..self.cursor()),
           )
           .saying(
-            Loc::new(this.lexer.file(), digit_data.prefix.clone()),
-            "because of this prefix",
+            self.mksp(digit_data.prefix.clone()),
+            "because of self prefix",
           )
       });
       return None;
     }
 
-    if self.lexer.text()[..self.cursor()].ends_with(rule.point.as_str()) {
+    if self.text(..self.cursor()).ends_with(rule.point.as_str()) {
       // This means we parsed something like `1.2.`. We need to give back
       // that extra dot.
       self.sub_cursor -= rule.point.len();
     }
 
     if (digit_data.blocks.len() as u32) < digits.min_chunks {
-      self.diagnose(|this| {
-        this
+      self.diagnose(|| {
+        self
           .lexer
           .report()
           .error(f!(
@@ -974,7 +999,7 @@ impl<'l> Finder<'l, '_> {
             rule.point,
             if digits.min_chunks > 2 { "s" } else { "" },
           ))
-          .at(Loc::new(this.lexer.file(), start..this.cursor()))
+          .at(self.mksp(start..self.cursor()))
       });
     }
 
@@ -1019,13 +1044,13 @@ impl<'l> Finder<'l, '_> {
             continue;
           }
           None => {
-            self.diagnose(|this| {
-              this.lexer.report().builtins().unclosed(
-                this.lexer.spec(),
-                Loc::new(this.lexer.file(), open_range),
+            self.diagnose(|| {
+              self.builtins().unclosed(
+                self.spec(),
+                self.mksp(open_range),
                 &close,
                 Lexeme::eof(),
-                this.lexer.eof(),
+                self.lexer.eof(),
               )
             });
             break self.cursor();
@@ -1041,9 +1066,9 @@ impl<'l> Finder<'l, '_> {
       self.sub_cursor += esc.len();
       let value = match rule {
         rule::Escape::Invalid => {
-          self.diagnose(|this| {
-            this.lexer.report().builtins().invalid_escape(
-              Loc::new(this.lexer.file(), esc_start..this.cursor()),
+          self.diagnose(|| {
+            self.builtins().invalid_escape(
+              self.mksp(esc_start..self.cursor()),
               "invalid escape sequence",
             )
           });
@@ -1071,9 +1096,9 @@ impl<'l> Finder<'l, '_> {
           }
 
           if count != *char_count {
-            self.diagnose(|this| {
-              this.lexer.report().builtins().invalid_escape(
-                Loc::new(this.lexer.file(), esc_start..this.cursor()),
+            self.diagnose(|| {
+              self.builtins().invalid_escape(
+                self.mksp(esc_start..self.cursor()),
                 f!(
                   "expected exactly {char_count} character{} here",
                   if *char_count == 1 { "s" } else { "" }
@@ -1082,15 +1107,14 @@ impl<'l> Finder<'l, '_> {
             })
           }
 
-          let data = &self.lexer.text()[arg_start..self.cursor()];
+          let data = self.text(arg_start..self.cursor());
           match parse(data) {
             Ok(code) => code,
             Err(msg) => {
-              self.diagnose(|this| {
-                this.lexer.report().builtins().invalid_escape(
-                  Loc::new(this.lexer.file(), esc_start..this.cursor()),
-                  msg,
-                )
+              self.diagnose(|| {
+                self
+                  .builtins()
+                  .invalid_escape(self.mksp(esc_start..self.cursor()), msg)
               });
               !0
             }
@@ -1108,12 +1132,12 @@ impl<'l> Finder<'l, '_> {
             match self.rest().chars().next() {
               Some(c) => self.sub_cursor += c.len_utf8(),
               None => {
-                self.diagnose(|this| {
-                  this.lexer.report().builtins().unexpected(
-                    this.lexer.spec(),
+                self.diagnose(|| {
+                  self.builtins().unexpected(
+                    self.spec(),
                     Lexeme::eof(),
-                    this.action.lexeme,
-                    this.lexer.eof(),
+                    self.action.lexeme,
+                    self.lexer.eof(),
                   )
                 });
                 break;
@@ -1121,15 +1145,14 @@ impl<'l> Finder<'l, '_> {
             }
           }
 
-          let data = &self.lexer.text()[arg_start..self.cursor() - close.len()];
+          let data = self.text(arg_start..self.cursor() - close.len());
           match parse(data) {
             Ok(code) => code,
             Err(msg) => {
-              self.diagnose(|this| {
-                this.lexer.report().builtins().invalid_escape(
-                  Loc::new(this.lexer.file(), esc_start..this.cursor()),
-                  msg,
-                )
+              self.diagnose(|| {
+                self
+                  .builtins()
+                  .invalid_escape(self.mksp(esc_start..self.cursor()), msg)
               });
               !0
             }
@@ -1149,10 +1172,9 @@ impl<'l> Finder<'l, '_> {
           .must_take_longest(rule.affixes.suffixes())
           .map(|(_, y)| y.len())?;
 
-    let text = self.lexer.text();
     let delims = (
-      YarnBox::new(&text[pre.end..unquoted.start]),
-      YarnBox::new(&text[unquoted.end..suf.start]),
+      YarnBox::new(self.text(pre.end..unquoted.start)),
+      YarnBox::new(self.text(unquoted.end..suf.start)),
     );
     Some((
       Affixes { pre, suf },
@@ -1163,14 +1185,15 @@ impl<'l> Finder<'l, '_> {
 }
 
 pub fn expect_non_xid(lex: &Lexer, start: usize) -> Option<usize> {
-  let prev_char = lex.text()[..start].chars().next_back()?;
+  let prev_char = lex.text(..start).chars().next_back()?;
   if !prev_char.is_xid_continue() {
     return None;
   }
 
   // Consume as many xid continues as possible and emit a diagnostic if
   // non-empty.
-  let bytes = lex.text()[start..]
+  let bytes = lex
+    .text(start..)
     .chars()
     .take_while(|c| c.is_xid_continue())
     .map(char::len_utf8)

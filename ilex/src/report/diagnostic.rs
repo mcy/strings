@@ -65,7 +65,7 @@ impl Loc {
   #[track_caller]
   pub fn new(file: File<'_>, range: Range<usize>) -> Loc {
     let Range { start, end } = range;
-    let len = file.text().len();
+    let len = file.len();
     assert!(start <= end, "invalid range bounds: {start}..{end}");
     assert!(end <= len, "range end out of bounds: {end} > {len}");
 
@@ -77,7 +77,7 @@ impl Loc {
   }
 
   pub(crate) fn text(self, ctx: &Context) -> &str {
-    &ctx.file(self.file).unwrap().text()[self.start..self.end]
+    ctx.file(self.file).unwrap().text(self.start..self.end)
   }
 }
 

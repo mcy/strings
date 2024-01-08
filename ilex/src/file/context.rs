@@ -169,7 +169,7 @@ impl Context {
     }
 
     let file = self.file(idx).unwrap();
-    (file.path(), file.text())
+    (file.path(), file.text(..))
   }
 
   /// Gets the byte range for the given span, if it isn't the synthetic span.
@@ -241,9 +241,9 @@ impl Context {
     assert!(state.ranges.len() < (i32::MAX as usize), "ran out of spans");
     assert!(start <= end, "invalid range for span: {start} > {end}");
     assert!(
-      end <= file.text().len(),
+      end <= file.len(),
       "span out of bounds: {end} > {}",
-      file.text().len()
+      file.len()
     );
 
     let span = Span {
