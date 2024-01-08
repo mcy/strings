@@ -971,6 +971,29 @@ impl Digits {
     }
   }
 
+  /// Returns the name of this rule's radix (e.g., "binary").
+  /// Useful for diagnostics.
+  pub fn radix_name(&self) -> &'static str {
+    match self.radix {
+      2 => "binary",
+      3 => "ternary",
+      4 => "quaternary",
+      5 => "quinary",
+      6 => "senary",
+      7 => "septenary",
+      8 => "octal",
+      9 => "nonary",
+      10 => "decimal",
+      11 => "undecimal",
+      12 => "duodecimal",
+      13 => "tridecimal",
+      14 => "tetradecimal",
+      15 => "pentadecimal",
+      16 => "hexadecmial",
+      _ => unreachable!(),
+    }
+  }
+
   /// Adds a new kind of sign to this digit block.
   ///
   /// Signs can appear in front of a block of digits and specify a [`Sign`]

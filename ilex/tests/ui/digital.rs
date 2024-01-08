@@ -59,6 +59,25 @@ fn missing_digits() {
   testing::check_report(&report, "tests/ui/goldens/missing_digits.stdout");
 }
 
+#[test]
+fn invalid_digits() {
+  let ctx = Context::new();
+  let report = ctx.new_report();
+  let _ = ctx
+    .new_file(
+      "<input>",
+      "
+0o777
+0o8
+0o08
+0/0/aa11g
+      ",
+    )
+    .lex(Spec::get().spec(), &report);
+
+  testing::check_report(&report, "tests/ui/goldens/invalid_digits.stdout");
+}
+
 ilex::spec! {
   struct Spec {
     m0: Digital = Digital::new(10)
@@ -74,6 +93,7 @@ ilex::spec! {
         }),
 
     m1: Digital = Digital::new(16).prefix("0x"),
+    m2: Digital = Digital::new(8).prefix("0o"),
 
     n0: Digital = Digital::new(10)
     .prefix("all_ok@")
