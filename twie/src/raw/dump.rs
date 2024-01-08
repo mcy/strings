@@ -46,11 +46,7 @@ fn dump0<K: Buf + ?Sized, V: fmt::Debug, I: Index>(
   use boxy::Char;
 
   let is_hi = depth % 2 == 0;
-  let array = if is_hi {
-    trie.nodes.hi(node)
-  } else {
-    trie.nodes.lo(node)
-  };
+  let array = if is_hi { trie.nodes.hi(node) } else { trie.nodes.lo(node) };
 
   let has = array.iter().any(|&x| !x.is_empty());
 

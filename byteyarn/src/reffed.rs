@@ -114,7 +114,8 @@ where
     // This is a const fn, hence no ?.
     let Some(raw) = RawYarn::from_slice_inlined(
       buf_trait::layout_of(buf),
-      buf as *const Buf as *const u8,) else {
+      buf as *const Buf as *const u8,
+    ) else {
       return None;
     };
 

@@ -213,12 +213,12 @@ impl Ice {
 
     if let Some(bt) = self.why {
       match self.where_ {
-        Some((thread, Some(loc))) => report
-          .clone()
-          .note(f!("thread \"{thread}\" panicked at {loc}\n{bt}")),
-        Some((thread, _)) => report
-          .clone()
-          .note(f!("thread \"{thread}\" panicked\n{bt}")),
+        Some((thread, Some(loc))) => {
+          report.note(f!("thread \"{thread}\" panicked at {loc}\n{bt}"))
+        }
+        Some((thread, _)) => {
+          report.note(f!("thread \"{thread}\" panicked\n{bt}"))
+        }
         None => report.note(f!("backtrace:\n{bt}")),
       };
     }

@@ -40,7 +40,7 @@ impl<'ctx> File<'ctx> {
 
   /// Returns the textual contents of this file. This function takes a range,
   /// since immediately slicing the file text is an extremely common operation.
-  /// 
+  ///
   /// To get the whole file, use `file.text(..)`.
   pub fn text(self, range: impl RangeBounds<usize>) -> &'ctx str where {
     // Text contains an extra space at the very end for the EOF
@@ -235,7 +235,7 @@ impl fmt::Debug for Span {
     CTX_FOR_SPAN_DEBUG.with(|ctx| {
       let ctx = ctx.borrow();
       let Some(ctx) = &*ctx else {
-        return f.write_str("<elided>")
+        return f.write_str("<elided>");
       };
 
       let text = self.text(ctx);

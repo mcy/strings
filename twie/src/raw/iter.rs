@@ -38,8 +38,12 @@ impl<'a, K: Buf + ?Sized, V, I: Index> Iterator for Prefixes<'a, '_, K, V, I> {
 
   fn next(&mut self) -> Option<Self::Item> {
     loop {
-      let (_, Some(next), last) = self.prefixes.next()? else { continue };
-      let Some((key, value)) = self.data.get(next) else { continue };
+      let (_, Some(next), last) = self.prefixes.next()? else {
+        continue;
+      };
+      let Some((key, value)) = self.data.get(next) else {
+        continue;
+      };
 
       let key_rest = &key.as_bytes()[self.prefix.len()..];
       if last && !self.suffix.starts_with(key_rest) {
@@ -84,7 +88,9 @@ impl<'a, K: Buf + ?Sized, V, I: Index> Iterator
 
   fn next(&mut self) -> Option<Self::Item> {
     loop {
-      let (_, Some(next), last) = self.prefixes.next()? else { continue };
+      let (_, Some(next), last) = self.prefixes.next()? else {
+        continue;
+      };
 
       let entry = unsafe {
         // SAFETY: nodes::Prefixes will never repeat the indices it produces.
@@ -138,7 +144,9 @@ impl<'a, K: Buf + ?Sized, V, I: Index> Iterator for Iter<'a, K, V, I> {
     loop {
       // The outer Option indicates "end of iteration", the inner option
       // whether this represents an actual data element.
-      let Some(next) = self.dfs.next()? else { continue };
+      let Some(next) = self.dfs.next()? else {
+        continue;
+      };
       let entry = self.data.get(next);
 
       if entry.is_some() {
@@ -175,7 +183,9 @@ impl<'a, K: Buf + ?Sized, V, I: Index> Iterator for IterMut<'a, K, V, I> {
     loop {
       // The outer Option indicates "end of iteration", the inner option
       // whether this represents an actual data element.
-      let Some(next) = self.dfs.next()? else { continue };
+      let Some(next) = self.dfs.next()? else {
+        continue;
+      };
       let entry = unsafe {
         // SAFETY: nodes::Prefixes will never repeat the indices it produces.
         self.data.get_mut_may_alias(next)
