@@ -73,10 +73,7 @@ impl Rule for Eof {
   type Token<'lex> = token::Eof<'lex>;
 
   fn try_from_ref(value: &Any) -> Result<&Self, WrongKind> {
-    Err(WrongKind {
-      want: "Eof",
-      got: value.debug_name(),
-    })
+    Err(WrongKind { want: "Eof", got: value.debug_name() })
   }
 }
 
@@ -90,10 +87,7 @@ impl TryFrom<Any> for Eof {
   type Error = WrongKind;
 
   fn try_from(value: Any) -> Result<Self, Self::Error> {
-    Err(WrongKind {
-      want: "Eof",
-      got: value.debug_name(),
-    })
+    Err(WrongKind { want: "Eof", got: value.debug_name() })
   }
 }
 
@@ -110,9 +104,7 @@ pub struct Keyword {
 impl Keyword {
   /// Constructs a new keyword rule with the exact string it matches.
   pub fn new(value: impl Into<Yarn>) -> Self {
-    Self {
-      value: value.into(),
-    }
+    Self { value: value.into() }
   }
 }
 
@@ -128,10 +120,7 @@ impl Rule for Keyword {
   fn try_from_ref(value: &Any) -> Result<&Self, WrongKind> {
     match value {
       Any::Keyword(rule) => Ok(rule),
-      _ => Err(WrongKind {
-        want: "Keyword",
-        got: value.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Keyword", got: value.debug_name() }),
     }
   }
 }
@@ -148,10 +137,7 @@ impl TryFrom<Any> for Keyword {
   fn try_from(value: Any) -> Result<Self, Self::Error> {
     match value {
       Any::Keyword(rule) => Ok(rule),
-      _ => Err(WrongKind {
-        want: "Keyword",
-        got: value.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Keyword", got: value.debug_name() }),
     }
   }
 }
@@ -258,10 +244,7 @@ impl Rule for Bracket {
   fn try_from_ref(value: &Any) -> Result<&Self, WrongKind> {
     match value {
       Any::Bracket(rule) => Ok(rule),
-      _ => Err(WrongKind {
-        want: "Bracket",
-        got: value.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Bracket", got: value.debug_name() }),
     }
   }
 }
@@ -284,10 +267,7 @@ impl TryFrom<Any> for Bracket {
   fn try_from(value: Any) -> Result<Self, Self::Error> {
     match value {
       Any::Bracket(rule) => Ok(rule),
-      _ => Err(WrongKind {
-        want: "Bracket",
-        got: value.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Bracket", got: value.debug_name() }),
     }
   }
 }
@@ -299,7 +279,7 @@ pub(crate) struct Affixes {
 }
 
 impl Affixes {
-  const EMPTY: &'static[Yarn] = &[Yarn::new("")];
+  const EMPTY: &'static [Yarn] = &[Yarn::new("")];
   pub fn prefixes(&self) -> &[Yarn] {
     if self.prefixes.is_empty() {
       return Self::EMPTY;
@@ -515,10 +495,7 @@ impl Rule for Ident {
   fn try_from_ref(value: &Any) -> Result<&Self, WrongKind> {
     match value {
       Any::Ident(rule) => Ok(rule),
-      _ => Err(WrongKind {
-        want: "Ident",
-        got: value.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Ident", got: value.debug_name() }),
     }
   }
 }
@@ -535,10 +512,7 @@ impl TryFrom<Any> for Ident {
   fn try_from(value: Any) -> Result<Self, Self::Error> {
     match value {
       Any::Ident(rule) => Ok(rule),
-      _ => Err(WrongKind {
-        want: "Ident",
-        got: value.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Ident", got: value.debug_name() }),
     }
   }
 }
@@ -658,10 +632,7 @@ impl Rule for Quoted {
   fn try_from_ref(value: &Any) -> Result<&Self, WrongKind> {
     match value {
       Any::Quoted(rule) => Ok(rule),
-      _ => Err(WrongKind {
-        want: "Quoted",
-        got: value.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Quoted", got: value.debug_name() }),
     }
   }
 }
@@ -678,10 +649,7 @@ impl TryFrom<Any> for Quoted {
   fn try_from(value: Any) -> Result<Self, Self::Error> {
     match value {
       Any::Quoted(rule) => Ok(rule),
-      _ => Err(WrongKind {
-        want: "Quoted",
-        got: value.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Quoted", got: value.debug_name() }),
     }
   }
 }
@@ -870,10 +838,7 @@ impl Digital {
   /// date literal
   pub fn point(mut self, x: impl Into<Yarn>) -> Self {
     self.point = x.into();
-    assert!(
-      !self.point.is_empty(),
-      "the point separator cannot be empty"
-    );
+    assert!(!self.point.is_empty(), "the point separator cannot be empty");
     self
   }
 
@@ -1042,10 +1007,7 @@ impl Rule for Digital {
   fn try_from_ref(value: &Any) -> Result<&Self, WrongKind> {
     match value {
       Any::Digital(rule) => Ok(rule),
-      _ => Err(WrongKind {
-        want: "Digital",
-        got: value.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Digital", got: value.debug_name() }),
     }
   }
 }
@@ -1062,10 +1024,7 @@ impl TryFrom<Any> for Digital {
   fn try_from(value: Any) -> Result<Self, Self::Error> {
     match value {
       Any::Digital(rule) => Ok(rule),
-      _ => Err(WrongKind {
-        want: "Digital",
-        got: value.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Digital", got: value.debug_name() }),
     }
   }
 }
@@ -1142,10 +1101,7 @@ impl Rule for Comment {
   fn try_from_ref(value: &Any) -> Result<&Self, WrongKind> {
     match value {
       Any::Comment(rule) => Ok(rule),
-      _ => Err(WrongKind {
-        want: "Comment",
-        got: value.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Comment", got: value.debug_name() }),
     }
   }
 }
@@ -1162,10 +1118,7 @@ impl TryFrom<Any> for Comment {
   fn try_from(value: Any) -> Result<Self, Self::Error> {
     match value {
       Any::Comment(rule) => Ok(rule),
-      _ => Err(WrongKind {
-        want: "Comment",
-        got: value.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Comment", got: value.debug_name() }),
     }
   }
 }
@@ -1174,10 +1127,7 @@ impl Rule for Never {
   type Token<'lex> = token::Eof<'lex>;
 
   fn try_from_ref(value: &Any) -> Result<&Self, WrongKind> {
-    Err(WrongKind {
-      want: "Never",
-      got: value.debug_name(),
-    })
+    Err(WrongKind { want: "Never", got: value.debug_name() })
   }
 }
 
@@ -1191,9 +1141,6 @@ impl TryFrom<Any> for Never {
   type Error = WrongKind;
 
   fn try_from(value: Any) -> Result<Self, Self::Error> {
-    Err(WrongKind {
-      want: "Never",
-      got: value.debug_name(),
-    })
+    Err(WrongKind { want: "Never", got: value.debug_name() })
   }
 }

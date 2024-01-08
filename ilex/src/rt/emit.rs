@@ -41,9 +41,7 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
       );
 
       lexer.add_token(rt::Token {
-        kind: rt::Kind::Open {
-          offset_to_close: !0,
-        },
+        kind: rt::Kind::Open { offset_to_close: !0 },
         span,
         lexeme: best.lexeme,
         prefix: None,
@@ -140,11 +138,7 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
         lexeme: best.lexeme,
         prefix,
         suffix,
-        kind: rt::Kind::Quoted {
-          content,
-          open,
-          close,
-        },
+        kind: rt::Kind::Quoted { content, open, close },
       });
     }
   }

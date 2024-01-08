@@ -11,6 +11,7 @@ use byteyarn::yarn;
 use byteyarn::YarnBox;
 
 use crate::file::Context;
+use crate::plural;
 use crate::report::Diagnostic;
 use crate::report::Report;
 use crate::report::ToLoc;
@@ -58,10 +59,7 @@ impl Builtins<'_> {
 
     let diagnostic = self
       .0
-      .error(f!(
-        "unrecognized character{}",
-        if found.chars().count() == 1 { "" } else { "s" },
-      ))
+      .error(f!("unrecognized character{}", plural(found.chars().count())))
       .at(at)
       .reported_at(Location::caller());
 
@@ -82,7 +80,7 @@ impl Builtins<'_> {
       .0
       .error(f!(
         "extraneous character{} after {}",
-        if found.chars().count() == 1 { "" } else { "s" },
+        plural(found.chars().count()),
         unexpected_in.into().for_user_diagnostic(spec, &self.0.ctx),
       ))
       .at(at)
@@ -250,10 +248,8 @@ fn non_printable_note(found: Expected, diagnostic: Diagnostic) -> Diagnostic {
     return diagnostic;
   }
 
-  let mut note = format!(
-    "found non-ASCII-printable code point{} ",
-    if count == 1 { "" } else { "s" }
-  );
+  let mut note =
+    format!("found non-ASCII-printable code point{} ", plural(count));
 
   for (pos, c) in PosIter::new(non_ascii) {
     let c = c as u32;
@@ -355,12 +351,7 @@ fn pos_iter() {
   );
   assert_eq!(
     collect(0..4),
-    [
-      (Pos::First, 0),
-      (Pos::Middle, 1),
-      (Pos::Middle, 2),
-      (Pos::Last, 3)
-    ]
+    [(Pos::First, 0), (Pos::Middle, 1), (Pos::Middle, 2), (Pos::Last, 3)]
   );
 }
 

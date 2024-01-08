@@ -137,10 +137,7 @@ impl<'lex> Any<'lex> {
   pub fn eof(self) -> Result<Eof<'lex>, WrongKind> {
     match self {
       Self::Eof(tok) => Ok(tok),
-      _ => Err(WrongKind {
-        want: "Eof",
-        got: self.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Eof", got: self.debug_name() }),
     }
   }
 
@@ -148,10 +145,7 @@ impl<'lex> Any<'lex> {
   pub fn keyword(self) -> Result<Keyword<'lex>, WrongKind> {
     match self {
       Self::Keyword(tok) => Ok(tok),
-      _ => Err(WrongKind {
-        want: "Keyword",
-        got: self.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Keyword", got: self.debug_name() }),
     }
   }
 
@@ -159,10 +153,7 @@ impl<'lex> Any<'lex> {
   pub fn bracket(self) -> Result<Bracket<'lex>, WrongKind> {
     match self {
       Self::Bracket(tok) => Ok(tok),
-      _ => Err(WrongKind {
-        want: "Bracket",
-        got: self.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Bracket", got: self.debug_name() }),
     }
   }
 
@@ -170,10 +161,7 @@ impl<'lex> Any<'lex> {
   pub fn ident(self) -> Result<Ident<'lex>, WrongKind> {
     match self {
       Self::Ident(tok) => Ok(tok),
-      _ => Err(WrongKind {
-        want: "Ident",
-        got: self.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Ident", got: self.debug_name() }),
     }
   }
 
@@ -181,10 +169,7 @@ impl<'lex> Any<'lex> {
   pub fn digital(self) -> Result<Digital<'lex>, WrongKind> {
     match self {
       Self::Digital(tok) => Ok(tok),
-      _ => Err(WrongKind {
-        want: "Digital",
-        got: self.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Digital", got: self.debug_name() }),
     }
   }
 
@@ -192,10 +177,7 @@ impl<'lex> Any<'lex> {
   pub fn quoted(self) -> Result<Quoted<'lex>, WrongKind> {
     match self {
       Self::Quoted(tok) => Ok(tok),
-      _ => Err(WrongKind {
-        want: "Quoted",
-        got: self.debug_name(),
-      }),
+      _ => Err(WrongKind { want: "Quoted", got: self.debug_name() }),
     }
   }
 }
@@ -419,10 +401,7 @@ impl<'lex> IntoIterator for Bracket<'lex> {
 impl fmt::Debug for Bracket<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     f.debug_struct("Bracket")
-      .field(
-        "delimiters",
-        &format_args!("({:?}, {:?})", self.open, self.close),
-      )
+      .field("delimiters", &format_args!("({:?}, {:?})", self.open, self.close))
       .field("contents", &self.contents)
       .finish()
   }
@@ -1171,10 +1150,7 @@ impl TryFrom<Any<'_>> for Never {
   type Error = WrongKind;
 
   fn try_from(value: Any<'_>) -> Result<Self, Self::Error> {
-    Err(WrongKind {
-      want: "Never",
-      got: value.debug_name(),
-    })
+    Err(WrongKind { want: "Never", got: value.debug_name() })
   }
 }
 

@@ -40,10 +40,7 @@ where
 {
   pub(crate) const unsafe fn from_raw(raw: RawYarn) -> Self {
     debug_assert!(!raw.on_heap());
-    let yarn = Self {
-      raw,
-      _ph: PhantomData,
-    };
+    let yarn = Self { raw, _ph: PhantomData };
 
     if cfg!(miri) {
       // Materialize a slice. This is the best we can do as an alignment check

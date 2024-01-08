@@ -308,26 +308,17 @@ pub struct Text {
 impl Text {
   /// Returns a matcher that recognizes all spans.
   pub fn any() -> Self {
-    Text {
-      text: None,
-      range: None,
-    }
+    Text { text: None, range: None }
   }
 
   /// Returns a matcher that recognizes spans with the given text.
   pub fn new(text: impl Into<Yarn>) -> Self {
-    Text {
-      text: Some(text.into()),
-      range: None,
-    }
+    Text { text: Some(text.into()), range: None }
   }
 
   /// Returns a matcher that recognizes spans with the given byte range.
   pub fn range(range: Range<usize>) -> Self {
-    Text {
-      text: None,
-      range: Some(range),
-    }
+    Text { text: None, range: Some(range) }
   }
 
   /// Returns a matcher that recognizes spans with the given byte range and
@@ -417,11 +408,7 @@ impl<T: Into<Text>> Match<(T,)> for rule::Ident {
       which: Some(lexeme.any()),
       span: Text::any(),
       comments: Vec::new(),
-      kind: Kind::Ident {
-        name: arg,
-        prefix: None,
-        suffix: None,
-      },
+      kind: Kind::Ident { name: arg, prefix: None, suffix: None },
     })
   }
 }
@@ -512,10 +499,7 @@ impl Match<(DigitalMatcher,)> for rule::Digital {
       which: Some(lexeme.any()),
       span: Text::any(),
       comments: Vec::new(),
-      kind: Kind::Digital {
-        digits: digits.0.chunks,
-        suffix: None,
-      },
+      kind: Kind::Digital { digits: digits.0.chunks, suffix: None },
     })
   }
 }

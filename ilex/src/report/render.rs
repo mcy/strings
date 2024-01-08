@@ -157,9 +157,7 @@ pub fn render_fmt(
         }
 
         let slice = cur_slice.as_mut().unwrap();
-        let Loc {
-          mut start, mut end, ..
-        } = span;
+        let Loc { mut start, mut end, .. } = span;
 
         // Ensure that all spans have length at least one, and try to get them
         // to point just after non-whitespace.

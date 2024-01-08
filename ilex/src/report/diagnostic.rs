@@ -69,11 +69,7 @@ impl Loc {
     assert!(start <= end, "invalid range bounds: {start}..{end}");
     assert!(end <= len, "range end out of bounds: {end} > {len}");
 
-    Loc {
-      file: file.idx(),
-      start,
-      end,
-    }
+    Loc { file: file.idx(), start, end }
   }
 
   pub(crate) fn text(self, ctx: &Context) -> &str {

@@ -18,9 +18,7 @@ where
   I: Index,
 {
   fn clone(&self) -> Self {
-    Self {
-      raw: self.raw.clone(),
-    }
+    Self { raw: self.raw.clone() }
   }
 }
 
@@ -127,10 +125,7 @@ where
   I: Index,
 {
   fn from(value: SubMut<'a, K, V, I>) -> Self {
-    Sub {
-      raw: value.raw,
-      prefix: value.prefix,
-    }
+    Sub { raw: value.raw, prefix: value.prefix }
   }
 }
 

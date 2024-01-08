@@ -92,10 +92,7 @@ impl<'ctx> File<'ctx> {
 
   /// Creates a new span with the given range.
   pub(crate) fn new_span(&self, range: Range<usize>) -> Span {
-    assert!(
-      self.idx != !0,
-      "tried to create new span on the synthetic file"
-    );
+    assert!(self.idx != !0, "tried to create new span on the synthetic file");
 
     self.ctx.new_span(range.start, range.end, self.idx)
   }
@@ -135,10 +132,7 @@ impl Span {
       return None;
     }
 
-    let end = Span {
-      start: self.end,
-      end: -1,
-    };
+    let end = Span { start: self.end, end: -1 };
 
     assert!(
       !end.is_synthetic(),
@@ -194,10 +188,7 @@ impl Span {
   /// May panic if this span is not owned by `ctx` (or it may produce an
   /// unexpected result).
   pub fn comments(self, ctx: &Context) -> Comments {
-    Comments {
-      slice: ctx.lookup_comments(self),
-      ctx,
-    }
+    Comments { slice: ctx.lookup_comments(self), ctx }
   }
 
   /// Appends text to the comments associated with a given AST node.

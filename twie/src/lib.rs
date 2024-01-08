@@ -89,9 +89,7 @@ pub struct Trie<K: Buf + ?Sized, V, I: Index = u32> {
 impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   /// Creates a new, empty trie.
   pub fn new() -> Self {
-    Self {
-      raw: RawTrie::new(),
-    }
+    Self { raw: RawTrie::new() }
   }
 
   /// Converts this trie into a subtrie reference.
@@ -100,10 +98,7 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   /// writing `trie.sub("")` is inconvenient.
   #[inline]
   pub fn as_ref(&self) -> Sub<K, V, I> {
-    Sub {
-      prefix: Prefix::ROOT,
-      raw: &self.raw,
-    }
+    Sub { prefix: Prefix::ROOT, raw: &self.raw }
   }
 
   /// Converts this trie into a mutable subtrie reference.
@@ -112,10 +107,7 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   /// writing `trie.sub_mut("")` is inconvenient.
   #[inline]
   pub fn as_mut(&mut self) -> SubMut<K, V, I> {
-    SubMut {
-      prefix: Prefix::ROOT,
-      raw: &mut self.raw,
-    }
+    SubMut { prefix: Prefix::ROOT, raw: &mut self.raw }
   }
 
   /// Finds the element with the given key, if present.
@@ -643,10 +635,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> Sub<'a, K, V, I> {
   where
     V: fmt::Debug,
   {
-    assert!(
-      cfg!(debug_assertions),
-      "dump() can only be called in debug mode"
-    );
+    assert!(cfg!(debug_assertions), "dump() can only be called in debug mode");
     raw::dump(self.raw, &self.prefix)
   }
 }
@@ -669,10 +658,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> SubMut<'a, K, V, I> {
   /// [`SubMut`].
   #[inline]
   pub fn as_ref(&self) -> Sub<K, V, I> {
-    Sub {
-      raw: self.raw,
-      prefix: self.prefix,
-    }
+    Sub { raw: self.raw, prefix: self.prefix }
   }
 
   /// Mutably reborrows this view.
@@ -684,10 +670,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> SubMut<'a, K, V, I> {
   /// have.
   #[inline]
   pub fn as_mut(&mut self) -> SubMut<K, V, I> {
-    SubMut {
-      raw: self.raw,
-      prefix: self.prefix,
-    }
+    SubMut { raw: self.raw, prefix: self.prefix }
   }
 
   /// Converts this view into an immutable one.
@@ -696,10 +679,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> SubMut<'a, K, V, I> {
   /// for this view, which is why it needs to consume.
   #[inline]
   pub fn into_ref(self) -> Sub<'a, K, V, I> {
-    Sub {
-      raw: self.raw,
-      prefix: self.prefix,
-    }
+    Sub { raw: self.raw, prefix: self.prefix }
   }
 
   /// Finds the element with the given key, if present.
@@ -936,10 +916,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> SubMut<'a, K, V, I> {
   where
     V: fmt::Debug,
   {
-    assert!(
-      cfg!(debug_assertions),
-      "dump() can only be called in debug mode"
-    );
+    assert!(cfg!(debug_assertions), "dump() can only be called in debug mode");
     raw::dump(self.raw, &self.prefix)
   }
 }
@@ -1008,9 +985,6 @@ mod test {
     items: impl IntoIterator<Item = (&'a str, &'a V)>,
     expected: &[&str],
   ) {
-    assert_eq!(
-      items.into_iter().map(|(k, _)| k).collect::<Vec<_>>(),
-      expected,
-    );
+    assert_eq!(items.into_iter().map(|(k, _)| k).collect::<Vec<_>>(), expected,);
   }
 }
