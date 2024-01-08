@@ -138,6 +138,7 @@ fn find0<'a>(
 
   let mut best = None::<Match>;
   for (prefix, action) in choices {
+    dbg!(prefix);
     let mut found = Finder {
       lexer,
       prefix,
@@ -772,9 +773,9 @@ impl<'l> Finder<'l, '_> {
       which_exp,
     };
 
+    dbg!(self.rest(), prefix_len, self.action.lexeme);
     let start = self.cursor();
-    let end = start + prefix_len;
-    let sub_end = self.sub_cursor + prefix_len;
+
     if is_mant {
       // This is the mantissa, so the sign is before the prefix, and `prefix_len`
       // includes that.
@@ -786,13 +787,13 @@ impl<'l> Finder<'l, '_> {
         }
       }
 
-      digit_data.prefix = self.cursor()..end;
-      self.sub_cursor = sub_end;
+      digit_data.prefix = self.cursor()..self.cursor() + prefix_len;
+      self.sub_cursor += prefix_len;
     } else {
       // This is an exponent, so the sign is *after* the prefix, and `prefix_len`
       // does not include that.
-      digit_data.prefix = self.cursor()..end;
-      self.sub_cursor = sub_end;
+      digit_data.prefix = self.cursor()..self.cursor() + prefix_len;
+      self.sub_cursor += prefix_len;
 
       let start = self.cursor();
       if !digits.signs.is_empty() {
@@ -885,7 +886,6 @@ impl<'l> Finder<'l, '_> {
           });
         }
 
-
         // Even if there are more digits to follow, we are done. This means
         // we got something like `123.`
         if digit_data.blocks.len() as u32 + 1 == digits.max_chunks {
@@ -914,12 +914,23 @@ impl<'l> Finder<'l, '_> {
       digit_data.blocks.push(block_start..self.cursor());
     } else if digit_data.blocks.is_empty() {
       self.diagnose(|this| {
-        this.lexer.report().builtins().expected(
-          this.lexer.spec(),
-          [Expected::Name("digits".into())],
-          this.next_expected(),
-          Loc::new(this.lexer.file(), this.cursor()..this.cursor()),
-        )
+        this
+          .lexer
+          .report()
+          .builtins()
+          .expected(
+            this.lexer.spec(),
+            [Expected::Name(yarn!(
+              "digits after `{}`",
+              &self.lexer.text()[digit_data.prefix.clone()]
+            ))],
+            this.next_expected(),
+            Loc::new(this.lexer.file(), this.cursor()..this.cursor()),
+          )
+          .saying(
+            Loc::new(this.lexer.file(), digit_data.prefix.clone()),
+            "because of this prefix",
+          )
       });
       return None;
     }
@@ -930,7 +941,7 @@ impl<'l> Finder<'l, '_> {
       self.sub_cursor -= rule.point.len();
     }
 
-    if (dbg!(&digit_data.blocks).len() as u32) < dbg!(digits.min_chunks) {
+    if (digit_data.blocks.len() as u32) < digits.min_chunks {
       self.diagnose(|this| {
         this
           .lexer
