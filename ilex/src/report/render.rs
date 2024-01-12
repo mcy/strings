@@ -18,7 +18,6 @@ use annotate_snippets::SourceAnnotation;
 use crate::report::diagnostic;
 use crate::report::diagnostic::Info;
 use crate::report::diagnostic::Kind;
-use crate::report::Loc;
 use crate::report::Options;
 use crate::report::Report;
 
@@ -156,7 +155,8 @@ pub fn render_fmt(
         }
 
         let slice = cur_slice.as_mut().unwrap();
-        let Loc { mut start, mut end, .. } = span;
+        let mut start = span.range.start();
+        let mut end = span.range.end();
 
         // Ensure that all spans have length at least one, and try to get them
         // to point just after non-whitespace.

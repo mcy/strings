@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fs;
-use std::ops::Range;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::RwLockReadGuard;
@@ -12,6 +11,7 @@ use crate::f;
 use crate::file::File;
 use crate::file::Span;
 use crate::file::CTX_FOR_SPAN_DEBUG;
+use crate::range::Range;
 use crate::report;
 use crate::report::Fatal;
 use crate::report::Report;
@@ -33,7 +33,7 @@ pub struct State {
   files: Vec<(Utf8PathBuf, String)>,
 
   // Maps a span id to (start, end, file index).
-  ranges: Vec<(Offset, Offset, Offset)>,
+  ranges: Vec<(Range, Offset)>,
   synthetics: Vec<String>,
   comments: HashMap<i32, Vec<Span>>,
 }
@@ -162,23 +162,20 @@ impl Context {
   }
 
   /// Gets the byte range for the given span, if it isn't the synthetic span.
-  pub(crate) fn lookup_range(
-    &self,
-    span: Span,
-  ) -> (Option<Range<usize>>, usize) {
+  pub(crate) fn lookup_range(&self, span: Span) -> (Option<Range>, usize) {
     if span.is_synthetic() {
       return (None, !0);
     }
 
     let state = self.state.read().unwrap();
-    let (start, mut end, file) = state.ranges[span.index()];
+    let (mut range, file) = state.ranges[span.index()];
 
     if let Some(end_span) = span.end() {
-      let (_, actual_end, _) = state.ranges[end_span.index()];
-      end = actual_end;
+      let (actual, _) = state.ranges[end_span.index()];
+      range = Range(range.start, actual.end);
     }
 
-    (Some(start as usize..end as usize), file as usize)
+    (Some(range), file as usize)
   }
 
   pub(crate) fn lookup_synthetic(&self, span: Span) -> &str {
@@ -216,29 +213,21 @@ impl Context {
   }
 
   /// Creates a new synthetic span with the given contents.
-  pub(crate) fn new_span(
-    &self,
-    start: usize,
-    end: usize,
-    file_idx: usize,
-  ) -> Span {
+  pub(crate) fn new_span(&self, range: Range, file_idx: usize) -> Span {
     let file = self
       .file(file_idx)
       .unwrap_or_else(|| panic!("invalid file index for span: {file_idx}"));
 
     let mut state = self.state.write().unwrap();
     assert!(state.ranges.len() < (i32::MAX as usize), "ran out of spans");
-    assert!(start <= end, "invalid range for span: {start} > {end}");
-    assert!(end <= file.len(), "span out of bounds: {end} > {}", file.len());
+    range.bounds_check(file.len());
 
     let span = Span {
       start: state.ranges.len() as i32,
       end: -1,
     };
 
-    state
-      .ranges
-      .push((start as u32, end as u32, file_idx as u32));
+    state.ranges.push((range, file_idx as u32));
     span
   }
 
@@ -268,8 +257,7 @@ impl Context {
       file: usize,
       start: i32,
       end: i32,
-      start_byte: usize,
-      end_byte: usize,
+      range: Range,
     }
     let mut best = None;
 
@@ -281,19 +269,18 @@ impl Context {
         file: f,
         start: span.start,
         end: span.end().unwrap_or(span).start,
-        start_byte: range.start,
-        end_byte: range.end,
+        range,
       });
 
       assert_eq!(best.file, f, "attempted to join spans of different files");
 
-      if best.start_byte > range.start {
-        best.start_byte = range.start;
+      if best.range.start > range.start {
+        best.range.start = range.start;
         best.start = span.start;
       }
 
-      if best.end_byte < range.end {
-        best.end_byte = range.end;
+      if best.range.end < range.end {
+        best.range.end = range.end;
         best.end = span.end().unwrap_or(span).start;
       }
     }

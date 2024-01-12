@@ -222,6 +222,7 @@ macro_rules! bug {
 pub(crate) use format_args as f;
 
 mod file;
+mod range;
 mod rt;
 mod spec;
 

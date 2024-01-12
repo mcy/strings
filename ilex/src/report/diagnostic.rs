@@ -1,11 +1,12 @@
 use std::fmt;
 use std::mem;
-use std::ops::Range;
 use std::panic;
 
 use crate::file::Context;
 use crate::file::File;
+use crate::file::Span;
 use crate::file::Spanned;
+use crate::range::Range;
 use crate::report::Report;
 
 /// A diagnostic that is being built up.
@@ -51,8 +52,7 @@ pub struct Info {
 #[derive(Copy, Clone)]
 pub struct Loc {
   pub(super) file: usize,
-  pub(super) start: usize,
-  pub(super) end: usize,
+  pub(super) range: Range,
 }
 
 impl Loc {
@@ -63,17 +63,18 @@ impl Loc {
   /// Panics if `start > end`, or if `end` is greater than the length of the
   /// file.
   #[track_caller]
-  pub fn new(file: File<'_>, range: Range<usize>) -> Loc {
-    let Range { start, end } = range;
-    let len = file.len();
-    assert!(start <= end, "invalid range bounds: {start}..{end}");
-    assert!(end <= len, "range end out of bounds: {end} > {len}");
+  pub(crate) fn new(file: File<'_>, range: Range) -> Loc {
+    range.bounds_check(file.len());
+    Loc { file: file.idx(), range }
+  }
 
-    Loc { file: file.idx(), start, end }
+  /// Bakes this location into a source code span.
+  pub(crate) fn bake(self, ctx: &Context) -> Span {
+    ctx.new_span(self.range, self.file)
   }
 
   pub(crate) fn text(self, ctx: &Context) -> &str {
-    ctx.file(self.file).unwrap().text(self.start..self.end)
+    ctx.file(self.file).unwrap().text(self.range.bounds())
   }
 }
 
@@ -96,7 +97,7 @@ impl<S: Spanned> ToLoc for S {
       .range(ctx)
       .expect("synthetic spans are not supported in diagnostics yet");
 
-    Loc::new(span.file(ctx), range)
+    Loc::new(span.file(ctx), Range::new(range))
   }
 }
 

@@ -1,5 +1,5 @@
 use std::mem;
-use std::ops::Range;
+use std::ops::Index;
 use std::ops::RangeBounds;
 
 use byteyarn::Yarn;
@@ -43,7 +43,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   /// Creates a new lexer.
   pub fn new(file: File<'ctx>, report: &'a Report, spec: &'spec Spec) -> Self {
     Lexer {
-      eof: file.new_span(file.len()..file.len()),
+      eof: file.loc(file.len()..file.len()).bake(file.context()),
 
       file,
       report,
@@ -81,7 +81,10 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   }
 
   /// Returns a slice of the current file being lexed.
-  pub fn text(&self, range: impl RangeBounds<usize>) -> &str {
+  pub fn text<R>(&self, range: R) -> &'ctx str
+  where
+    str: Index<R, Output = str>,
+  {
     self.file.text(range)
   }
 
@@ -101,8 +104,8 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   }
 
   /// Creates a new span in the current file with the given range.
-  pub fn mksp(&mut self, range: Range<usize>) -> Span {
-    self.file.new_span(range)
+  pub fn mksp(&mut self, range: impl RangeBounds<usize>) -> Span {
+    self.file.loc(range).bake(self.file.context())
   }
 
   /// Pushes a closer.
