@@ -11,6 +11,7 @@ use byteyarn::YarnBox;
 use crate::f;
 use crate::file::Context;
 use crate::plural;
+use crate::range::Range;
 use crate::report::Diagnostic;
 use crate::report::Loc;
 use crate::report::Report;
@@ -85,8 +86,10 @@ impl Builtins<'_> {
       .remark(
         Loc {
           file: at.file,
-          start: at.start.saturating_sub(1),
-          end: at.start.saturating_add(1),
+          range: Range(
+            at.range.start.saturating_sub(1),
+            at.range.start.saturating_add(1),
+          ),
         },
         "maybe you meant to include a space here",
       )
@@ -179,7 +182,7 @@ impl Builtins<'_> {
     why: impl fmt::Display,
   ) -> Diagnostic {
     let at = at.to_loc(&self.0.ctx);
-    let seq = &&self.0.ctx.file(at.file).unwrap().text(at.start..at.end);
+    let seq = &&self.0.ctx.file(at.file).unwrap().text(at.range.bounds());
     self
       .0
       .error(f!("found an invalid escape sequence: `{seq}`"))

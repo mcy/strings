@@ -4,7 +4,8 @@ use std::cell::RefCell;
 use std::fmt;
 use std::fmt::Write;
 use std::iter;
-use std::ops::Range;
+use std::ops;
+use std::ops::Index;
 use std::ops::RangeBounds;
 use std::ptr;
 use std::slice;
@@ -13,7 +14,9 @@ use std::sync::RwLockReadGuard;
 use byteyarn::Yarn;
 use camino::Utf8Path;
 
+use crate::range::Range;
 use crate::report::Fatal;
+use crate::report::Loc;
 use crate::report::Report;
 use crate::rt;
 use crate::spec::Spec;
@@ -42,24 +45,17 @@ impl<'ctx> File<'ctx> {
   /// since immediately slicing the file text is an extremely common operation.
   ///
   /// To get the whole file, use `file.text(..)`.
-  pub fn text(self, range: impl RangeBounds<usize>) -> &'ctx str where {
+  pub fn text<R>(self, range: R) -> &'ctx str
+  where
+    str: Index<R, Output = str>,
+  {
     // Text contains an extra space at the very end for the EOF
     // span to use if necessary.
-    let text = &self.text[..self.text.len() - 1];
-
-    let start = match range.start_bound() {
-      std::ops::Bound::Included(&x) => x,
-      std::ops::Bound::Excluded(&x) => x.saturating_add(1),
-      std::ops::Bound::Unbounded => 0,
-    };
-
-    let end = match range.end_bound() {
-      std::ops::Bound::Included(&x) => x,
-      std::ops::Bound::Excluded(&x) => x.saturating_sub(1),
-      std::ops::Bound::Unbounded => text.len(),
-    };
-
-    &text[start..=end]
+    //
+    // XXX: Apparently rustc forgets about other <str as Index> impls if we use
+    // text[..x] here??
+    let text = &self.text.get(..self.text.len() - 1).unwrap();
+    &text[range]
   }
 
   /// Returns the length of this file in bytes.
@@ -77,6 +73,16 @@ impl<'ctx> File<'ctx> {
     self.ctx
   }
 
+  /// Creates a new [`Loc`] for diagnostics from this file.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `start > end`, or if `end` is greater than the length of the
+  /// file.
+  pub fn loc(self, range: impl RangeBounds<usize>) -> Loc {
+    Loc::new(self, Range::new(range))
+  }
+
   pub(crate) fn idx(self) -> usize {
     self.idx
   }
@@ -88,13 +94,6 @@ impl<'ctx> File<'ctx> {
     report: &Report,
   ) -> Result<token::Stream<'spec>, Fatal> {
     rt::lex(self, report, spec)
-  }
-
-  /// Creates a new span with the given range.
-  pub(crate) fn new_span(&self, range: Range<usize>) -> Span {
-    assert!(self.idx != !0, "tried to create new span on the synthetic file");
-
-    self.ctx.new_span(range.start, range.end, self.idx)
   }
 }
 
@@ -162,8 +161,8 @@ impl Span {
   ///
   /// May panic if this span is not owned by `ctx` (or it may produce an
   /// unexpected result).
-  pub fn range(self, ctx: &Context) -> Option<Range<usize>> {
-    ctx.lookup_range(self).0
+  pub fn range(self, ctx: &Context) -> Option<ops::Range<usize>> {
+    ctx.lookup_range(self).0.map(Range::bounds)
   }
 
   /// Gets the text for the given span.
@@ -286,7 +285,7 @@ pub trait Spanned {
   }
 
   /// Forwards to [`Span::range()`].
-  fn range(&self, ctx: &Context) -> Option<Range<usize>> {
+  fn range(&self, ctx: &Context) -> Option<ops::Range<usize>> {
     self.span(ctx).range(ctx)
   }
 

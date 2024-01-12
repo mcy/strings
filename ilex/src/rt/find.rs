@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::mem;
-use std::ops::Range;
+use std::ops::Index;
 use std::ops::RangeBounds;
 
 use byteyarn::yarn;
@@ -11,6 +11,7 @@ use unicode_xid::UnicodeXID;
 use crate::f;
 use crate::file::Span;
 use crate::plural;
+use crate::range::Range;
 use crate::report::Builtins;
 use crate::report::Diagnostic;
 use crate::report::Expected;
@@ -25,10 +26,10 @@ use crate::token::Sign;
 
 /// A raw match from `Spec::best_len()`.
 pub struct Match<'a> {
-  pub prefix: Range<usize>,
-  pub full: Range<usize>,
+  pub prefix: Range,
+  pub full: Range,
   /// Extra characters to skip after self rule.
-  pub skip: Range<usize>,
+  pub skip: Range,
 
   /// The lexeme of the rule we matched.
   pub lexeme: Lexeme<rule::Any>,
@@ -46,8 +47,8 @@ pub struct Match<'a> {
 
 #[derive(Default, Clone)]
 pub struct Affixes {
-  pub pre: Range<usize>,
-  pub suf: Range<usize>,
+  pub pre: Range,
+  pub suf: Range,
 }
 
 // Extra data from a `Match`.
@@ -57,17 +58,17 @@ pub enum MatchData {
   /// Quote data, namely the "unquoted" range as well as the content and
   /// escapes.
   Quote {
-    unquoted: Range<usize>,
+    unquoted: Range,
     #[allow(clippy::type_complexity)]
-    content: Vec<Content<Range<usize>>>,
+    content: Vec<Content<Range>>,
   },
 }
 
 #[derive(Debug)]
 pub struct DigitData {
-  pub prefix: Range<usize>,
-  pub sign: Option<(Range<usize>, Sign)>,
-  pub blocks: Vec<Range<usize>>,
+  pub prefix: Range,
+  pub sign: Option<(Range, Sign)>,
+  pub blocks: Vec<Range>,
   pub which_exp: usize,
 }
 
@@ -75,11 +76,11 @@ impl Match<'_> {
   pub fn compute_affix_spans(
     &self,
     lexer: &mut Lexer,
-  ) -> (Range<usize>, Option<Span>, Option<Span>) {
+  ) -> (Range, Option<Span>, Option<Span>) {
     let Affixes { pre, suf } = self.affixes.clone().unwrap_or_default();
-    let prefix = (pre.start < pre.end).then(|| lexer.mksp(pre.clone()));
-    let suffix = (suf.start < suf.end).then(|| lexer.mksp(suf.clone()));
-    (pre.end..suf.start, prefix, suffix)
+    let prefix = (pre.start < pre.end).then(|| lexer.mksp(pre.bounds()));
+    let suffix = (suf.start < suf.end).then(|| lexer.mksp(suf.bounds()));
+    (Range(pre.end, suf.start), prefix, suffix)
   }
 
   pub fn to_yarn<'a>(&self, lexer: &'a Lexer) -> YarnBox<'a, str> {
@@ -92,9 +93,7 @@ impl Match<'_> {
     let suf = lexer.text(suf);
 
     let kind = match lexer.spec().rule(self.lexeme) {
-      rule::Any::Keyword(_) => {
-        return yarn!("`{}`", lexer.text(self.full.clone()))
-      }
+      rule::Any::Keyword(_) => return yarn!("`{}`", lexer.text(self.full)),
       rule::Any::Comment(rule::Comment(rule::CommentKind::Line(open))) => {
         return yarn!("`{open} ...`")
       }
@@ -158,15 +157,15 @@ fn find0<'a>(
       continue;
     }
 
-    if let Some(len) = expect_non_xid(lexer, found.full.end) {
+    if let Some(len) = expect_non_xid(lexer, found.full.end()) {
       let d = lexer.report().builtins().extra_chars(
         lexer.spec(),
         Expected::Name(found.to_yarn(lexer)),
-        Loc::new(lexer.file(), found.full.end..found.full.end + len),
+        Loc::new(lexer.file(), Range(0, len) + found.full.end),
       );
       found.diagnostics.push(d.speculate());
 
-      found.skip.end += len;
+      found.skip.end += len as u32;
     } else if !recursive && !found.not_ok {
       // For each token going backwards until we hit an XID continue, look for
       // another best-match.
@@ -181,12 +180,12 @@ fn find0<'a>(
 
       let range = match lexer.spec().rule(action.lexeme) {
         rule::Any::Quoted(..) => found.affixes.clone().unwrap_or_default().suf,
-        rule::Any::Comment(..) => 0..0,
-        _ => found.full.clone(),
+        rule::Any::Comment(..) => Range(0, 0),
+        _ => found.full,
       };
 
       let search_in = lexer.text(range);
-      let mut offset = found.full.end - found.full.start;
+      let mut offset = found.full.len();
       for c in search_in.chars().rev().take_while(|c| !c.is_xid_continue()) {
         offset -= c.len_utf8();
 
@@ -202,7 +201,7 @@ fn find0<'a>(
               .extra_chars(
                 lexer.spec(),
                 Expected::Name(found.to_yarn(lexer)),
-                Loc::new(lexer.file(), found.full.end..extra.full.end),
+                Loc::new(lexer.file(), Range(found.full.end, extra.full.end)),
               )
               .speculate(),
           );
@@ -224,7 +223,7 @@ fn find0<'a>(
             |r| matches!(lexer.spec().rule(r), &rule::Any::Comment(..));
           bool::cmp(&is_comment(best.lexeme), &is_comment(found.lexeme))
         })
-        .then(usize::cmp(&best.full.end, &found.full.end))
+        .then(usize::cmp(&best.full.len(), &found.full.len()))
         .then(
           // If the rules are equal in length, prefer one without diagnostics.
           bool::cmp(
@@ -232,7 +231,7 @@ fn find0<'a>(
             &found.diagnostics.is_empty(),
           ),
         )
-        .then(usize::cmp(&best.prefix.end, &found.prefix.end));
+        .then(usize::cmp(&best.prefix.len(), &found.prefix.len()));
 
       if cmp.is_lt() {
         *best = found;
@@ -298,13 +297,15 @@ impl<'l> Finder<'l, '_> {
   fn builtins(&self) -> Builtins {
     self.lexer.report().builtins()
   }
-
-  fn text(&self, range: impl RangeBounds<usize>) -> &'l str {
+  pub fn text<R>(&self, range: R) -> &'l str
+  where
+    str: Index<R, Output = str>,
+  {
     self.lexer.text(range)
   }
 
-  fn mksp(&self, range: Range<usize>) -> Loc {
-    Loc::new(self.lexer.file(), range)
+  fn mksp(&self, range: impl RangeBounds<usize>) -> Loc {
+    self.lexer.file().loc(range)
   }
 
   /// Peels off `prefix`; returns `None` if it was not the next value.
@@ -445,9 +446,9 @@ impl<'l> Finder<'l, '_> {
     };
 
     Match {
-      prefix: start..start + self.prefix.len(),
-      full: start..self.cursor(),
-      skip: self.cursor()..self.cursor(),
+      prefix: Range(0, self.prefix.len()) + start,
+      full: Range(start, self.cursor()),
+      skip: Range(0, 0) + self.cursor(),
       lexeme: self.action.lexeme,
       affixes,
       delims,
@@ -466,17 +467,18 @@ impl<'l> Finder<'l, '_> {
     is_top_level: bool,
   ) -> Option<Affixes> {
     let start = self.cursor();
-    let pre = start
-      ..start
-        + match prefix_len {
-          Some(pre) => {
-            self.sub_cursor += pre;
-            pre
-          }
-          None => self
-            .must_take_longest(rule.affixes.prefixes())
-            .map(|(_, y)| y.len())?,
-        };
+    let pre = Range(
+      0,
+      match prefix_len {
+        Some(pre) => {
+          self.sub_cursor += pre;
+          pre
+        }
+        None => self
+          .must_take_longest(rule.affixes.prefixes())
+          .map(|(_, y)| y.len())?,
+      },
+    ) + start;
 
     // Consume the largest prefix of "valid" characters for self value.
     let chars_start = self.cursor();
@@ -497,11 +499,13 @@ impl<'l> Finder<'l, '_> {
     self.sub_cursor += total_bytes;
     let chars_end = self.cursor();
 
-    let suf = self.cursor()
-      ..self.cursor()
-        + self
-          .must_take_longest(rule.affixes.suffixes())
-          .map(|(_, y)| y.len())?;
+    let suf_start = self.cursor();
+    let suf = Range(
+      0,
+      self
+        .must_take_longest(rule.affixes.suffixes())
+        .map(|(_, y)| y.len())?,
+    ) + suf_start;
 
     let mut min_len = rule.min_len;
     if min_len == 0 && is_top_level {
@@ -642,7 +646,7 @@ impl<'l> Finder<'l, '_> {
     bracket: &'l rule::Bracket,
   ) -> Option<(YarnBox<'l, str>, YarnBox<'l, str>)> {
     let (open, close) = self.take_delim(bracket, false)?;
-    let open_range = self.cursor() - open.len()..self.cursor();
+    let open_range = Range(self.cursor() - open.len(), self.cursor());
 
     // We want to implement nested comments, but we only need to find the
     // matching end delimiter for `rule`. So, as a simplifying assumption,
@@ -675,7 +679,7 @@ impl<'l> Finder<'l, '_> {
       self.diagnose(|| {
         self.builtins().unclosed(
           self.spec(),
-          self.mksp(open_range),
+          self.mksp(open_range.bounds()),
           &close,
           Lexeme::eof(),
           self.lexer.eof(),
@@ -700,13 +704,9 @@ impl<'l> Finder<'l, '_> {
 
     // Separate out the prefix from the sign; self logic is specific to the
     // mantissa, where the prefix can look like -0x, not e- as for an exponent.
-    let sign_len = mant
-      .sign
-      .as_ref()
-      .map(|(r, _)| r.end - r.start)
-      .unwrap_or(0);
+    let sign_len = mant.sign.as_ref().map(|(r, _)| r.len()).unwrap_or(0);
 
-    let pre = start + sign_len..start + prefix_len;
+    let pre = Range(sign_len, prefix_len) + start;
 
     // The start of a separator at the end of a digit block, if any. Updated
     // each loop spin.
@@ -722,7 +722,7 @@ impl<'l> Finder<'l, '_> {
       if ending.len() == zelf.cursor() {
         return None;
       }
-      Some(ending.len()..zelf.cursor())
+      Some(zelf.mksp(ending.len()..zelf.cursor()))
     };
     let mut ending_sep = update_ending(self);
 
@@ -739,7 +739,7 @@ impl<'l> Finder<'l, '_> {
             self.spec(),
             Expected::Name("digit separator".into()),
             self.action.lexeme,
-            self.mksp(ending),
+            ending,
           )
         });
       }
@@ -762,17 +762,18 @@ impl<'l> Finder<'l, '_> {
           self.spec(),
           Expected::Name("digit separator".into()),
           self.action.lexeme,
-          self.mksp(ending),
+          ending,
         )
       });
     }
 
     let start = self.cursor();
-    let suf = start
-      ..start
-        + self
-          .must_take_longest(rule.affixes.suffixes())
-          .map(|(_, y)| y.len())?;
+    let suf = Range(
+      0,
+      self
+        .must_take_longest(rule.affixes.suffixes())
+        .map(|(_, y)| y.len())?,
+    ) + start;
 
     Some((Affixes { pre, suf }, MatchData::Digits(blocks)))
   }
@@ -788,7 +789,7 @@ impl<'l> Finder<'l, '_> {
     is_mant: bool,
   ) -> Option<DigitData> {
     let mut digit_data = DigitData {
-      prefix: 0..0,
+      prefix: Range::default(),
       sign: None,
       blocks: Vec::new(),
       which_exp,
@@ -803,16 +804,16 @@ impl<'l> Finder<'l, '_> {
         if let Some((_, &(_, sign))) =
           self.try_take_longest_by(&digits.signs, |(s, _)| s)
         {
-          digit_data.sign = Some((start..self.cursor(), sign))
+          digit_data.sign = Some((Range(start, self.cursor()), sign))
         }
       }
 
-      digit_data.prefix = self.cursor()..self.cursor() + prefix_len;
+      digit_data.prefix = Range(0, prefix_len) + self.cursor();
       self.sub_cursor += prefix_len;
     } else {
       // This is an exponent, so the sign is *after* the prefix, and `prefix_len`
       // does not include that.
-      digit_data.prefix = self.cursor()..self.cursor() + prefix_len;
+      digit_data.prefix = Range(0, prefix_len) + self.cursor();
       self.sub_cursor += prefix_len;
 
       let start = self.cursor();
@@ -820,7 +821,7 @@ impl<'l> Finder<'l, '_> {
         if let Some((_, &(_, sign))) =
           self.try_take_longest_by(&digits.signs, |(s, _)| s)
         {
-          digit_data.sign = Some((start..self.cursor(), sign))
+          digit_data.sign = Some((Range(start, self.cursor()), sign))
         }
       }
     }
@@ -916,7 +917,7 @@ impl<'l> Finder<'l, '_> {
         digits_self_block = 0;
         digit_data
           .blocks
-          .push(block_start..self.cursor() - rule.point.len());
+          .push(Range(block_start, self.cursor() - rule.point.len()));
 
         block_start = self.cursor();
         continue;
@@ -959,7 +960,7 @@ impl<'l> Finder<'l, '_> {
     }
 
     if digits_self_block != 0 {
-      digit_data.blocks.push(block_start..self.cursor());
+      digit_data.blocks.push(Range(block_start, self.cursor()));
     } else if digit_data.blocks.is_empty() {
       self.diagnose(|| {
         self
@@ -968,13 +969,13 @@ impl<'l> Finder<'l, '_> {
             self.spec(),
             [Expected::Name(yarn!(
               "digits after `{}`",
-              self.text(digit_data.prefix.clone())
+              self.text(digit_data.prefix)
             ))],
             self.next_expected(),
             self.mksp(self.cursor()..self.cursor()),
           )
           .saying(
-            self.mksp(digit_data.prefix.clone()),
+            self.mksp(digit_data.prefix.bounds()),
             "because of self prefix",
           )
       });
@@ -1015,7 +1016,7 @@ impl<'l> Finder<'l, '_> {
   ) -> Option<(Affixes, MatchData, (YarnBox<'l, str>, YarnBox<'l, str>))> {
     let start = self.cursor();
     self.sub_cursor += prefix_len;
-    let pre = start..self.cursor();
+    let pre = Range(start, self.cursor());
 
     let (open, close) = self.take_delim(&rule.bracket, false)?;
     let open_range = self.cursor() - open.len()..self.cursor();
@@ -1028,7 +1029,7 @@ impl<'l> Finder<'l, '_> {
       if self.try_take(close.as_str()).is_some() {
         let end = self.cursor() - close.len();
         if end > chunk_start {
-          content.push(Content::Lit(chunk_start..end));
+          content.push(Content::Lit(Range(chunk_start, end)));
         }
 
         break end;
@@ -1058,7 +1059,7 @@ impl<'l> Finder<'l, '_> {
       };
 
       if self.cursor() > chunk_start {
-        content.push(Content::Lit(chunk_start..self.cursor()));
+        content.push(Content::Lit(Range(chunk_start, self.cursor())));
       }
 
       let esc_start = self.cursor();
@@ -1159,22 +1160,22 @@ impl<'l> Finder<'l, '_> {
         }
       };
 
-      content.push(Content::Esc(esc_start..self.cursor(), value));
+      content.push(Content::Esc(Range(esc_start, self.cursor()), value));
       chunk_start = self.cursor();
     };
 
-    let unquoted = uq_start..uq_end;
+    let unquoted = Range(uq_start, uq_end);
     let start = self.cursor();
-    let suf = start
-      ..start
-        + self
-          .must_take_longest(rule.affixes.suffixes())
-          .map(|(_, y)| y.len())?;
+    let suf = Range(
+      0,
+      self
+        .must_take_longest(rule.affixes.suffixes())
+        .map(|(_, y)| y.len())?,
+    ) + start;
 
-    let delims = (
-      YarnBox::new(self.text(pre.end..unquoted.start)),
-      YarnBox::new(self.text(unquoted.end..suf.start)),
-    );
+    let (open, close) = Range::join(pre, suf).delete(unquoted);
+    let delims =
+      (YarnBox::new(self.text(open)), YarnBox::new(self.text(close)));
     Some((Affixes { pre, suf }, MatchData::Quote { unquoted, content }, delims))
   }
 }

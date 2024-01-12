@@ -7,9 +7,9 @@ use crate::token::Content;
 /// Takes a match and reifies it with spans.
 pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
   let start = lexer.cursor();
-  assert!(start == best.full.start);
+  assert!(start == best.full.start());
 
-  lexer.advance(best.full.end - best.full.start);
+  lexer.advance(best.full.len());
   let span = lexer.mksp(start..lexer.cursor());
 
   // Commit all of the diagnostics.
@@ -17,7 +17,7 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
     for d in best.diagnostics.drain(..) {
       d.commit();
     }
-    lexer.advance(best.skip.end - best.skip.start);
+    lexer.advance(best.skip.len());
     return;
   }
 
@@ -52,7 +52,7 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
 
     rule::Any::Ident(_) => {
       let (core, prefix, suffix) = best.compute_affix_spans(lexer);
-      let core = lexer.mksp(core);
+      let core = lexer.mksp(core.bounds());
       lexer.add_token(rt::Token {
         kind: rt::Kind::Ident(core),
         span,
@@ -76,12 +76,14 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
           digits: rt::DigitBlocks {
             span: None,
             prefix: None,
-            sign: mant.sign.as_ref().cloned().map(|(r, s)| (s, lexer.mksp(r))),
+            sign: mant
+              .sign
+              .as_ref()
+              .map(|&(r, s)| (s, lexer.mksp(r.bounds()))),
             blocks: mant
               .blocks
               .iter()
-              .cloned()
-              .map(|r| lexer.mksp(r))
+              .map(|r| lexer.mksp(r.bounds()))
               .collect(),
             which_exp: !0,
           },
@@ -89,15 +91,20 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
             .iter()
             .map(|exp| rt::DigitBlocks {
               span: Some(
-                lexer.mksp(exp.prefix.start..exp.blocks.last().unwrap().end),
+                lexer
+                  .mksp(exp.prefix.start()..exp.blocks.last().unwrap().end()),
               ),
-              prefix: Some(lexer.mksp(exp.prefix.clone())),
-              sign: exp.sign.as_ref().cloned().map(|(r, s)| (s, lexer.mksp(r))),
+              prefix: Some(lexer.mksp(exp.prefix.bounds())),
+              sign: exp
+                .sign
+                .as_ref()
+                .cloned()
+                .map(|(r, s)| (s, lexer.mksp(r.bounds()))),
               blocks: exp
                 .blocks
                 .iter()
                 .cloned()
-                .map(|r| lexer.mksp(r))
+                .map(|r| lexer.mksp(r.bounds()))
                 .collect(),
               which_exp: exp.which_exp,
             })
@@ -121,14 +128,14 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
         _ => bug!("incorrect match data in Quoted"),
       };
 
-      let open = lexer.mksp(core.start..unquoted.start);
-      let close = lexer.mksp(unquoted.end..core.end);
+      let open = lexer.mksp(core.start()..unquoted.start());
+      let close = lexer.mksp(unquoted.end()..core.end());
 
       let content = content
         .iter()
         .map(|content| match content {
-          Content::Lit(r) => Content::Lit(lexer.mksp(r.clone())),
-          Content::Esc(r, c) => Content::Esc(lexer.mksp(r.clone()), *c),
+          Content::Lit(r) => Content::Lit(lexer.mksp(r.bounds())),
+          Content::Esc(r, c) => Content::Esc(lexer.mksp(r.bounds()), *c),
         })
         .collect();
 
@@ -142,5 +149,5 @@ pub fn emit(lexer: &mut Lexer, mut best: find::Match<'static>) {
     }
   }
 
-  lexer.advance(best.skip.end - best.skip.start);
+  lexer.advance(best.skip.len());
 }
