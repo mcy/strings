@@ -65,8 +65,12 @@ impl Range {
     (self.end - self.start) as usize
   }
 
-  pub fn join(self, that: Range) -> Range {
-    Range(u32::min(self.start, that.start), u32::max(self.start, that.start))
+  pub fn outer_join(self, that: Range) -> Range {
+    Range(u32::min(self.start, that.start), u32::max(self.end, that.end))
+  }
+
+  pub fn inner_join(self, that: Range) -> Range {
+    Range(u32::min(self.end, that.end), u32::max(self.start, that.start))
   }
 
   pub fn delete(self, middle: Range) -> (Range, Range) {

@@ -48,7 +48,7 @@ impl<R> Lexeme<R> {
   }
 
   /// Creates a new lexeme.
-  fn new(id: u32) -> Self {
+  pub(crate) fn new(id: u32) -> Self {
     Self { id, _ph: PhantomData }
   }
 }
@@ -295,23 +295,23 @@ impl Spec {
       let lexeme = Lexeme::new(lexeme as u32);
       match rule {
         rule::Any::Comment(rule::Comment(rule::CommentKind::Line(open))) => {
-          add_lexeme(&mut self.trie, open.clone(), lexeme)
+          add_lexeme(&mut self.trie, open, lexeme)
         }
 
         rule::Any::Comment(rule::Comment(rule::CommentKind::Block(
           bracket,
         ))) => {
           let open = make_open(bracket);
-          add_lexeme(&mut self.trie, open.immortalize(), lexeme);
+          add_lexeme(&mut self.trie, &open, lexeme);
         }
 
         rule::Any::Keyword(rule) => {
-          add_lexeme(&mut self.trie, rule.value.clone(), lexeme)
+          add_lexeme(&mut self.trie, &rule.value, lexeme)
         }
 
         rule::Any::Bracket(rule) => {
           let open = make_open(rule);
-          add_lexeme(&mut self.trie, open.immortalize(), lexeme);
+          add_lexeme(&mut self.trie, &open, lexeme);
 
           let close = match &rule.kind {
             rule::BracketKind::Paired(.., close) => close.aliased(),
@@ -322,7 +322,7 @@ impl Spec {
           };
           add_action(
             &mut self.trie,
-            close.immortalize(),
+            &close,
             Action { lexeme, prefix_len: u32::MAX },
           );
         }
@@ -331,7 +331,7 @@ impl Spec {
           for prefix in rule.affixes.prefixes() {
             add_action(
               &mut self.trie,
-              prefix.clone(),
+              prefix,
               Action { lexeme, prefix_len: prefix.len() as u32 },
             );
           }
@@ -342,7 +342,7 @@ impl Spec {
           for prefix in rule.affixes.prefixes() {
             add_action(
               &mut self.trie,
-              Yarn::concat(&[prefix, &open]),
+              &Yarn::concat(&[prefix, &open]),
               Action { lexeme, prefix_len: prefix.len() as u32 },
             );
           }
@@ -376,7 +376,7 @@ impl Spec {
                 }
                 add_action(
                   &mut self.trie,
-                  key,
+                  &key,
                   Action { lexeme, prefix_len: prefix.len() as u32 },
                 );
               }
@@ -408,7 +408,7 @@ impl Spec {
 
     fn add_lexeme(
       trie: &mut Trie<str, Vec<Action>>,
-      key: Yarn,
+      key: &str,
       lexeme: Lexeme<rule::Any>,
     ) {
       trie
@@ -418,7 +418,7 @@ impl Spec {
 
     fn add_action(
       trie: &mut Trie<str, Vec<Action>>,
-      key: Yarn,
+      key: &str,
       action: Action,
     ) {
       trie.get_or_insert_default(key).push(action);

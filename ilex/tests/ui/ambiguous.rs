@@ -14,7 +14,7 @@ ilex::spec! {
       ("", "-"),
     ),
     cm2: Comment = Bracket::cxx_style(
-      Ident::new(),
+      Ident::new().min_len(1),
       ("--", ""),
       ("", ""),
     ),

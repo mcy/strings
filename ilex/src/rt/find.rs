@@ -6,9 +6,9 @@ use std::ops::RangeBounds;
 
 use byteyarn::yarn;
 use byteyarn::YarnBox;
-use unicode_xid::UnicodeXID;
 
 use crate::f;
+use crate::file::IsXid;
 use crate::file::Span;
 use crate::plural;
 use crate::range::Range;
@@ -98,12 +98,18 @@ impl Match<'_> {
         return yarn!("`{open} ...`")
       }
       rule::Any::Bracket(_) | rule::Any::Comment(_) => {
-        let (open, close) = self.delims.clone().unwrap();
-        return yarn!("`{open} ... {close}`");
+        if let Some((open, close)) = &self.delims {
+          return yarn!("`{open} ... {close}`");
+        } else {
+          return self.lexeme.to_yarn(lexer.spec());
+        }
       }
       rule::Any::Quoted(_) => {
-        let (open, close) = self.delims.clone().unwrap();
-        return yarn!("`{pre}{open}...{close}{suf}`");
+        if let Some((open, close)) = &self.delims {
+          return yarn!("`{pre}{open}...{close}{suf}`");
+        } else {
+          return self.lexeme.to_yarn(lexer.spec());
+        }
       }
 
       rule::Any::Ident(_) => "identifier",
@@ -153,7 +159,7 @@ fn find0<'a>(
     }
     .take_any();
 
-    if found.full.start == found.full.end {
+    if found.full.len() == 0 {
       continue;
     }
 
@@ -186,8 +192,13 @@ fn find0<'a>(
 
       let search_in = lexer.text(range);
       let mut offset = found.full.len();
-      for c in search_in.chars().rev().take_while(|c| !c.is_xid_continue()) {
+      for c in search_in.chars().rev() {
         offset -= c.len_utf8();
+        if lexer.file().is_xid(found.full.start() + offset).unwrap()
+          != IsXid::No
+        {
+          break;
+        }
 
         if let Some(extra) = find0(lexer, offset, true) {
           if extra.full.end <= found.full.end {
@@ -480,16 +491,18 @@ impl<'l> Finder<'l, '_> {
       },
     ) + start;
 
-    // Consume the largest prefix of "valid" characters for self value.
+    // Consume the largest prefix of "valid" characters for this value.
     let chars_start = self.cursor();
     let mut total = 0;
     let mut total_bytes = 0;
     for c in self.rest().chars() {
+      let idx = self.cursor() + total_bytes;
+      let is_xid = self.lexer.file().is_xid(idx).unwrap();
       if total == 0 {
-        if !rule.is_valid_start(c) {
+        if !rule.is_valid_start(c, is_xid) {
           break;
         }
-      } else if !rule.is_valid_continue(c) {
+      } else if !rule.is_valid_continue(c, is_xid) {
         break;
       }
 
@@ -534,7 +547,7 @@ impl<'l> Finder<'l, '_> {
         );
 
         if total == 0 {
-          d = d.help("self appears to be an empty identifier");
+          d = d.help("this appears to be an empty identifier");
         }
 
         d
@@ -561,8 +574,8 @@ impl<'l> Finder<'l, '_> {
     };
 
     let (searching, computing) = match is_close {
-      true => (close, open),
       false => (open, close),
+      true => (close, open),
     };
 
     let start = self.cursor();
@@ -952,7 +965,7 @@ impl<'l> Finder<'l, '_> {
         .remark(
           self.mksp( start..self.cursor()),
           f!(
-            "because self value is {} (base {}), digits should be within '0'..='{:x}'",
+            "because this value is {} (base {}), digits should be within '0'..='{:x}'",
             digits.radix_name(), digits.radix, digits.radix - 1,
           ),
         )
@@ -976,7 +989,7 @@ impl<'l> Finder<'l, '_> {
           )
           .saying(
             self.mksp(digit_data.prefix.bounds()),
-            "because of self prefix",
+            "because of this prefix",
           )
       });
       return None;
@@ -997,7 +1010,7 @@ impl<'l> Finder<'l, '_> {
             "expected at least {} `{}`{}",
             digits.min_chunks - 1,
             rule.point,
-            plural(digits.min_chunks)
+            plural(digits.min_chunks - 1)
           ))
           .at(self.mksp(start..self.cursor()))
       });
@@ -1173,16 +1186,16 @@ impl<'l> Finder<'l, '_> {
         .map(|(_, y)| y.len())?,
     ) + start;
 
-    let (open, close) = Range::join(pre, suf).delete(unquoted);
+    let (open, close) = Range::inner_join(pre, suf).delete(unquoted);
     let delims =
       (YarnBox::new(self.text(open)), YarnBox::new(self.text(close)));
     Some((Affixes { pre, suf }, MatchData::Quote { unquoted, content }, delims))
   }
 }
 
-pub fn expect_non_xid(lex: &Lexer, start: usize) -> Option<usize> {
+pub fn expect_non_xid(lex: &Lexer, mut start: usize) -> Option<usize> {
   let prev_char = lex.text(..start).chars().next_back()?;
-  if !prev_char.is_xid_continue() {
+  if lex.file().is_xid(start - prev_char.len_utf8()).unwrap() == IsXid::No {
     return None;
   }
 
@@ -1191,8 +1204,11 @@ pub fn expect_non_xid(lex: &Lexer, start: usize) -> Option<usize> {
   let bytes = lex
     .text(start..)
     .chars()
-    .take_while(|c| c.is_xid_continue())
     .map(char::len_utf8)
+    .take_while(|len| {
+      start += len;
+      lex.file().is_xid(start - len).unwrap() != IsXid::No
+    })
     .sum();
 
   if bytes == 0 {
