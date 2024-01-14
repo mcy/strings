@@ -11,6 +11,7 @@ use std::ptr;
 use std::slice;
 use std::sync::RwLockReadGuard;
 
+use bitvec::slice::BitSlice;
 use byteyarn::Yarn;
 use camino::Utf8Path;
 
@@ -31,8 +32,20 @@ pub use context::Context;
 pub struct File<'ctx> {
   path: &'ctx Utf8Path,
   text: &'ctx str,
+  kinds: &'ctx BitSlice,
   ctx: &'ctx Context,
   idx: usize,
+}
+
+/// Information from the pre-computed Unicode XID kind table.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum IsXid {
+  /// XID_Start.
+  Start,
+  /// XID_Continue.
+  Continue,
+  /// Something else?
+  No,
 }
 
 impl<'ctx> File<'ctx> {
@@ -81,6 +94,18 @@ impl<'ctx> File<'ctx> {
   /// file.
   pub fn loc(self, range: impl RangeBounds<usize>) -> Loc {
     Loc::new(self, Range::new(range))
+  }
+
+  /// Checks the pre-computed XID table.
+  ///
+  /// Returns `None` if `idx` is not a UTF-8 boundary.
+  pub(crate) fn is_xid(self, idx: usize) -> Option<IsXid> {
+    match (&*self.kinds.get(idx * 2)?, &*self.kinds.get(idx * 2 + 1)?) {
+      (false, false) => Some(IsXid::No),
+      (false, true) => None,
+      (true, false) => Some(IsXid::Continue),
+      (true, true) => Some(IsXid::Start),
+    }
   }
 
   pub(crate) fn idx(self) -> usize {

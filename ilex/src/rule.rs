@@ -6,9 +6,9 @@ use std::ops::RangeBounds;
 
 use byteyarn::Yarn;
 use twie::Trie;
-use unicode_xid::UnicodeXID as _;
 
 use crate::f;
+use crate::file::IsXid;
 use crate::token;
 use crate::Never;
 use crate::WrongKind;
@@ -155,10 +155,19 @@ pub struct Bracket {
 impl Bracket {
   /// An ordinary pair of delimiters: an opening string and its matching
   /// closing string.
+  ///
+  /// # Panics
+  ///
+  /// Panics if either of `open` or `close` is empty.
   pub fn paired(open: impl Into<Yarn>, close: impl Into<Yarn>) -> Self {
-    Self {
-      kind: BracketKind::Paired(open.into(), close.into()),
-    }
+    let open = open.into();
+    let close = close.into();
+    assert!(
+      !open.is_empty() && !close.is_empty(),
+      "both arguments to Bracket::paired() must be non-empty"
+    );
+
+    Self { kind: BracketKind::Paired(open, close) }
   }
 
   /// A Rust raw string-like bracket. This corresponds to `##"foo"##` raw
@@ -173,18 +182,42 @@ impl Bracket {
   ///
   /// To specify the exact syntax from Rust, you would write
   /// `Bracket::rust_raw_string(('#', 0), ('r', '"'), ('"', ""))`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `repeating` is empty or if both of `open_start` and `open_end`,
+  /// or `close_start` and `close_end`, are empty, or if either `open_end` or
+  /// `close_end` start with `repeating`.
+  #[track_caller]
   pub fn rust_style(
     (repeating, min_count): (impl Into<Yarn>, usize),
     (open_start, open_end): (impl Into<Yarn>, impl Into<Yarn>),
     (close_start, close_end): (impl Into<Yarn>, impl Into<Yarn>),
   ) -> Self {
+    let repeating = repeating.into();
+    let open = (open_start.into(), open_end.into());
+    let close = (close_start.into(), close_end.into());
+
+    assert!(
+      !repeating.is_empty(),
+      "the repeating argument of Bracket::rust_style() cannot be empty"
+    );
+    assert!(
+      !open.0.is_empty() || !open.1.is_empty(),
+      "open_start and open_end cannot both be empty"
+    );
+    assert!(
+      !close.0.is_empty() || !close.1.is_empty(),
+      "close_start and close_end cannot both be empty"
+    );
+    assert!(
+      !open.1.starts_with(repeating.as_str())
+        && !close.1.starts_with(repeating.as_str()),
+      "open_end and close_end cannot start with the repeating string"
+    );
+
     Self {
-      kind: BracketKind::RustLike {
-        repeating: repeating.into(),
-        min_count,
-        open: (open_start.into(), open_end.into()),
-        close: (close_start.into(), close_end.into()),
-      },
+      kind: BracketKind::RustLike { repeating, min_count, open, close },
     }
   }
 
@@ -201,7 +234,9 @@ impl Bracket {
   ///
   /// # Panics
   ///
-  /// Panics if `ident` has any affixes.
+  /// Panics if `ident` has any affixes or if both of `open_start` and `open_end`
+  /// are empty, or `close_start` and `close_end` are empty and `ident` has a
+  /// minimum length of zero.
   #[track_caller]
   pub fn cxx_style(
     ident: Ident,
@@ -210,15 +245,22 @@ impl Bracket {
   ) -> Self {
     assert!(
       ident.affixes.prefixes.is_empty() && ident.affixes.prefixes.is_empty(),
-      "Bracket::cxx_raw_string() requires an identifier with no affixes"
+      "Bracket::cxx_style() requires an identifier with no affixes"
+    );
+
+    let open = (open_start.into(), open_end.into());
+    let close = (close_start.into(), close_end.into());
+    assert!(
+      !open.0.is_empty() || !open.1.is_empty(),
+      "open_start and open_end cannot both be empty"
+    );
+    assert!(
+      !close.0.is_empty() || !close.1.is_empty() || ident.min_len > 0,
+      "close_start and close_end cannot both be empty with ident having zero minimum length"
     );
 
     Self {
-      kind: BracketKind::CxxLike {
-        ident_rule: ident,
-        open: (open_start.into(), open_end.into()),
-        close: (close_start.into(), close_end.into()),
-      },
+      kind: BracketKind::CxxLike { ident_rule: ident, open, close },
     }
   }
 }
@@ -457,8 +499,8 @@ impl Ident {
 
   affixes!();
 
-  pub(crate) fn is_valid_start(&self, c: char) -> bool {
-    if !self.ascii_only && c.is_xid_start() {
+  pub(crate) fn is_valid_start(&self, c: char, is_xid: IsXid) -> bool {
+    if !self.ascii_only && is_xid != IsXid::No {
       return true;
     }
 
@@ -473,8 +515,8 @@ impl Ident {
     false
   }
 
-  pub(crate) fn is_valid_continue(&self, c: char) -> bool {
-    if !self.ascii_only && c.is_xid_continue() {
+  pub(crate) fn is_valid_continue(&self, c: char, is_xid: IsXid) -> bool {
+    if !self.ascii_only && is_xid == IsXid::Continue {
       return true;
     }
 
@@ -578,7 +620,7 @@ impl Quoted {
     xs: impl IntoIterator<Item = (Y, R)>,
   ) -> Self {
     for (y, r) in xs {
-      self.escapes.insert(y.into(), r.into());
+      self.escapes.insert(&y.into(), r.into());
     }
     self
   }
