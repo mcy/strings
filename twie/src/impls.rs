@@ -125,7 +125,7 @@ where
   I: Index,
 {
   fn from(value: SubMut<'a, K, V, I>) -> Self {
-    Sub { raw: value.raw, prefix: value.prefix }
+    Sub { raw: value.raw, node: value.node }
   }
 }
 

@@ -1,42 +1,29 @@
-use std::marker::PhantomData;
 use std::mem;
 use std::mem::ManuallyDrop;
 use std::mem::MaybeUninit;
 use std::ptr::NonNull;
 
-use buf_trait::Buf;
-use byteyarn::YarnBox;
-
 use crate::raw::nodes::Index;
-use crate::raw::nodes::Node;
 use crate::raw::nodes::OutOfIndices;
-use crate::raw::Prefix;
+use crate::raw::nodes::Ptr;
 
 /// The actual user-provided data stored by the trie, separate from the tree
 /// structure.
-pub struct Entries<K: Buf + ?Sized, V, I: Index> {
-  keys: Vec<YarnBox<'static, [u8]>>,
+pub struct Entries<V, I: Index> {
   values: StealthVec<Entry<V, I>>,
-  _ph: PhantomData<fn(&K) -> &K>,
 }
 
 // SAFETY: Although there are some sketchy functions that go & -> &mut, these
 // MUST NOT be called except through a &Entries that was derived from an &mut
 // Entries. They exist only so that iterators can vend multiple distinct
 // elements without making MIRI lose its mind.
-unsafe impl<K: Buf + ?Sized, V, I: Index> Send for Entries<K, V, I> {}
-unsafe impl<K: Buf + ?Sized, V, I: Index> Sync for Entries<K, V, I> {}
+unsafe impl<V, I: Index> Send for Entries<V, I> {}
+unsafe impl<V, I: Index> Sync for Entries<V, I> {}
 
 pub struct Entry<V, I: Index> {
-  /// A index-length pair into Data.keys, referring to which key this entry
-  /// uses.
-  ///
-  /// If the second entry is equal to I::EMPTY, it means this entry is
-  /// uninitialized.
-  ///
-  /// Also, neither of these are actually nodes, we're just using the node
-  /// type for convenience.
-  key: [Node<I>; 2],
+  /// The length of the key, which may be longer than this entry's depth in the
+  /// trie. This entry is empty if `key_len` is Ptr::EMPTY.
+  key_len: Ptr<I>,
 
   /// The value itself.
   value: MaybeUninit<V>,
@@ -44,7 +31,7 @@ pub struct Entry<V, I: Index> {
 
 impl<V, I: Index> Drop for Entry<V, I> {
   fn drop(&mut self) {
-    if !self.key[1].is_empty() {
+    if !self.key_len.is_empty() {
       unsafe {
         self.value.assume_init_drop();
       }
@@ -121,22 +108,21 @@ impl<T> Drop for StealthVec<T> {
   }
 }
 
-impl<K: Buf + ?Sized, V: Clone, I: Index> Clone for Entries<K, V, I> {
+impl<V: Clone, I: Index> Clone for Entries<V, I> {
   fn clone(&self) -> Self {
     let mut data = Self::new();
-    data.keys = self.keys.clone();
 
     let new_entries = (0..self.values.len)
       .map(|i| {
         let e = self.values.get(i);
 
-        let value = if e.key[1].is_empty() {
+        let value = if e.key_len.is_empty() {
           MaybeUninit::uninit()
         } else {
           MaybeUninit::new(unsafe { e.value.assume_init_ref().clone() })
         };
 
-        Entry { key: e.key, value }
+        Entry { key_len: e.key_len, value }
       })
       .collect();
 
@@ -148,94 +134,35 @@ impl<K: Buf + ?Sized, V: Clone, I: Index> Clone for Entries<K, V, I> {
   }
 }
 
-impl<K: Buf + ?Sized, V, I: Index> Entries<K, V, I> {
+impl<V, I: Index> Entries<V, I> {
   pub fn new() -> Self {
-    Self {
-      keys: vec![],
-      values: StealthVec::new(),
-      _ph: PhantomData,
-    }
+    Self { values: StealthVec::new() }
   }
 
-  pub fn new_entry(
-    &mut self,
-    prefix: &Prefix,
-    suffix: YarnBox<[u8]>,
-    maybe_key: Option<usize>,
-  ) -> Result<usize, OutOfIndices> {
+  pub fn new_entry(&mut self) -> Result<usize, OutOfIndices> {
     let new = self.values.len;
-    let mut entry = Entry {
-      key: [Node::EMPTY, Node::EMPTY],
-      value: MaybeUninit::uninit(),
-    };
-
-    if let Some(moved_key) = maybe_key {
-      entry.key[0] = self.values.get(moved_key).key[0];
-    }
-
-    let keyhole = entry.key[0]
-      .try_into()
-      .ok()
-      .map(|idx: usize| &mut self.keys[idx]);
-
-    if keyhole
-      .as_ref()
-      .is_some_and(|k| k.as_bytes()[prefix.len()..].starts_with(&suffix))
-    {
-      unsafe {
-        // SAFETY: Vec::push does not panic unless we try to allocate half of
-        // the address space, which we can assume can't happen here.
-        self.values.with_vec(|v| v.push(entry));
-      }
-      return Ok(new);
-    }
-
-    let key = if prefix.prev().is_none() {
-      suffix.immortalize()
-    } else {
-      let mut key = vec![0; prefix.len() + suffix.len()].into_boxed_slice();
-      key[prefix.len()..].copy_from_slice(&suffix);
-
-      let mut prefix = prefix;
-      loop {
-        key[prefix.len() - prefix.chunk().len()..prefix.len()]
-          .copy_from_slice(prefix.chunk());
-
-        match prefix.prev() {
-          Some(prev) => prefix = prev,
-          None => break,
-        }
-      }
-
-      YarnBox::from(key)
-    };
-
-    if let Some(keyhole) = keyhole.filter(|k| key.starts_with(k.as_bytes())) {
-      *keyhole = key;
-    } else {
-      entry.key[0] = self.keys.len().try_into()?;
-      self.keys.push(key);
-    }
-
     unsafe {
       // SAFETY: Vec::push does not panic unless we try to allocate half of
       // the address space, which we can assume can't happen here.
-      self.values.with_vec(|v| v.push(entry));
+      self.values.with_vec(|v| {
+        v.push(Entry {
+          key_len: Ptr::EMPTY,
+          value: MaybeUninit::uninit(),
+        })
+      });
     }
     Ok(new)
   }
 
   /// Returns whether a value is initialized.
   pub fn is_init(&self, entry: usize) -> bool {
-    !self.values.get(entry).key[1].is_empty()
+    !self.values.get(entry).key_len.is_empty()
   }
 
   /// Gets the value in `entry`, if present.
-  pub fn get(&self, entry: usize) -> Option<(&K, &V)> {
+  pub fn get(&self, entry: usize) -> Option<(usize, &V)> {
     let e = self.values.get(entry);
-    let [key, len] = e.key;
-    let key = &&self.keys[key.idx()].as_bytes()[..len.try_into().ok()?];
-    unsafe { Some((K::from_bytes(key), e.value.assume_init_ref())) }
+    unsafe { Some((e.key_len.idx(), e.value.assume_init_ref())) }
   }
 
   /// Gets the value in `entry`, if present.
@@ -244,11 +171,12 @@ impl<K: Buf + ?Sized, V, I: Index> Entries<K, V, I> {
   ///
   /// It is the caller's responsibility to not cause aliasing hazards using
   /// this function.
-  pub unsafe fn get_mut_may_alias(&self, entry: usize) -> Option<(&K, &mut V)> {
+  pub unsafe fn get_mut_may_alias(
+    &self,
+    entry: usize,
+  ) -> Option<(usize, &mut V)> {
     let e = self.values.get_mut_may_alias(entry);
-    let [key, len] = e.key;
-    let key = &&self.keys[key.idx()].as_bytes()[..len.try_into().ok()?];
-    unsafe { Some((K::from_bytes(key), e.value.assume_init_mut())) }
+    unsafe { Some((e.key_len.idx(), e.value.assume_init_mut())) }
   }
 
   /// Initializes `entry` if it isn't.
@@ -273,7 +201,7 @@ impl<K: Buf + ?Sized, V, I: Index> Entries<K, V, I> {
       // SAFETY: Nothing else in this code path accesses the entries vector.
       self.values.get_mut_may_alias(entry)
     };
-    e.key[1] = Node::must(key_len);
+    e.key_len = Ptr::must(key_len);
     e.value.write(new)
   }
 }
