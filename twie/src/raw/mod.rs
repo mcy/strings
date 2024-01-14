@@ -1,7 +1,8 @@
 // Core implementation of the trie.
 
+use std::marker::PhantomData;
+
 use buf_trait::Buf;
-use byteyarn::YarnBox;
 
 use crate::raw::entries::Entries;
 use crate::raw::nodes::Index;
@@ -11,13 +12,11 @@ use crate::raw::nodes::OutOfIndices;
 
 mod dump;
 mod entries;
-mod prefix;
 
 pub mod iter;
 pub mod nodes;
 
 pub use dump::dump;
-pub use prefix::Prefix;
 
 /// The core trie implementation.
 ///
@@ -50,7 +49,8 @@ pub use prefix::Prefix;
 /// if this can be made to work.
 pub struct RawTrie<K: Buf + ?Sized, V, I: Index> {
   pub nodes: Nodes<I>,
-  pub data: Entries<K, V, I>,
+  pub data: Entries<V, I>,
+  pub _ph: PhantomData<fn(&mut Self) -> &mut K>,
 }
 
 impl<K: Buf + ?Sized, V: Clone, I: Index> Clone for RawTrie<K, V, I> {
@@ -58,6 +58,7 @@ impl<K: Buf + ?Sized, V: Clone, I: Index> Clone for RawTrie<K, V, I> {
     Self {
       nodes: self.nodes.clone(),
       data: self.data.clone(),
+      _ph: PhantomData,
     }
   }
 }
@@ -68,6 +69,7 @@ impl<K: Buf + ?Sized, V, I: Index> RawTrie<K, V, I> {
     Self {
       nodes: Nodes::new(),
       data: Entries::new(),
+      _ph: PhantomData,
     }
   }
 
@@ -88,16 +90,16 @@ impl<K: Buf + ?Sized, V, I: Index> RawTrie<K, V, I> {
   /// reference.
   pub unsafe fn mutate(
     &mut self,
-    prefix: &mut Prefix,
-    suffix: YarnBox<[u8]>,
+    root: Node<I>,
+    key: &[u8],
   ) -> Result<usize, OutOfIndices> {
-    let (insert_at, maybe_key) = self.pre_mutate(prefix, &suffix)?;
+    let insert_at = self.pre_mutate(root, key)?;
 
     if let Some(entry) = self.nodes.get(insert_at) {
       return Ok(entry);
     }
 
-    let new = self.data.new_entry(prefix, suffix, maybe_key)?;
+    let new = self.data.new_entry()?;
     self.nodes.set(insert_at, new);
     Ok(new)
   }
@@ -106,19 +108,15 @@ impl<K: Buf + ?Sized, V, I: Index> RawTrie<K, V, I> {
   ///
   /// This operation finds the slot at which it could place `suffix` and does
   /// so.
-  ///
-  /// Returns a tuple of `(node, key_ptr)`, where `key_ptr` is `Some` if we hit
-  /// a different key; it can be used for amortizing the cost of allocating a
-  /// key for the new entry.
   pub unsafe fn pre_mutate(
     &mut self,
-    prefix: &mut Prefix,
-    suffix: &[u8],
-  ) -> Result<(Node<I>, Option<usize>), OutOfIndices> {
+    root: Node<I>,
+    key: &[u8],
+  ) -> Result<Node<I>, OutOfIndices> {
     // Next, we want to walk down as far as we can without mutating anything.
     self.nodes.init_root();
-    let (mut node, rest) = self.nodes.walk(prefix.node(), suffix);
-    let depth = prefix.len() + suffix.len() - rest.len();
+    let (mut node, rest) = self.nodes.walk(root, key);
+    let depth = node.depth;
 
     // We've hit a point at which we may need to create new nodes. Here's the
     // decision tree.
@@ -132,15 +130,7 @@ impl<K: Buf + ?Sized, V, I: Index> RawTrie<K, V, I> {
     //   2. `node.key == key`. This means `key` is present. We are done.
     //
     //   3. Otherwise, we have to kick the thing in this slot one level down,
-    //      and place our key in this slot if it's a prefix of the key we moved,
-    //      or in a slot futher down.
-    //
-    //      Before:             After:
-    //
-    //      "" -> f             "" -> f -> o -> o
-    //            |                        |    |
-    //           "foo"                     v    "foo"
-    //                                     g
+    //      andepth                             g
     //                                     |
     //                                    "fog"
     //
@@ -156,18 +146,19 @@ impl<K: Buf + ?Sized, V, I: Index> RawTrie<K, V, I> {
     let idx = self.nodes.get(node);
 
     let lookup = idx.and_then(|e| self.data.get(e).map(|(k, _)| (e, k)));
-    let Some((entry, key)) = lookup else {
+    let Some((entry, key_len)) = lookup else {
       // Case 1.
-      if let &[next, ..] = rest {
-        node = self.nodes.build(node, &[next])?;
+      if let [next, rest @ ..] = rest {
+        node = self.nodes.build(node, &[*next])?;
+        self.nodes.extend_key(node, rest);
       }
-      return Ok((node, None));
+      return Ok(node);
     };
 
-    let key_rest = &key.as_bytes()[depth..];
+    let key_rest = &self.nodes.key(node, Some(key_len))[depth..];
     if key_rest == rest {
       // Case 2.
-      return Ok((node, None));
+      return Ok(node);
     }
 
     // Case 3.
@@ -181,18 +172,24 @@ impl<K: Buf + ?Sized, V, I: Index> RawTrie<K, V, I> {
     node = self.nodes.build(node, &rest[..common_prefix])?;
     let build_from = node;
 
+    // Need to recompute key_rest here to make the borrow checker happy.
+    let key_rest = &self.nodes.key(node, Some(key_len))[depth..];
+
     // Note that because the keys are distinct, `key_rest.len() > common_prefix`.
     if let Some(&next) = key_rest.get(common_prefix) {
       let move_to = self.nodes.build(node, &[next])?;
       self.nodes.set(move_to, entry);
+      // Don't need to call extend_key() here; by construction, the key at
+      // the moved node is already long enough.
     } else {
       self.nodes.set(node, entry);
     }
 
-    if let Some(&next) = rest.get(common_prefix) {
-      node = self.nodes.build(build_from, &[next])?;
+    if let [next, rest @ ..] = &rest[common_prefix..] {
+      node = self.nodes.build(build_from, &[*next])?;
+      self.nodes.extend_key(node, rest);
     };
 
-    Ok((node, Some(entry)))
+    Ok(node)
   }
 }

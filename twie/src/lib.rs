@@ -46,13 +46,13 @@
 use std::fmt;
 use std::mem;
 
-use crate::raw::Prefix;
 use crate::raw::RawTrie;
 
 pub use crate::raw::iter::Iter;
 pub use crate::raw::iter::IterMut;
 pub use crate::raw::iter::Prefixes;
 pub use crate::raw::iter::PrefixesMut;
+pub use crate::raw::iter::Subs;
 pub use crate::raw::nodes::Index;
 
 mod impls;
@@ -63,7 +63,8 @@ mod sealed {
 }
 
 pub use buf_trait::Buf;
-use byteyarn::YarnBox;
+use byteyarn::YarnRef;
+use raw::nodes::Node;
 
 /// An radix prefix trie, optimized for searching for known prefixes of a
 /// string (for a fairly open-ended definition of "string").
@@ -98,7 +99,7 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   /// writing `trie.sub("")` is inconvenient.
   #[inline]
   pub fn as_ref(&self) -> Sub<K, V, I> {
-    Sub { prefix: Prefix::ROOT, raw: &self.raw }
+    Sub { node: Node::ROOT, raw: &self.raw }
   }
 
   /// Converts this trie into a mutable subtrie reference.
@@ -107,7 +108,7 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   /// writing `trie.sub_mut("")` is inconvenient.
   #[inline]
   pub fn as_mut(&mut self) -> SubMut<K, V, I> {
-    SubMut { prefix: Prefix::ROOT, raw: &mut self.raw }
+    SubMut { node: Node::ROOT, raw: &mut self.raw }
   }
 
   /// Finds the element with the given key, if present.
@@ -194,12 +195,52 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   ///
   /// assert_eq!(sub.get("bar"), Some(&64));
   /// ```
+  ///
+  /// A subtrie can be interpreted as a representation of the
+  /// [Brzozowski derivative](https://en.wikipedia.org/wiki/Brzozowski_derivative)
+  /// of the set of keys in the trie, with respect to `key`. The elements of the
+  /// subtrie are the elements of the derivative with `key` prepended. For
+  /// example:
+  ///
+  /// ```
+  /// # use twie::Trie;
+  /// let words = [
+  ///   "computing", "concept", "consortium", "compact", "consistent",
+  ///   "cooperative", "coq", "cosine", "conundrum", "catenary",
+  /// ];
+  ///
+  /// // Build a trie from the set we want to compute the derivative of.
+  /// let mut trie = Trie::<str, usize>::new();
+  /// for (i, &w) in words.iter().enumerate() {
+  ///   trie.insert(w, i);
+  /// }
+  ///
+  /// // Construct a subtrie representing that derivative. In this case, we
+  /// // differentiate with respect to "con".
+  /// let sub = trie.sub("con");
+  /// assert_eq!(sub.prefix(), b"con");
+  ///
+  /// // Construct the derivative as a map from each element to the thing it
+  /// // came from.
+  /// let derivative = sub.iter().map(|(k, v)| {
+  ///   // Subtrie keys still contain the prefix, which we need to strip.
+  ///   (k.strip_prefix("con").unwrap(), *v)
+  /// }).collect::<Vec<_>>();
+  ///
+  /// assert_eq!(derivative, [
+  ///   ("cept", 1),
+  ///   ("sistent", 4),
+  ///   ("sortium", 2),
+  ///   ("undrum", 8),
+  /// ]);
+  /// ```
+  ///
+  /// Actually constructing a derivative like this is uncommmon; instead, you
+  /// might iterate over all subtries with [`Trie::subs()`] if you were building
+  /// e.g. a DFA.
   #[inline]
   pub fn sub<'a>(&'a self, key: &'a K) -> Sub<'a, K, V, I> {
-    Sub {
-      prefix: Prefix::new(&self.raw, &Prefix::ROOT, key.as_bytes()),
-      raw: &self.raw,
-    }
+    self.as_ref().sub(key)
   }
 
   /// Creates a mutable subtrie view for the given key.
@@ -219,10 +260,25 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   /// ```
   #[inline]
   pub fn sub_mut<'a>(&'a mut self, key: &'a K) -> SubMut<'a, K, V, I> {
-    SubMut {
-      prefix: Prefix::new(&self.raw, &Prefix::ROOT, key.as_bytes()),
-      raw: &mut self.raw,
-    }
+    self.as_mut().sub_mut(key)
+  }
+
+  /// Returns an iterator over all nonempty subtries, in depth-first
+  /// (lexicographic) order.
+  ///
+  /// ```
+  /// # use twie::Trie; use std::str;
+  /// let trie: Trie<_, _> = [("foo", 32), ("bar", 64)].into();
+  /// # eprintln!("{}", trie.dump());
+  ///
+  /// assert_eq!(
+  ///  trie.subs().map(|s| str::from_utf8(s.prefix()).unwrap()).collect::<Vec<_>>(),
+  ///  ["", "b", "ba", "bar", "f", "fo", "foo"],
+  /// );
+  /// ```
+  #[inline]
+  pub fn subs(&self) -> Subs<K, V, I> {
+    self.as_ref().subs()
   }
 
   /// Returns an iterator over all prefixes of `key` present in the trie, in
@@ -330,7 +386,7 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   #[inline]
   pub fn insert<'a>(
     &mut self,
-    key: impl Into<YarnBox<'a, K>>,
+    key: impl Into<YarnRef<'a, K>>,
     value: V,
   ) -> Option<V>
   where
@@ -359,7 +415,7 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   #[inline]
   pub fn get_or_insert<'a>(
     &mut self,
-    key: impl Into<YarnBox<'a, K>>,
+    key: impl Into<YarnRef<'a, K>>,
     value: V,
   ) -> &mut V
   where
@@ -385,7 +441,7 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   #[inline]
   pub fn get_or_insert_default<'a>(
     &mut self,
-    key: impl Into<YarnBox<'a, K>>,
+    key: impl Into<YarnRef<'a, K>>,
   ) -> &mut V
   where
     K: 'a,
@@ -412,7 +468,7 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
   #[inline]
   pub fn get_or_insert_with<'a>(
     &mut self,
-    key: impl Into<YarnBox<'a, K>>,
+    key: impl Into<YarnRef<'a, K>>,
     value: impl FnOnce() -> V,
   ) -> &mut V
   where
@@ -421,10 +477,7 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
     let key = key.into();
     let key_len = key.as_bytes().len();
     unsafe {
-      let idx = self
-        .raw
-        .mutate(&mut { Prefix::ROOT }, key.into_bytes())
-        .unwrap();
+      let idx = self.raw.mutate(Node::ROOT, key.as_bytes()).unwrap();
 
       self.raw.data.init(idx, key_len, value)
     }
@@ -504,10 +557,18 @@ impl<K: Buf + ?Sized, V, I: Index> Trie<K, V, I> {
 /// This type is [`Copy`].
 pub struct Sub<'a, K: Buf + ?Sized, V, I: Index = u32> {
   raw: &'a RawTrie<K, V, I>,
-  prefix: Prefix<'a>,
+  node: Node<I>,
 }
 
 impl<'a, K: Buf + ?Sized, V, I: Index> Sub<'a, K, V, I> {
+  /// Returns the prefix corresponding to this subtrie.
+  ///
+  /// Since a subtrie may not necessarily refer to a complete `K` prefix, we
+  /// return a byte slice, instead.
+  pub fn prefix(self) -> &'a [u8] {
+    self.raw.nodes.key(self.node, None)
+  }
+
   /// Finds the element with the given key, if present.
   ///
   /// Note that this function finds matches byte-for-byte, but according to
@@ -527,7 +588,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> Sub<'a, K, V, I> {
   /// ```
   #[inline]
   pub fn get(self, key: &K) -> Option<&'a V> {
-    let expected_len = key.byte_len() + self.prefix.len();
+    let expected_len = key.byte_len() + self.node.depth;
     self
       .prefixes(key)
       .last()
@@ -572,11 +633,39 @@ impl<'a, K: Buf + ?Sized, V, I: Index> Sub<'a, K, V, I> {
   /// assert_eq!(sub.get("ar"), Some(&64));
   /// ```
   #[inline]
-  pub fn sub<'b>(&'b self, key: &'b K) -> Sub<'b, K, V, I> {
-    Sub {
-      prefix: Prefix::new(self.raw, &self.prefix, key.as_bytes()),
-      raw: self.raw,
+  #[allow(clippy::should_implement_trait)]
+  pub fn sub(self, key: &'a K) -> Sub<'a, K, V, I> {
+    let (mut node, rest) = self.raw.nodes.walk(self.node, key.as_bytes());
+    if !rest.is_empty() {
+      let key = self.raw.nodes.key(node, Some(usize::MAX));
+      if !key[node.depth..].starts_with(rest) {
+        node = Node::EMPTY;
+      }
     }
+
+    Sub { node, raw: self.raw }
+  }
+
+  /// Returns an iterator over all nonempty subtries, in depth-first
+  /// (lexicographic) order.
+  ///
+  /// See [`Trie::subs()`].
+  ///
+  /// ```
+  /// # use twie::Trie; use std::str;
+  /// let trie: Trie<_, _> = [("foo", 32), ("foobar", 64)].into();
+  /// # eprintln!("{}", trie.dump());
+  /// let sub = trie.sub("fo");
+  /// # eprintln!("{}", sub.dump());
+  ///
+  /// assert_eq!(
+  ///  sub.subs().map(|s| str::from_utf8(s.prefix()).unwrap()).collect::<Vec<_>>(),
+  ///  ["fo", "foo", "foob", "fooba", "foobar"],
+  /// );
+  /// ```
+  #[inline]
+  pub fn subs(self) -> Subs<'a, K, V, I> {
+    Subs::new(self.raw, self.node)
   }
 
   /// Returns an iterator over all prefixes of `key` present in the subtrie, in
@@ -598,7 +687,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> Sub<'a, K, V, I> {
   /// ```
   #[inline]
   pub fn prefixes<'key>(self, key: &'key K) -> Prefixes<'a, 'key, K, V, I> {
-    Prefixes::new(self.raw, self.prefix, key)
+    Prefixes::new(self.raw, self.node, key)
   }
 
   /// Returns an iterator over this subtrie.
@@ -619,7 +708,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> Sub<'a, K, V, I> {
   /// ```
   #[inline]
   pub fn iter(self) -> Iter<'a, K, V, I> {
-    Iter::new(self.raw, self.prefix)
+    Iter::new(self.raw, self.node)
   }
 
   /// Dumps the trie's internal structure as a pretty string.
@@ -636,7 +725,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> Sub<'a, K, V, I> {
     V: fmt::Debug,
   {
     assert!(cfg!(debug_assertions), "dump() can only be called in debug mode");
-    raw::dump(self.raw, &self.prefix)
+    raw::dump(self.raw, self.node)
   }
 }
 
@@ -648,17 +737,25 @@ impl<'a, K: Buf + ?Sized, V, I: Index> Sub<'a, K, V, I> {
 /// See [`SubMut::as_mut()`] for the details.
 pub struct SubMut<'a, K: Buf + ?Sized, V, I: Index = u32> {
   raw: &'a mut RawTrie<K, V, I>,
-  prefix: Prefix<'a>,
+  node: Node<I>,
 }
 
 impl<'a, K: Buf + ?Sized, V, I: Index> SubMut<'a, K, V, I> {
+  /// Returns the prefix corresponding to this subtrie.
+  ///
+  /// Since a subtrie may not necessarily refer to a complete `K` prefix, we
+  /// return a byte slice, instead.
+  pub fn prefix(self) -> &'a [u8] {
+    self.into_ref().prefix()
+  }
+
   /// Reborrows this view.
   ///
   /// This function is useful for code that wants a [`Sub`] instead of a
   /// [`SubMut`].
   #[inline]
   pub fn as_ref(&self) -> Sub<K, V, I> {
-    Sub { raw: self.raw, prefix: self.prefix }
+    Sub { raw: self.raw, node: self.node }
   }
 
   /// Mutably reborrows this view.
@@ -670,7 +767,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> SubMut<'a, K, V, I> {
   /// have.
   #[inline]
   pub fn as_mut(&mut self) -> SubMut<K, V, I> {
-    SubMut { raw: self.raw, prefix: self.prefix }
+    SubMut { raw: self.raw, node: self.node }
   }
 
   /// Converts this view into an immutable one.
@@ -679,7 +776,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> SubMut<'a, K, V, I> {
   /// for this view, which is why it needs to consume.
   #[inline]
   pub fn into_ref(self) -> Sub<'a, K, V, I> {
-    Sub { raw: self.raw, prefix: self.prefix }
+    Sub { raw: self.raw, node: self.node }
   }
 
   /// Finds the element with the given key, if present.
@@ -723,7 +820,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> SubMut<'a, K, V, I> {
   /// ```
   #[inline]
   pub fn get_mut(self, key: &K) -> Option<&'a mut V> {
-    let expected_len = key.byte_len() + self.prefix.len();
+    let expected_len = key.byte_len() + self.node.depth;
     self
       .longest_prefix_mut(key)
       .and_then(|(k, v)| (k.byte_len() == expected_len).then_some(v))
@@ -787,11 +884,9 @@ impl<'a, K: Buf + ?Sized, V, I: Index> SubMut<'a, K, V, I> {
   /// assert_eq!(sub.get("ar"), Some(&64));
   /// ```
   #[inline]
-  pub fn sub<'b>(&'b self, key: &'b K) -> Sub<'b, K, V, I> {
-    Sub {
-      prefix: Prefix::new(self.raw, &self.prefix, key.as_bytes()),
-      raw: self.raw,
-    }
+  #[allow(clippy::should_implement_trait)]
+  pub fn sub(self, key: &'a K) -> Sub<'a, K, V, I> {
+    self.into_ref().sub(key)
   }
 
   /// Creates a mutable subtrie view for the given key.
@@ -812,11 +907,38 @@ impl<'a, K: Buf + ?Sized, V, I: Index> SubMut<'a, K, V, I> {
   /// assert_eq!(sub.get_mut("ar"), Some(&mut 64));
   /// ```
   #[inline]
-  pub fn sub_mut<'b>(&'b mut self, key: &'b K) -> SubMut<'b, K, V, I> {
-    SubMut {
-      prefix: Prefix::new(self.raw, &self.prefix, key.as_bytes()),
-      raw: self.raw,
+  pub fn sub_mut(self, key: &'a K) -> SubMut<'a, K, V, I> {
+    let (mut node, rest) = self.raw.nodes.walk(self.node, key.as_bytes());
+    if !rest.is_empty() {
+      let key = self.raw.nodes.key(node, Some(usize::MAX));
+      if !key[node.depth..].starts_with(rest) {
+        node = Node::EMPTY;
+      }
     }
+
+    SubMut { node, raw: self.raw }
+  }
+
+  /// Returns an iterator over all nonempty subtries, in depth-first
+  /// (lexicographic) order.
+  ///
+  /// See [`Trie::subs()`].
+  ///
+  /// ```
+  /// # use twie::Trie; use std::str;
+  /// let trie: Trie<_, _> = [("foo", 32), ("foobar", 64)].into();
+  /// # eprintln!("{}", trie.dump());
+  /// let sub = trie.sub("fo");
+  /// # eprintln!("{}", sub.dump());
+  ///
+  /// assert_eq!(
+  ///  sub.subs().map(|s| str::from_utf8(s.prefix()).unwrap()).collect::<Vec<_>>(),
+  ///  ["fo", "foo", "foob", "fooba", "foobar"],
+  /// );
+  /// ```
+  #[inline]
+  pub fn subs(self) -> Subs<'a, K, V, I> {
+    self.into_ref().subs()
   }
 
   /// Returns an iterator over all prefixes of `key` present in the subtrie, in
@@ -858,7 +980,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> SubMut<'a, K, V, I> {
     self,
     key: &'key K,
   ) -> PrefixesMut<'a, 'key, K, V, I> {
-    PrefixesMut::new(self.raw, self.prefix, key)
+    PrefixesMut::new(self.raw, self.node, key)
   }
 
   /// Returns an iterator over this subtrie.
@@ -900,7 +1022,7 @@ impl<'a, K: Buf + ?Sized, V, I: Index> SubMut<'a, K, V, I> {
   /// ```
   #[inline]
   pub fn iter_mut(self) -> IterMut<'a, K, V, I> {
-    IterMut::new(self.raw, self.prefix)
+    IterMut::new(self.raw, self.node)
   }
 
   /// Dumps the trie's internal structure as a pretty string.
@@ -917,13 +1039,40 @@ impl<'a, K: Buf + ?Sized, V, I: Index> SubMut<'a, K, V, I> {
     V: fmt::Debug,
   {
     assert!(cfg!(debug_assertions), "dump() can only be called in debug mode");
-    raw::dump(self.raw, &self.prefix)
+    raw::dump(self.raw, self.node)
+  }
+}
+
+struct DebugBytes<'a>(&'a [u8]);
+impl fmt::Debug for DebugBytes<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    use std::fmt::Write;
+    use std::str;
+    f.write_char('"')?;
+    let mut buf = self.0;
+    while !buf.is_empty() {
+      let len = match str::from_utf8(buf) {
+        Ok(rest) => rest.len(),
+        Err(e) => e.valid_up_to(),
+      };
+
+      let prefix = &buf[..len];
+      write!(f, "{}", str::from_utf8(prefix).unwrap().escape_debug())?;
+      if len == buf.len() {
+        break;
+      }
+
+      write!(f, "\\x{:02x}", buf[len])?;
+      buf = &buf[len + 1..];
+    }
+    f.write_char('"')
   }
 }
 
 #[cfg(test)]
 mod test {
   use super::*;
+  use std::str;
 
   #[test]
   fn empty() {
@@ -968,6 +1117,26 @@ mod test {
     iter_eq(trie.sub("a").iter(), &["a", "abc", "abd"]);
     iter_eq(trie.sub("abcd").iter(), &[]);
     iter_eq(trie.sub("c").iter(), &[]);
+
+    assert_eq!(
+      trie
+        .subs()
+        .map(|sub| {
+          (
+            str::from_utf8(sub.prefix()).unwrap(),
+            sub.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+          )
+        })
+        .collect::<Vec<_>>(),
+      &[
+        ("", vec!["A", "a", "abc", "abd"]),
+        ("A", vec!["A"]),
+        ("a", vec!["a", "abc", "abd"]),
+        ("ab", vec!["abc", "abd"]),
+        ("abc", vec!["abc"]),
+        ("abd", vec!["abd"])
+      ]
+    );
   }
 
   fn trie_set(items: &[&str]) -> Trie<str, ()> {
@@ -981,9 +1150,9 @@ mod test {
     trie
   }
 
-  fn iter_eq<'a, V: 'a>(
-    items: impl IntoIterator<Item = (&'a str, &'a V)>,
-    expected: &[&str],
+  fn iter_eq<K: Eq + fmt::Debug, V>(
+    items: impl IntoIterator<Item = (K, V)>,
+    expected: &[K],
   ) {
     assert_eq!(items.into_iter().map(|(k, _)| k).collect::<Vec<_>>(), expected,);
   }
