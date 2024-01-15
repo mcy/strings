@@ -11,7 +11,6 @@ use std::ptr;
 use std::slice;
 use std::sync::RwLockReadGuard;
 
-use byteyarn::Yarn;
 use camino::Utf8Path;
 
 use crate::report::Fatal;
@@ -101,7 +100,7 @@ impl PartialEq for File<'_> {
   }
 }
 
-/// A span in a [`File`].
+/// An interned span in a [`File`].
 ///
 /// This type is just a numeric ID. In order to obtain information about the
 /// span, it must be passed to an [`Context`], which tracks this information
@@ -109,22 +108,9 @@ impl PartialEq for File<'_> {
 #[derive(Copy, Clone)]
 pub struct Span {
   idx: u32,
-
-  /// If this is !0, this is an "atomic span", i.e., the end is in `start`.
-  /// Otherwise, it is a "fused" span. The end span is never synthetic; only
-  /// non-synthetic spans can be joined.
-  end: u32,
 }
 
 impl Span {
-  fn end(self) -> Option<Span> {
-    if self.end == !0 {
-      return None;
-    }
-
-    Some(Span { idx: self.end, end: !0 })
-  }
-
   /// Gets the file for this span.
   ///
   /// # Panics
@@ -205,53 +191,47 @@ impl<'a> IntoIterator for &'a Comments<'_> {
 /// that spans its contents in their entirety.
 pub trait Spanned {
   /// Returns the span in this syntax element.
-  fn span(&self, ctx: &Context) -> Span;
+  fn span(&self) -> Span;
 
   /// Forwards to [`Span::file()`].
   fn file<'ctx>(&self, ctx: &'ctx Context) -> File<'ctx> {
-    self.span(ctx).file(ctx)
+    self.span().file(ctx)
   }
 
   /// Forwards to [`Span::text()`].
   fn text<'ctx>(&self, ctx: &'ctx Context) -> &'ctx str {
-    self.span(ctx).text(ctx)
+    self.span().text(ctx)
   }
 
   /// Forwards to [`Span::comments()`].
   fn comments<'ctx>(&self, ctx: &'ctx Context) -> Comments<'ctx> {
-    self.span(ctx).comments(ctx)
-  }
-
-  /// Forwards to [`Span::append_comment()`].
-  fn append_comment(&self, ctx: &Context, text: impl Into<Yarn>) {
-    self.span(ctx).append_comment(ctx, text)
+    self.span().comments(ctx)
   }
 }
 
 // Spans are spanned by their own spans.
 impl Spanned for Span {
-  fn span(&self, _ctx: &Context) -> Span {
+  fn span(&self) -> Span {
     *self
   }
 }
 
 impl<S: Spanned> Spanned for &S {
-  fn span(&self, ctx: &Context) -> Span {
-    S::span(self, ctx)
+  fn span(&self) -> Span {
+    S::span(self)
   }
 }
 
 impl Spanned for Never {
-  fn span(&self, _ctx: &Context) -> Span {
+  fn span(&self) -> Span {
     self.from_nothing_anything()
   }
 }
 
-/// A location in a source file: like a [`Span`], but slightly more general.
+/// A range in a [`File`].
 ///
 /// Full span information (such as comments) is not necessary for diagnostics,
-/// so anything that implements [`ToLoc`] (which includes anything that is
-/// [`Spanned`]) is suitable for placing spanned data
+/// so anything that implements [`Ranged`] is suitable for placing spanned data
 /// in diagnostics.
 #[derive(Copy, Clone)]
 pub struct Range {
@@ -397,6 +377,30 @@ impl Range {
     self.file(ctx).text(self.start as usize..self.end as usize)
   }
 
+  /// Joins together a collection of ranges.
+  ///
+  /// # Panics
+  ///
+  /// May panic if not all spans are for the same file, or if the iterator
+  /// is empty.
+  pub fn union(ranges: impl IntoIterator<Item = Range>) -> Range {
+    let mut best = None;
+
+    for range in ranges {
+      let best = best.get_or_insert(range);
+
+      assert_eq!(
+        best.file, range.file,
+        "attempted to join spans of different files"
+      );
+
+      best.start = u32::min(best.start, range.start);
+      best.end = u32::max(best.end, range.end);
+    }
+
+    best.expect("attempted to join zero spans")
+  }
+
   /// Bakes this range into a span.
   pub(crate) fn mksp(self, ctx: &Context) -> Span {
     ctx.new_span(self)
@@ -425,7 +429,7 @@ impl Ranged for Range {
 
 impl<S: Spanned> Ranged for S {
   fn range(&self, ctx: &Context) -> Range {
-    ctx.lookup_range(self.span(ctx))
+    ctx.lookup_range(self.span())
   }
 }
 

@@ -252,6 +252,7 @@ impl<'lex> Iterator for Cursor<'lex> {
           // stringifyable token.
 
           return Some(token::Any::Bracket(token::Bracket {
+            span: tok.span,
             open: tok.span,
             close: tok.span,
             lexeme: tok.lexeme.cast(),
@@ -265,11 +266,12 @@ impl<'lex> Iterator for Cursor<'lex> {
         self.cursor = close_idx + 1;
 
         let close = &self.toks[close_idx];
-        let &Kind::Close { .. } = &close.kind else {
+        let &Kind::Close { full_span, .. } = &close.kind else {
           bug!("Kind::Open did not point to an Kind::Close");
         };
 
         token::Any::Bracket(token::Bracket {
+          span: full_span,
           open: tok.span,
           close: close.span,
           lexeme: tok.lexeme.cast(),

@@ -9,6 +9,7 @@ use crate::f;
 use crate::file::Context;
 use crate::file::File;
 use crate::file::Range;
+use crate::file::Ranged;
 use crate::file::Span;
 use crate::report::Report;
 use crate::rt;
@@ -210,8 +211,9 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
       );
     }
 
+    let full_span = self.mksp(open_sp.range(self.ctx()).start()..self.cursor());
     self.add_token(rt::Token {
-      kind: rt::Kind::Close { offset_to_open },
+      kind: rt::Kind::Close { full_span, offset_to_open },
       span,
       lexeme: close.lexeme.any(),
       prefix: None,

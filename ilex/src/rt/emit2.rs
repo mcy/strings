@@ -548,10 +548,13 @@ pub fn emit(lexer: &mut Lexer) {
             .map(|(_, e)| e)
             .unwrap_or(&rule.mant);
 
-          let chunk_span = lexer
-            .file()
-            .context()
-            .join(chunk.prefix.into_iter().chain(chunk.blocks.iter().copied()));
+          let chunk_span = Range::union(
+            chunk
+              .prefix
+              .into_iter()
+              .chain(chunk.blocks.iter().copied())
+              .map(|s| s.range(ctx)),
+          );
 
           if (chunk.blocks.len() as u32) < digits.min_chunks {
             lexer

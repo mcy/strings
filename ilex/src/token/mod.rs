@@ -201,14 +201,14 @@ impl fmt::Debug for Any<'_> {
 }
 
 impl Spanned for Any<'_> {
-  fn span(&self, ctx: &Context) -> Span {
+  fn span(&self) -> Span {
     match self {
-      Self::Eof(tok) => tok.span(ctx),
-      Self::Keyword(tok) => tok.span(ctx),
-      Self::Bracket(tok) => tok.span(ctx),
-      Self::Ident(tok) => tok.span(ctx),
-      Self::Quoted(tok) => tok.span(ctx),
-      Self::Digital(tok) => tok.span(ctx),
+      Self::Eof(tok) => tok.span(),
+      Self::Keyword(tok) => tok.span(),
+      Self::Bracket(tok) => tok.span(),
+      Self::Ident(tok) => tok.span(),
+      Self::Quoted(tok) => tok.span(),
+      Self::Digital(tok) => tok.span(),
     }
   }
 }
@@ -262,7 +262,7 @@ impl fmt::Debug for Eof<'_> {
 }
 
 impl Spanned for Eof<'_> {
-  fn span(&self, _ctx: &Context) -> Span {
+  fn span(&self) -> Span {
     self.span
   }
 }
@@ -317,7 +317,7 @@ impl fmt::Debug for Keyword<'_> {
 }
 
 impl Spanned for Keyword<'_> {
-  fn span(&self, _ctx: &Context) -> Span {
+  fn span(&self) -> Span {
     self.span
   }
 }
@@ -329,6 +329,7 @@ impl Spanned for Keyword<'_> {
 /// *trees*, like Rust does.
 #[derive(Copy, Clone)]
 pub struct Bracket<'lex> {
+  span: Span,
   open: Span,
   close: Span,
   lexeme: Lexeme<rule::Bracket>,
@@ -409,8 +410,8 @@ impl fmt::Debug for Bracket<'_> {
 }
 
 impl Spanned for Bracket<'_> {
-  fn span(&self, ctx: &Context) -> Span {
-    ctx.join(self.delimiters())
+  fn span(&self) -> Span {
+    self.span
   }
 }
 
@@ -503,7 +504,7 @@ impl fmt::Debug for Ident<'_> {
 }
 
 impl Spanned for Ident<'_> {
-  fn span(&self, _ctx: &Context) -> Span {
+  fn span(&self) -> Span {
     self.tok.span
   }
 }
@@ -927,7 +928,7 @@ impl fmt::Debug for Digital<'_> {
 }
 
 impl Spanned for Digital<'_> {
-  fn span(&self, _ctx: &Context) -> Span {
+  fn span(&self) -> Span {
     self.tok.span
   }
 }
@@ -1106,7 +1107,7 @@ impl fmt::Debug for Quoted<'_> {
 }
 
 impl Spanned for Quoted<'_> {
-  fn span(&self, _ctx: &Context) -> Span {
+  fn span(&self) -> Span {
     self.tok.span
   }
 }
