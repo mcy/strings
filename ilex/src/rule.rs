@@ -188,7 +188,7 @@ impl Bracket {
   /// `close_end` start with `repeating`.
   #[track_caller]
   pub fn rust_style(
-    (repeating, min_count): (impl Into<Yarn>, usize),
+    repeating: impl Into<Yarn>,
     (open_start, open_end): (impl Into<Yarn>, impl Into<Yarn>),
     (close_start, close_end): (impl Into<Yarn>, impl Into<Yarn>),
   ) -> Self {
@@ -215,7 +215,7 @@ impl Bracket {
     );
 
     Self {
-      kind: BracketKind::RustLike { repeating, min_count, open, close },
+      kind: BracketKind::RustLike { repeating, open, close },
     }
   }
 
@@ -268,7 +268,6 @@ pub(crate) enum BracketKind {
   Paired(Yarn, Yarn),
   RustLike {
     repeating: Yarn,
-    min_count: usize,
     open: (Yarn, Yarn),
     close: (Yarn, Yarn),
   },

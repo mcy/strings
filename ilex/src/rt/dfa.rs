@@ -232,7 +232,6 @@ fn compile_bracket(kind: &BracketKind) -> (Hir, Hir) {
     BracketKind::Paired(open, close) => (lit(open), lit(close)),
     BracketKind::RustLike {
       repeating,
-      min_count: _ignored,
       open: (o1, o2),
       close: (c1, c2),
     } => (

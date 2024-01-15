@@ -7,7 +7,7 @@ use ilex::testing::Matcher;
 fn greedy() {
   let mut spec = ilex::Spec::builder();
   let rust_like = spec.rule(Quoted::with(Bracket::rust_style(
-    ("#%", 0),
+    "#%",
     ("poisonous", "["),
     ("]", ">"),
   )));
