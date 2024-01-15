@@ -7,7 +7,6 @@ use std::ops::RangeBounds;
 use byteyarn::Yarn;
 use twie::Trie;
 
-use crate::f;
 use crate::token;
 use crate::Never;
 use crate::WrongKind;
@@ -561,78 +560,132 @@ impl Quoted {
     }
   }
 
-  /// Adds a new escape rule to this rule.
+  /// Adds a basic escape rule to this rule.
+  ///
+  /// A basic escape is one that just appears literally in the string,
+  /// like `\n`.
   ///
   /// ```
   /// # use ilex::rule::*;
   /// Quoted::new('"')
-  ///   .escape("\\n", '\n');
+  ///   .escape(r"\n");
   /// ```
-  pub fn escape(self, key: impl Into<Yarn>, rule: impl Into<Escape>) -> Self {
-    self.escapes([(key, rule)])
+  ///
+  /// # Panics
+  ///
+  /// Panics if the key is empty.
+  pub fn escape(self, key: impl Into<Yarn>) -> Self {
+    self.escapes([key])
   }
 
-  /// Adds multiple new escape rules to this rule.
+  /// Adds multiple new basic escape rules to this rule.
+  ///
+  /// Basic escapes are the most common type of escape, so they get a
+  /// dedicated multi-helper.
   ///
   /// ```
   /// # use ilex::rule::*;
   /// Quoted::new('"')
-  ///   .escapes([
-  ///     ("\\n", '\n'),
-  ///     ("\\", '\\'),
-  ///   ]);
+  ///   .escapes([r"\n", r"\\"]);
   /// ```
-  pub fn escapes<Y: Into<Yarn>, Esc: Into<Escape>>(
+  ///
+  /// # Panics
+  ///
+  /// Panics if any of the keys are empty.
+  pub fn escapes<Y: Into<Yarn>>(
     mut self,
-    xs: impl IntoIterator<Item = (Y, Esc)>,
+    keys: impl IntoIterator<Item = Y>,
   ) -> Self {
-    for (y, e) in xs {
-      let esc = e.into();
-      if let Escape::Bracketed { bracket, .. } = &esc {
-        assert!(
-          matches!(&bracket.kind, BracketKind::Paired(..)),
-          "Quoted::escapes() does not support non-paired brackets yet"
-        )
-      };
-
-      self.escapes.insert(&y.into(), esc);
+    for key in keys {
+      let key = key.into();
+      assert!(!key.is_empty());
+      self.escapes.insert(&key, Escape::Basic);
     }
+    self
+  }
+
+  /// Adds an invalid escape rule to this rule.
+  ///
+  /// This is intended for catching things that look like escape sequences
+  /// but aren't, and should be diagnosed, like a single \ in many langauges.
+  ///
+  /// ```
+  /// # use ilex::rule::*;
+  /// Quoted::new('"')
+  ///   .escape(r"\");
+  /// ```
+  ///
+  /// # Panics
+  ///
+  /// Panics if the key is empty.
+  pub fn invalid_escape(mut self, key: impl Into<Yarn>) -> Self {
+    let key = key.into();
+    assert!(!key.is_empty());
+    self.escapes.insert(&key, Escape::Invalid);
+    self
+  }
+
+  /// Adds a fixed-length escape rule to this rule.
+  ///
+  /// A fixed-length escape requires some number of characters after
+  /// its key (which may not be the string's quotation characters). For example,
+  /// `\x` in Rust is a fixed-length escape.
+  ///
+  /// ```
+  /// # use ilex::rule::*;
+  /// Quoted::new('"')
+  ///   .fixed_length_escape(r"\x", 2);
+  /// ```
+  ///
+  /// # Panics
+  ///
+  /// Panics if `len == 0`, or if the key is empty.
+  pub fn fixed_length_escape(mut self, key: impl Into<Yarn>, len: u32) -> Self {
+    let key = key.into();
+    assert!(!key.is_empty());
+    assert!(len != 0, "cannot create a fixed length escape with length zero");
+    self.escapes.insert(&key, Escape::Fixed(len));
+    self
+  }
+
+  /// Adds a bracketed escape rule to this rule.
+  ///
+  /// A fixed-length escape is followed by bracket-delimited characters, such as
+  /// `\u{...}` in Rust.
+  ///
+  /// ```
+  /// # use ilex::rule::*;
+  /// Quoted::new('"')
+  ///   .fixed_length_escape(r"\x", 2);
+  /// ```
+  ///
+  /// # Panics
+  ///
+  /// Panics if either bracket is empty.
+  pub fn bracketed_escape(
+    mut self,
+    key: impl Into<Yarn>,
+    open: impl Into<Yarn>,
+    close: impl Into<Yarn>,
+  ) -> Self {
+    let key = key.into();
+    assert!(!key.is_empty());
+    let (open, close) = (open.into(), close.into());
+    assert!(
+      !open.is_empty() && !close.is_empty(),
+      "cannot create a bracketed escape with empty brackets"
+    );
+    self.escapes.insert(&key, Escape::Bracketed(open, close));
     self
   }
 
   /// Adds the Rust escaping rules to this rule.
   pub fn add_rust_escapes(self) -> Self {
     self
-      .escape('\\', Escape::Invalid)
-      .escapes([
-        ("\\0", '\0'),
-        ("\\n", '\n'),
-        ("\\r", '\r'),
-        ("\\t", '\t'),
-        ("\\\\", '\\'),
-        ("\\\"", '\"'),
-        ("\\\'", '\''),
-      ])
-      .escape(
-        "\\x",
-        Escape::Fixed {
-          char_count: 2,
-          parse: Box::new(|hex| match u8::from_str_radix(hex, 16) {
-            Ok(byte) if byte < 0x80 => Ok(byte as u32),
-            _ => Err("expected ASCII value in the range \\x00..=\\0x7f".into()),
-          }),
-        },
-      )
-      .escape(
-        "\\u",
-        Escape::Bracketed {
-          bracket: ('{', '}').into(),
-          parse: Box::new(|hex| match u32::from_str_radix(hex, 16) {
-            Ok(code) if char::from_u32(code).is_some() => Ok(code),
-            _ => Err("expected Unicode scalar value in the ranges \\u{0}..=\\u{d7ff} or \\u{e000}..=\\u{10ffff}".into()),
-          }),
-        },
-      )
+      .invalid_escape(r"\")
+      .escapes([r"\0", r"\n", r"\r", r"\t", r"\\", "\\\"", r"\'"])
+      .fixed_length_escape(r"\x", 2)
+      .bracketed_escape(r"\u", '{', '}')
   }
 
   affixes!();
@@ -673,14 +726,14 @@ impl TryFrom<Any> for Quoted {
 }
 
 /// A rule to apply to resolve an escape sequence.
-#[allow(clippy::type_complexity)]
-pub enum Escape {
+#[derive(Debug)]
+pub(crate) enum Escape {
   /// This escape is always invalid. Useful for catching e.g. a single \ that
   /// is not followed by an actually-valid escape.
   Invalid,
 
   /// The escape is just a literal for another character, such as `\n`.
-  Literal(u32),
+  Basic,
 
   /// The escape consumes the next `char_count` Unicode scalars after the
   /// key (the character after the escape initiation character) and passes
@@ -689,16 +742,7 @@ pub enum Escape {
   /// This can be used to implement escapes like `\x` (aka `\xNN`) and the
   /// C++ version of `\u` (aka `\uNNNN`). This can also be used to implement
   /// something like C's octal escapes (aka `\NNN`) using an escape key of `\`.
-  ///
-  /// The `parse` function may be called speculatively; it MUST NOT emit its
-  /// own diagnostics. The string returned as the `Err` variant will be shown
-  /// as a diagnostic, as if passed to the [`Builtins::invalid_escape()`]
-  /// function.
-  #[allow(missing_docs)]
-  Fixed {
-    char_count: u32,
-    parse: Box<dyn Fn(&str) -> Result<u32, Yarn> + Sync + Send>,
-  },
+  Fixed(u32),
 
   /// The escape text delimited by `bracket` after the
   /// key (the character after the escape initiation character) and passes
@@ -706,41 +750,7 @@ pub enum Escape {
   ///
   /// This can be used to implement escapes like Rust's version of `\u`
   /// (aka `\u{NNNN}`).
-  ///
-  /// The `parse` function may be called speculatively; it MUST NOT emit its
-  /// own diagnostics. The string returned as the `Err` variant will be shown
-  /// as a diagnostic, as if passed to the [`Builtins::invalid_escape()`]
-  /// function.
-  #[allow(missing_docs)]
-  Bracketed {
-    bracket: Bracket,
-    parse: Box<dyn Fn(&str) -> Result<u32, Yarn> + Sync + Send>,
-  },
-}
-
-impl fmt::Debug for Escape {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      Self::Invalid => write!(f, "Invalid"),
-      Self::Literal(arg0) => f.debug_tuple("Literal").field(arg0).finish(),
-      Self::Fixed { char_count, parse } => f
-        .debug_struct("Fixed")
-        .field("char_count", char_count)
-        .field("parse", &f!("{parse:p}"))
-        .finish(),
-      Self::Bracketed { bracket, parse } => f
-        .debug_struct("Bracketed")
-        .field("bracket", bracket)
-        .field("parse", &f!("{parse:p}"))
-        .finish(),
-    }
-  }
-}
-
-impl<U: Into<u32>> From<U> for Escape {
-  fn from(value: U) -> Self {
-    Self::Literal(value.into())
-  }
+  Bracketed(Yarn, Yarn),
 }
 
 /// A digital literal rule.

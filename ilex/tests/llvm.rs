@@ -43,14 +43,7 @@ ilex::spec! {
 
     #[named]
     string: Quoted = Quoted::new('"')
-      .escape(
-        "\\",
-        Escape::Fixed {
-          char_count: 2,
-          parse: Box::new(|hex| u32::from_str_radix(hex, 16)
-            .map_err(|_| "expected hexadecimal".into())),
-        },
-      )
+      .fixed_length_escape(r"\", 2)
       .prefixes(["", "c"]),
 
     #[named = "identifier"]
@@ -67,11 +60,7 @@ ilex::spec! {
 
     #[named = "quoted identifier"]
     quoted: Quoted = Quoted::new('"')
-      .escape("\\", Escape::Fixed {
-        char_count: 2,
-        parse: Box::new(|hex| u32::from_str_radix(hex, 16)
-          .map_err(|_| "expected hexadecimal".into())),
-      })
+      .fixed_length_escape(r"\", 2)
       .prefixes(["!", "@", "%"]),
 
     #[named = "number"]
@@ -146,7 +135,11 @@ fn llvm() {
       llvm.string,
       "c",
       ('"', '"'),
-      [C::lit("hello world"), C::esc(r"\0A", 0xAu32), C::esc(r"\00", 0u32)],
+      [
+        C::lit("hello world"),
+        C::esc_with_data(r"\", "0A"),
+        C::esc_with_data(r"\", "00"),
+      ],
     )
     //
     .then1(llvm.declare, "declare")

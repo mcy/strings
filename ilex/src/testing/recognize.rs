@@ -101,13 +101,7 @@ impl Matcher {
             }
             (token::Content::Esc(t, ours), token::Content::Esc(s, theirs)) => {
               state.match_spans("string escape", t, s);
-              if ours != &theirs {
-                state.error(f!(
-                  "wrong decoded escape; want {:?}, got {:?}",
-                  ours,
-                  theirs
-                ));
-              }
+              state.match_options("escape data", ours.as_ref(), theirs);
             }
             _ => state.error("mismatched string content types"),
           },
