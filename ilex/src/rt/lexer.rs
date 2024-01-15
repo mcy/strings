@@ -8,9 +8,10 @@ use regex_automata::hybrid::dfa::Cache;
 use crate::f;
 use crate::file::Context;
 use crate::file::File;
-use crate::file::Range;
-use crate::file::Ranged;
 use crate::file::Span;
+use crate::file::SpanId;
+use crate::file::Spanned;
+use crate::report::Builtins;
 use crate::report::Report;
 use crate::rt;
 use crate::rule;
@@ -31,9 +32,9 @@ pub struct Lexer<'a, 'spec, 'ctx> {
   cursor: usize,
   tokens: Vec<rt::Token>,
   closers: Vec<Closer>,
-  comments: Vec<Span>,
+  comments: Vec<SpanId>,
 
-  eof: Span,
+  eof: SpanId,
   cache: Cache,
 }
 
@@ -49,7 +50,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   /// Creates a new lexer.
   pub fn new(file: File<'ctx>, report: &'a Report, spec: &'spec Spec) -> Self {
     Lexer {
-      eof: file.range(file.len()..file.len()).mksp(file.context()),
+      eof: file.span(file.len()..file.len()).intern(file.context()),
       cache: Cache::new(&spec.dfa().engine),
 
       file,
@@ -82,6 +83,11 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
     self.spec
   }
 
+  /// Returns the diagnostics builtins.
+  pub fn builtins(&self) -> Builtins {
+    self.report.builtins(self.spec())
+  }
+
   /// Returns the spec we're lexing against.
   pub fn file(&self) -> File<'ctx> {
     self.file
@@ -106,18 +112,18 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   }
 
   /// Returns the EOF span.
-  pub fn eof(&self) -> Span {
+  pub fn eof(&self) -> SpanId {
     self.eof
   }
 
   /// Creates a new range in the current file.
-  pub fn range(&self, range: impl RangeBounds<usize>) -> Range {
-    self.file.range(range)
+  pub fn span(&self, range: impl RangeBounds<usize>) -> Span {
+    self.file.span(range)
   }
 
   /// Creates a new range in the current file and bakes it.
-  pub fn mksp(&self, range: impl RangeBounds<usize>) -> Span {
-    self.file.range(range).mksp(self.ctx())
+  pub fn intern(&self, range: impl RangeBounds<usize>) -> SpanId {
+    self.file.span(range).intern(self.ctx())
   }
 
   /// Creates a new span in the current file with the given range.
@@ -186,9 +192,8 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
         let start = self.cursor();
         self.advance(xids);
 
-        let span = self.range(start..self.cursor());
-        self.report().builtins().extra_chars(
-          self.spec(),
+        let span = self.span(start..self.cursor());
+        self.builtins().extra_chars(
           self.spec().rule_name_or(
             close.lexeme.any(),
             f!("{} ... {}", open_sp.text(self.file.context()), close.close),
@@ -198,12 +203,11 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
       }
     }
 
-    let span = self.range(start..self.cursor).mksp(self.ctx());
+    let span = self.span(start..self.cursor).intern(self.ctx());
     if idx != self.closers.len() {
       // This is a so-called "mixed delimiter", and an error we need to
       // diagnose.
-      self.report().builtins().unclosed(
-        self.spec(),
+      self.builtins().unclosed(
         open_sp,
         &self.closers.last().unwrap().close,
         close.close.as_str(),
@@ -211,7 +215,8 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
       );
     }
 
-    let full_span = self.mksp(open_sp.range(self.ctx()).start()..self.cursor());
+    let full_span =
+      self.intern(open_sp.span(self.ctx()).start()..self.cursor());
     self.add_token(rt::Token {
       kind: rt::Kind::Close { full_span, offset_to_open },
       span,
@@ -223,15 +228,16 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
 
   /// Adds a new token, draining all of the saved-up comments.
   pub fn add_token(&mut self, tok: rt::Token) {
+    let span = tok.span.span(self.ctx());
     for comment in self.comments.drain(..) {
-      tok.span.append_comment_span(self.file.context(), comment);
+      span.append_comment_span(self.file.context(), comment);
     }
 
     self.tokens.push(tok);
   }
 
   /// Adds a new token, draining all of the saved-up comments.
-  pub fn add_comment(&mut self, span: Span) {
+  pub fn add_comment(&mut self, span: SpanId) {
     self.comments.push(span);
   }
 
@@ -244,8 +250,8 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
     while let Some(c) = self.text(idx..end).chars().next() {
       if c.is_whitespace() {
         if idx > start {
-          let span = self.range(start..idx);
-          self.report().builtins().unexpected_token(span);
+          let span = self.span(start..idx);
+          self.builtins().unexpected_token(span);
         }
         start = idx + c.len_utf8();
       }
@@ -254,8 +260,8 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
     }
 
     if idx > start {
-      let span = self.range(start..idx);
-      self.report().builtins().unexpected_token(span);
+      let span = self.span(start..idx);
+      self.builtins().unexpected_token(span);
     }
   }
 
@@ -270,13 +276,9 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
 
     for close in mem::take(&mut self.closers) {
       let open = self.tokens[close.original_open_idx].span;
-      self.report.builtins().unclosed(
-        self.spec(),
-        open,
-        &close.close,
-        Lexeme::eof(),
-        self.eof(),
-      );
+      self
+        .builtins()
+        .unclosed(open, &close.close, Lexeme::eof(), self.eof());
     }
 
     token::Stream { spec: self.spec, toks: self.tokens }

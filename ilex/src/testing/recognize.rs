@@ -9,7 +9,6 @@ use std::fmt::Display;
 
 use crate::f;
 use crate::file::Context;
-use crate::file::Span;
 use crate::file::Spanned;
 use crate::rule;
 use crate::spec::Lexeme;
@@ -64,7 +63,7 @@ impl Matcher {
     tok: token::Any,
     ctx: &Context,
   ) {
-    state.match_spans("token span", &self.span, tok.span());
+    state.match_spans("token span", &self.span, Spanned::span(&tok, ctx));
 
     zip_eq(
       "comments",
@@ -273,7 +272,8 @@ impl<'a> MatchState<'a> {
     let _ = writeln!(self.errors, ": {msg}");
   }
 
-  fn match_spans(&mut self, what: &str, text: &Text, span: Span) {
+  fn match_spans(&mut self, what: &str, text: &Text, span: impl Spanned) {
+    let span = span.span(self.ctx);
     if !text.recognizes(span, self.ctx) {
       self.error(f!("wrong {what}; want {:?}, got {:?}", text, span));
     }
@@ -283,8 +283,9 @@ impl<'a> MatchState<'a> {
     &mut self,
     what: &str,
     text: Option<&Text>,
-    span: Option<Span>,
+    span: Option<impl Spanned>,
   ) {
+    let span = span.map(|s| s.span(self.ctx));
     if text.is_none() && span.is_none() {
       return;
     }

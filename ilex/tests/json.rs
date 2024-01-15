@@ -10,6 +10,7 @@ use ilex::testing::Matcher;
 use ilex::token;
 use ilex::token::Content as C;
 use ilex::token::Cursor;
+use ilex::Spanned;
 
 ilex::spec! {
   struct JsonSpec {
@@ -245,8 +246,7 @@ fn parse0(
           let data = data.unwrap();
           let code =
             u16::from_str_radix(data.text(ctx), 16).unwrap_or_else(|_| {
-              report.builtins().expected(
-                json.spec(),
+              report.builtins(json.spec()).expected(
                 [Expected::Name("hex-encoded u16".into())],
                 data.text(ctx),
                 data,

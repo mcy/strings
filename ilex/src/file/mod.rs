@@ -76,8 +76,8 @@ impl<'ctx> File<'ctx> {
   ///
   /// Panics if `start > end`, or if `end` is greater than the length of the
   /// file.
-  pub fn range(self, range: impl RangeBounds<usize>) -> Range {
-    Range::new(self, range)
+  pub fn span(self, range: impl RangeBounds<usize>) -> Span {
+    Span::new(self, range)
   }
 
   pub(crate) fn idx(self) -> usize {
@@ -100,57 +100,30 @@ impl PartialEq for File<'_> {
   }
 }
 
-/// An interned span in a [`File`].
+/// A range within a [`File`].
 ///
-/// This type is just a numeric ID. In order to obtain information about the
-/// span, it must be passed to an [`Context`], which tracks this information
-/// in a compressed format.
+/// Full span information (such as comments) is not necessary for diagnostics,
+/// so anything that implements [`Spanned`] is suitable for placing spanned data
+/// in diagnostics.
 #[derive(Copy, Clone)]
 pub struct Span {
-  idx: u32,
+  file: u32,
+  start: u32,
+  end: u32,
 }
 
-impl Span {
-  /// Gets the file for this span.
-  ///
-  /// # Panics
-  ///
-  /// May panic if this span is not owned by `ctx` (or it may produce an
-  /// unexpected result).
-  pub fn file(self, ctx: &Context) -> File {
-    Ranged::range(&self, ctx).file(ctx)
-  }
+/// An interned [`Span`].
+///
+/// Most tokens' spans will never be inspected after lexing, so it's better to
+/// make them small for memory saving reasons. This abstraction allows the
+/// library to optimize internal handling of spans over time.
+///
+/// This type is just a numeric ID; in order to do anything with it, you'll
+/// need to call one of the functions in [`Spanned`].
+#[derive(Copy, Clone)]
+pub struct SpanId(u32);
 
-  /// Gets the text for the given span.
-  ///
-  /// # Panics
-  ///
-  /// May panic if this span is not owned by `ctx` (or it may produce an
-  /// unexpected result).
-  pub fn text(self, ctx: &Context) -> &str {
-    Ranged::range(&self, ctx).text(ctx)
-  }
-
-  /// Gets the comment associated with the given span, if any.
-  ///
-  /// # Panics
-  ///
-  /// May panic if this span is not owned by `ctx` (or it may produce an
-  /// unexpected result).
-  pub fn comments(self, ctx: &Context) -> Comments {
-    let range = self.range(ctx);
-    Comments { slice: ctx.lookup_comments(range.file(ctx), range.start()), ctx }
-  }
-
-  /// Sets the comment associated with a given span. The comment must itself
-  /// be specified as a span.
-  pub(crate) fn append_comment_span(self, ctx: &Context, comment: Span) {
-    let range = self.range(ctx);
-    ctx.add_comment(range.file(ctx), range.start(), comment)
-  }
-}
-
-impl fmt::Debug for Span {
+impl fmt::Debug for SpanId {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     CTX_FOR_SPAN_DEBUG.with(|ctx| {
       let ctx = ctx.borrow();
@@ -158,99 +131,13 @@ impl fmt::Debug for Span {
         return f.write_str("<elided>");
       };
 
-      fmt::Debug::fmt(&Ranged::range(&self, ctx), f)
+      fmt::Debug::fmt(&Spanned::span(&self, ctx), f)
     })
   }
 }
 
-/// An iterator over the comment spans attached to a [`Span`].
-pub struct Comments<'ctx> {
-  slice: (RwLockReadGuard<'ctx, context::State>, *const [Span]),
-  ctx: &'ctx Context,
-}
-
-impl<'ctx> Comments<'ctx> {
-  /// Adapts this iterator to return just the text contents of each [`Span`].
-  pub fn as_strings(&self) -> impl Iterator<Item = &'_ str> {
-    unsafe { &*self.slice.1 }
-      .iter()
-      .map(|span| span.text(self.ctx))
-  }
-}
-
-impl<'a> IntoIterator for &'a Comments<'_> {
-  type Item = Span;
-  type IntoIter = iter::Copied<slice::Iter<'a, Span>>;
-
-  fn into_iter(self) -> Self::IntoIter {
-    unsafe { &*self.slice.1 }.iter().copied()
-  }
-}
-
-/// A syntax element which contains a span.
-///
-/// You should implement this type for any type which contains a single span
-/// that spans its contents in their entirety.
-pub trait Spanned {
-  /// Returns the span in this syntax element.
-  fn span(&self) -> Span;
-
-  /// Forwards to [`Span::file()`].
-  fn file<'ctx>(&self, ctx: &'ctx Context) -> File<'ctx> {
-    self.span().file(ctx)
-  }
-
-  /// Forwards to [`Span::text()`].
-  fn text<'ctx>(&self, ctx: &'ctx Context) -> &'ctx str {
-    self.span().text(ctx)
-  }
-
-  /// Forwards to [`Span::comments()`].
-  fn comments<'ctx>(&self, ctx: &'ctx Context) -> Comments<'ctx> {
-    self.span().comments(ctx)
-  }
-}
-
-// Spans are spanned by their own spans.
-impl Spanned for Span {
-  fn span(&self) -> Span {
-    *self
-  }
-}
-
-impl<S: Spanned> Spanned for &S {
-  fn span(&self) -> Span {
-    S::span(self)
-  }
-}
-
-impl Spanned for Never {
-  fn span(&self) -> Span {
-    self.from_nothing_anything()
-  }
-}
-
-/// A range in a [`File`].
-///
-/// Full span information (such as comments) is not necessary for diagnostics,
-/// so anything that implements [`Ranged`] is suitable for placing spanned data
-/// in diagnostics.
-#[derive(Copy, Clone)]
-pub struct Range {
-  file: u32,
-  start: u32,
-  end: u32,
-}
-
-#[track_caller]
-fn cast<T: Copy + TryInto<u32> + fmt::Debug>(value: T) -> u32 {
-  value
-    .try_into()
-    .unwrap_or_else(|_| bug!("range bound does not fit into u32: {:?}", value))
-}
-
-impl Range {
-  /// Constructs a location from a file and a byte range within it.
+impl Span {
+  /// Constructs a span from a file and a byte range within it.
   ///
   /// # Panics
   ///
@@ -260,7 +147,7 @@ impl Range {
   pub(crate) fn new<T: Copy + TryInto<u32> + fmt::Debug>(
     file: File,
     range: impl RangeBounds<T>,
-  ) -> Range {
+  ) -> Span {
     let start = match range.start_bound() {
       Bound::Included(&x) => cast(x),
       Bound::Excluded(&x) => cast(x).saturating_add(1),
@@ -280,48 +167,61 @@ impl Range {
       file.text.len(),
     );
 
-    Range { file: file.idx() as u32, start, end }
+    Span { file: file.idx() as u32, start, end }
   }
 
-  /// Gets the file for this range.
+  /// Gets the file for this span.
   ///
   /// # Panics
   ///
-  /// May panic if this range is not owned by `ctx` (or it may produce an
+  /// May panic if this span is not owned by `ctx` (or it may produce an
   /// unexpected result).
   pub fn file(self, ctx: &Context) -> File {
     ctx.file(self.file as usize).unwrap()
   }
 
-  /// Returns the start (inclusive) byte offset of this range.
+  /// Returns the start (inclusive) byte offset of this span.
   pub fn start(self) -> usize {
     self.start as usize
   }
 
-  /// Returns the end (exclusive) byte offset of this range.
+  /// Returns the end (exclusive) byte offset of this span.
   pub fn end(self) -> usize {
     self.end as usize
   }
 
-  /// Returns whether this range has zero length.
+  /// Returns whether this span has zero length.
   pub fn is_empty(self) -> bool {
     self.len() == 0
   }
 
-  /// Returns the length of this range, in bytes.
+  /// Returns the length of this span, in bytes.
   pub fn len(self) -> usize {
     (self.end - self.start) as usize
   }
 
-  /// Returns a subrange of this range.
+  /// Gets the comment associated with this span, if any.
+  ///
+  /// # Panics
+  ///
+  /// May panic if this span is not owned by `ctx` (or it may produce an
+  /// unexpected result).
+  pub fn comments(self, ctx: &Context) -> Comments {
+    Comments {
+      slice: ctx.lookup_comments(self.file(ctx), self.start()),
+      ctx,
+    }
+  }
+
+  /// Returns a subspan of this range.
   ///
   /// # Panics
   ///
   /// Panics if `start` > `end` or `end` > `self.len()`.
-  pub fn subrange<T: Copy + TryInto<u32> + fmt::Debug>(
+  pub fn subspan<T: Copy + TryInto<u32> + fmt::Debug>(
     self,
     range: impl RangeBounds<T>,
-  ) -> Range {
+  ) -> Span {
     let start = match range.start_bound() {
       Bound::Included(&x) => cast(x),
       Bound::Excluded(&x) => cast(x).saturating_add(1),
@@ -337,11 +237,11 @@ impl Range {
     assert!(start <= end, "out of order range: {start} > {end}");
     assert!(
       end <= (self.len() as u32),
-      "subrange ends past end of range: {end} > {}",
+      "subspan ends past end of range: {end} > {}",
       self.len()
     );
 
-    Range {
+    Span {
       file: self.file,
       start: self.start + start,
       end: self.start + end,
@@ -353,8 +253,8 @@ impl Range {
   /// # Panics
   ///
   /// Panics if `at` is larger than the length of this range.
-  pub fn split_at(self, at: usize) -> (Range, Range) {
-    (self.subrange(..at), self.subrange(at..))
+  pub fn split_at(self, at: usize) -> (Span, Span) {
+    (self.subspan(..at), self.subspan(at..))
   }
 
   /// Splits off a prefix and a suffix from `range`, and returns the split
@@ -363,7 +263,7 @@ impl Range {
   /// # Panics
   ///
   /// Panics if `range` is smaller than `pre + suf`.
-  pub fn split_around(self, pre: usize, suf: usize) -> [Range; 3] {
+  pub fn split_around(self, pre: usize, suf: usize) -> [Span; 3] {
     let (pre, range) = self.split_at(pre);
     let (range, suf) = range.split_at(range.len() - suf);
     [pre, range, suf]
@@ -385,7 +285,7 @@ impl Range {
   ///
   /// May panic if not all spans are for the same file, or if the iterator
   /// is empty.
-  pub fn union(ranges: impl IntoIterator<Item = Range>) -> Range {
+  pub fn union(ranges: impl IntoIterator<Item = Span>) -> Span {
     let mut best = None;
 
     for range in ranges {
@@ -404,34 +304,91 @@ impl Range {
   }
 
   /// Bakes this range into a span.
-  pub(crate) fn mksp(self, ctx: &Context) -> Span {
+  pub(crate) fn intern(self, ctx: &Context) -> SpanId {
     ctx.new_span(self)
   }
 
   /// Bakes this range into a span.
-  pub(crate) fn mksp_nonempty(self, ctx: &Context) -> Option<Span> {
+  pub(crate) fn intern_nonempty(self, ctx: &Context) -> Option<SpanId> {
     if self.is_empty() {
       return None;
     }
-    Some(self.mksp(ctx))
+    Some(self.intern(ctx))
+  }
+
+  /// Sets the comment associated with a given span. The comment must itself
+  /// be specified as a span.
+  pub(crate) fn append_comment_span(self, ctx: &Context, comment: SpanId) {
+    ctx.add_comment(self.file(ctx), self.start(), comment)
   }
 }
 
-/// Like [`Spanned`], but produces a [`Range`] instead.
-pub trait Ranged {
-  /// Performs the conversion.
-  fn range(&self, ctx: &Context) -> Range;
+/// A syntax element which contains a span.
+///
+/// You should implement this type for any type which naturally has a single
+/// span that describes it.
+pub trait Spanned {
+  /// Returns the span in this syntax element.
+  fn span(&self, ctx: &Context) -> Span;
+
+  /// Forwards to [`SpanId::file()`].
+  fn file<'ctx>(&self, ctx: &'ctx Context) -> File<'ctx> {
+    self.span(ctx).file(ctx)
+  }
+
+  /// Forwards to [`Span::start()`].
+  fn start(&self, ctx: &Context) -> usize {
+    self.span(ctx).start()
+  }
+
+  /// Forwards to [`Span::end()`].
+  fn end(&self, ctx: &Context) -> usize {
+    self.span(ctx).end()
+  }
+
+  /// Forwards to [`Span::is_empty()`].
+  fn is_empty(&self, ctx: &Context) -> bool {
+    self.span(ctx).is_empty()
+  }
+
+  /// Forwards to [`Span::len()`].
+  fn len(&self, ctx: &Context) -> usize {
+    self.span(ctx).len()
+  }
+
+  /// Forwards to [`SpanId::text()`].
+  fn text<'ctx>(&self, ctx: &'ctx Context) -> &'ctx str {
+    self.span(ctx).text(ctx)
+  }
+
+  /// Forwards to [`SpanId::comments()`].
+  fn comments<'ctx>(&self, ctx: &'ctx Context) -> Comments<'ctx> {
+    self.span(ctx).comments(ctx)
+  }
 }
 
-impl Ranged for Range {
-  fn range(&self, _ctx: &Context) -> Range {
+impl Spanned for SpanId {
+  fn span(&self, ctx: &Context) -> Span {
+    ctx.lookup_range(*self)
+  }
+}
+
+// Spans are spanned by their own spans.
+impl Spanned for Span {
+  fn span(&self, _ctx: &Context) -> Span {
     *self
   }
 }
 
-impl<S: Spanned> Ranged for S {
-  fn range(&self, ctx: &Context) -> Range {
-    ctx.lookup_range(self.span())
+impl<S: Spanned> Spanned for &S {
+  fn span(&self, ctx: &Context) -> Span {
+    S::span(self, ctx)
+  }
+}
+
+impl Spanned for Never {
+  fn span(&self, _ctx: &Context) -> Span {
+    self.from_nothing_anything()
   }
 }
 
@@ -439,7 +396,7 @@ thread_local! {
   static CTX_FOR_SPAN_DEBUG: RefCell<Option<Context>> = RefCell::new(None);
 }
 
-impl fmt::Debug for Range {
+impl fmt::Debug for Span {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     CTX_FOR_SPAN_DEBUG.with(|ctx| {
       if let Some(ctx) = &*ctx.borrow() {
@@ -459,7 +416,38 @@ impl fmt::Debug for Range {
         write!(f, "<#{}>", self.file)?;
       }
 
-      write!(f, "[{}..{}]", self.start(), self.end())
+      write!(f, "[{}..{}]", Span::start(*self), Span::end(*self))
     })
   }
+}
+
+/// An iterator over the comment spans attached to a [`SpanId`].
+pub struct Comments<'ctx> {
+  slice: (RwLockReadGuard<'ctx, context::State>, *const [SpanId]),
+  ctx: &'ctx Context,
+}
+
+impl<'ctx> Comments<'ctx> {
+  /// Adapts this iterator to return just the text contents of each [`SpanId`].
+  pub fn as_strings(&self) -> impl Iterator<Item = &'_ str> {
+    unsafe { &*self.slice.1 }
+      .iter()
+      .map(|span| span.text(self.ctx))
+  }
+}
+
+impl<'a> IntoIterator for &'a Comments<'_> {
+  type Item = SpanId;
+  type IntoIter = iter::Copied<slice::Iter<'a, SpanId>>;
+
+  fn into_iter(self) -> Self::IntoIter {
+    unsafe { &*self.slice.1 }.iter().copied()
+  }
+}
+
+#[track_caller]
+fn cast<T: Copy + TryInto<u32> + fmt::Debug>(value: T) -> u32 {
+  value
+    .try_into()
+    .unwrap_or_else(|_| bug!("range bound does not fit into u32: {:?}", value))
 }

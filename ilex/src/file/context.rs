@@ -9,18 +9,18 @@ use camino::Utf8PathBuf;
 
 use crate::f;
 use crate::file::File;
-use crate::file::Span;
+use crate::file::SpanId;
 use crate::file::CTX_FOR_SPAN_DEBUG;
 use crate::report;
 use crate::report::Fatal;
 use crate::report::Report;
 
-use super::Range;
+use super::Span;
 
 /// A source context, which tracks source files.
 ///
 /// A `Context` contains the full text of all the loaded source files, which
-/// [`Span`]s ultimately refer to. Most [`Span`] operations need their
+/// [`SpanId`]s ultimately refer to. Most [`SpanId`] operations need their
 /// corresponding `Context` available.
 #[derive(Default)]
 pub struct Context {
@@ -31,8 +31,8 @@ pub struct Context {
 pub struct State {
   files: Vec<(Utf8PathBuf, String)>,
 
-  ranges: Vec<Range>,
-  comments: HashMap<(u32, u32), Vec<Span>>,
+  ranges: Vec<Span>,
+  comments: HashMap<(u32, u32), Vec<SpanId>>,
 }
 
 unsafe impl Send for Context {}
@@ -52,7 +52,7 @@ impl Context {
   ///
   /// By default, `dbg!(some_span)` produces a string like `"<elided>"`, since
   /// spans do not know what context they came from. This function sets a thread
-  /// local that `<Span as fmt::Debug>` looks at when printing; this is useful
+  /// local that `<SpanId as fmt::Debug>` looks at when printing; this is useful
   /// for when dumping e.g. an AST when debugging.
   ///
   /// Returns an RAII type that undoes the effects of this function when leaving
@@ -145,26 +145,26 @@ impl Context {
   }
 
   /// Gets the byte range for the given span, if it isn't the synthetic span.
-  pub(crate) fn lookup_range(&self, span: Span) -> Range {
+  pub(crate) fn lookup_range(&self, span: SpanId) -> Span {
     let state = self.state.read().unwrap();
-    state.ranges[span.idx as usize]
+    state.ranges[span.0 as usize]
   }
 
   pub(crate) fn lookup_comments(
     &self,
     file: File,
     offset: usize,
-  ) -> (RwLockReadGuard<State>, *const [Span]) {
+  ) -> (RwLockReadGuard<State>, *const [SpanId]) {
     let state = self.state.read().unwrap();
     let ptr = state
       .comments
       .get(&(file.idx as u32, offset as u32))
       .map(|x| x.as_slice())
-      .unwrap_or_default() as *const [Span];
+      .unwrap_or_default() as *const [SpanId];
     (state, ptr)
   }
 
-  pub(crate) fn add_comment(&self, file: File, offset: usize, comment: Span) {
+  pub(crate) fn add_comment(&self, file: File, offset: usize, comment: SpanId) {
     self
       .state
       .write()
@@ -176,12 +176,11 @@ impl Context {
   }
 
   /// Creates a new synthetic span with the given contents.
-  pub(crate) fn new_span(&self, range: Range) -> Span {
+  pub(crate) fn new_span(&self, range: Span) -> SpanId {
     let mut state = self.state.write().unwrap();
     assert!(state.ranges.len() <= (u32::MAX as usize), "ran out of spans");
 
-    let span = Span { idx: state.ranges.len() as u32 };
-
+    let span = SpanId(state.ranges.len() as u32);
     state.ranges.push(range);
     span
   }

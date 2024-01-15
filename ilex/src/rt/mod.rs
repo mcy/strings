@@ -1,7 +1,7 @@
 //! The lexer runtime.
 
 use crate::file::File;
-use crate::file::Span;
+use crate::file::SpanId;
 use crate::report::Fatal;
 use crate::report::Report;
 use crate::rule;
@@ -70,10 +70,10 @@ pub fn lex<'spec>(
 #[derive(Clone)]
 pub struct Token {
   pub kind: Kind,
-  pub span: Span,
+  pub span: SpanId,
   pub lexeme: Lexeme<rule::Any>,
-  pub prefix: Option<Span>,
-  pub suffix: Option<Span>,
+  pub prefix: Option<SpanId>,
+  pub suffix: Option<SpanId>,
 }
 
 /// A pared-down token kind.
@@ -81,11 +81,11 @@ pub struct Token {
 pub enum Kind {
   Eof,
   Keyword,
-  Ident(Span),
+  Ident(SpanId),
   Quoted {
     content: Vec<Content>,
-    open: Span,
-    close: Span,
+    open: SpanId,
+    close: SpanId,
   },
   Digital {
     digits: DigitBlocks,
@@ -96,14 +96,14 @@ pub enum Kind {
   },
   Close {
     offset_to_open: u32,
-    full_span: Span,
+    full_span: SpanId,
   },
 }
 
 #[derive(Clone)]
 pub struct DigitBlocks {
-  pub prefix: Option<Span>,
-  pub sign: Option<(Sign, Span)>,
-  pub blocks: Vec<Span>,
+  pub prefix: Option<SpanId>,
+  pub sign: Option<(Sign, SpanId)>,
+  pub blocks: Vec<SpanId>,
   pub which_exp: usize,
 }

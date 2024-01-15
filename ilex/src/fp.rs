@@ -474,8 +474,7 @@ impl Digital<'_> {
     let int = digits.next();
     let frac = digits.next();
     for extra in digits {
-      report.builtins().unexpected(
-        self.spec(),
+      report.builtins(self.spec()).unexpected(
         "extra digits",
         self.lexeme(),
         extra,
@@ -486,8 +485,7 @@ impl Digital<'_> {
     let exp = exps.next();
     if let Some(exp) = exp {
       for extra in exp.digit_blocks().skip(1) {
-        report.builtins().unexpected(
-          self.spec(),
+        report.builtins(self.spec()).unexpected(
           "extra digits",
           self.lexeme(),
           extra,
@@ -496,8 +494,7 @@ impl Digital<'_> {
     }
 
     for extra in exps {
-      report.builtins().unexpected(
-        self.spec(),
+      report.builtins(self.spec()).unexpected(
         "extra exponent",
         self.lexeme(),
         extra,

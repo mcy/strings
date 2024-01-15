@@ -4,7 +4,7 @@ use std::iter;
 use std::marker::PhantomData;
 use std::mem;
 
-use crate::file::Span;
+use crate::file::SpanId;
 use crate::report::Report;
 use crate::rt;
 use crate::rt::Kind;
@@ -63,7 +63,7 @@ pub struct Cursor<'lex> {
 }
 
 impl<'lex> Cursor<'lex> {
-  fn end(&self) -> Span {
+  fn end(&self) -> SpanId {
     self.toks.last().unwrap().span
   }
 
@@ -99,8 +99,8 @@ impl<'lex> Cursor<'lex> {
   pub fn expect_finished(&self, report: &Report) {
     if let Some(next) = self.peek_any() {
       report
-        .builtins()
-        .expected(self.spec, [Lexeme::eof()], next, self.end());
+        .builtins(self.spec)
+        .expected([Lexeme::eof()], next, self.end());
     }
   }
 
@@ -381,8 +381,7 @@ pub mod switch {
       X: Impl<'lex, T>,
     {
       let Some(next) = cursor.next() else {
-        report.builtins().expected(
-          cursor.spec,
+        report.builtins(cursor.spec).expected(
           self.0.lexemes(0),
           Lexeme::eof(),
           cursor.end(),
@@ -396,8 +395,8 @@ pub mod switch {
       }
 
       report
-        .builtins()
-        .expected(cursor.spec, self.0.lexemes(0), next, next);
+        .builtins(cursor.spec)
+        .expected(self.0.lexemes(0), next, next);
       None
     }
 

@@ -10,7 +10,7 @@ use byteyarn::YarnBox;
 
 use crate::f;
 use crate::file::Context;
-use crate::file::Ranged;
+use crate::file::Spanned;
 use crate::plural;
 use crate::report::Diagnostic;
 use crate::report::Report;
@@ -22,26 +22,31 @@ use crate::token;
 /// A wrapper over [`Report`] for generating diagnostics.
 ///
 /// See [`Report::builtins()`].
-pub struct Builtins<'a>(pub(super) &'a Report);
+pub struct Builtins<'a> {
+  pub(super) report: &'a Report,
+  pub(super) spec: &'a Spec,
+}
 
 impl Builtins<'_> {
   /// Generates an "unexpected" diagnostic.
   #[track_caller]
   pub fn unexpected<'a, 'b>(
     &self,
-    spec: &Spec,
+
     found: impl Into<Expected<'a>>,
     unexpected_in: impl Into<Expected<'b>>,
-    at: impl Ranged,
+    at: impl Spanned,
   ) -> Diagnostic {
     let found = found.into();
 
     let diagnostic = self
-      .0
+      .report
       .error(f!(
         "unexpected {} in {}",
-        found.for_user_diagnostic(spec, &self.0.ctx),
-        unexpected_in.into().for_user_diagnostic(spec, &self.0.ctx),
+        found.for_user_diagnostic(self.spec, &self.report.ctx),
+        unexpected_in
+          .into()
+          .for_user_diagnostic(self.spec, &self.report.ctx),
       ))
       .at(at)
       .reported_at(Location::caller());
@@ -50,12 +55,12 @@ impl Builtins<'_> {
   }
 
   #[track_caller]
-  pub(crate) fn unexpected_token(&self, at: impl Ranged) -> Diagnostic {
-    let at = at.range(&self.0.ctx);
-    let found = at.text(&self.0.ctx);
+  pub(crate) fn unexpected_token(&self, at: impl Spanned) -> Diagnostic {
+    let at = at.span(&self.report.ctx);
+    let found = at.text(&self.report.ctx);
 
     let diagnostic = self
-      .0
+      .report
       .error(f!("unrecognized character{}", plural(found.chars().count())))
       .at(at)
       .reported_at(Location::caller());
@@ -66,24 +71,26 @@ impl Builtins<'_> {
   #[track_caller]
   pub(crate) fn extra_chars<'a>(
     &self,
-    spec: &Spec,
+
     unexpected_in: impl Into<Expected<'a>>,
-    at: impl Ranged,
+    at: impl Spanned,
   ) -> Diagnostic {
-    let at = at.range(&self.0.ctx);
-    let found = at.text(&self.0.ctx);
+    let at = at.span(&self.report.ctx);
+    let found = at.text(&self.report.ctx);
 
     let diagnostic = self
-      .0
+      .report
       .error(f!(
         "extraneous character{} after {}",
         plural(found.chars().count()),
-        unexpected_in.into().for_user_diagnostic(spec, &self.0.ctx),
+        unexpected_in
+          .into()
+          .for_user_diagnostic(self.spec, &self.report.ctx),
       ))
       .at(at)
       .remark(
-        at.file(&self.0.ctx)
-          .range(at.start().saturating_sub(1)..at.start().saturating_add(1)),
+        at.file(&self.report.ctx)
+          .span(at.start().saturating_sub(1)..at.start().saturating_add(1)),
         "maybe you meant to include a space here",
       )
       .reported_at(Location::caller());
@@ -96,20 +103,20 @@ impl Builtins<'_> {
   #[track_caller]
   pub fn expected<'a, 'b, E: Into<Expected<'b>>>(
     &self,
-    spec: &Spec,
+
     expected: impl IntoIterator<Item = E>,
     found: impl Into<Expected<'b>>,
-    at: impl Ranged,
+    at: impl Spanned,
   ) -> Diagnostic {
     let expected = expected.into_iter().map(Into::into).collect::<Vec<_>>();
-    let alts = disjunction_to_string(spec, &self.0.ctx, &expected);
+    let alts = disjunction_to_string(self.spec, &self.report.ctx, &expected);
     let found = found.into();
 
     let diagnostic = self
-      .0
+      .report
       .error(f!(
         "expected {alts}, but found {}",
-        found.for_user_diagnostic(spec, &self.0.ctx)
+        found.for_user_diagnostic(self.spec, &self.report.ctx)
       ))
       .saying(at, f!("expected {alts}"))
       .reported_at(Location::caller());
@@ -122,18 +129,18 @@ impl Builtins<'_> {
   #[track_caller]
   pub(crate) fn unopened<'a>(
     &self,
-    spec: &Spec,
+
     expected: &str,
     found: impl Into<Expected<'a>>,
-    at: impl Ranged,
+    at: impl Spanned,
   ) -> Diagnostic {
     let found = found.into();
 
     let diagnostic = self
-      .0
+      .report
       .error(f!(
         "unexpected closing {}",
-        found.for_user_diagnostic(spec, &self.0.ctx)
+        found.for_user_diagnostic(self.spec, &self.report.ctx)
       ))
       .saying(at, f!("expected to be opened by `{expected}`"))
       .reported_at(Location::caller());
@@ -146,19 +153,19 @@ impl Builtins<'_> {
   #[track_caller]
   pub(crate) fn unclosed<'a>(
     &self,
-    spec: &Spec,
-    open: impl Ranged,
+
+    open: impl Spanned,
     expected: &str,
     found: impl Into<Expected<'a>>,
-    at: impl Ranged,
+    at: impl Spanned,
   ) -> Diagnostic {
     let found = found.into();
 
     let diagnostic = self
-      .0
+      .report
       .error(f!(
         "expected closing `{expected}`, but found {}",
-        found.for_user_diagnostic(spec, &self.0.ctx)
+        found.for_user_diagnostic(self.spec, &self.report.ctx)
       ))
       .saying(at, f!("expected `{expected}` here"))
       .remark(open, "previously opened here")
@@ -172,15 +179,17 @@ impl Builtins<'_> {
   #[track_caller]
   pub(crate) fn non_ascii_in_ident<'a>(
     &self,
-    spec: &Spec,
+
     expected: impl Into<Expected<'a>>,
-    at: impl Ranged,
+    at: impl Spanned,
   ) -> Diagnostic {
     self
-      .0
+      .report
       .error(f!(
         "unexpected non-ASCII characters in {}",
-        expected.into().for_user_diagnostic(spec, &self.0.ctx)
+        expected
+          .into()
+          .for_user_diagnostic(self.spec, &self.report.ctx)
       ))
       .at(at)
       .reported_at(Location::caller())
@@ -191,10 +200,10 @@ impl Builtins<'_> {
     &self,
     min_len: usize,
     actual: usize,
-    at: impl Ranged,
+    at: impl Spanned,
   ) -> Diagnostic {
     let diagnostic = self
-      .0
+      .report
       .error(f!(
         "expected at least {min_len} character{} in identifier, but found {}",
         plural(min_len),
@@ -214,13 +223,13 @@ impl Builtins<'_> {
   #[track_caller]
   pub fn invalid_escape(
     &self,
-    at: impl Ranged,
+    at: impl Spanned,
     why: impl fmt::Display,
   ) -> Diagnostic {
-    let at = at.range(&self.0.ctx);
-    let seq = at.text(&self.0.ctx);
+    let at = at.span(&self.report.ctx);
+    let seq = at.text(&self.report.ctx);
     self
-      .0
+      .report
       .error(f!("found an invalid escape sequence: `{seq}`"))
       .saying(at, why)
       .reported_at(Location::caller())
@@ -230,35 +239,35 @@ impl Builtins<'_> {
   #[track_caller]
   pub fn literal_out_of_range<'a, N: fmt::Display>(
     &self,
-    spec: &Spec,
+
     what: impl Into<Expected<'a>>,
-    at: impl Ranged,
-    range: &impl RangeBounds<N>,
+    at: impl Spanned,
+    span: &impl RangeBounds<N>,
     min: &dyn fmt::Display,
     max: &dyn fmt::Display,
   ) -> Diagnostic {
-    let start = match range.start_bound() {
+    let start = match span.start_bound() {
       Bound::Included(x) | Bound::Excluded(x) => x,
       Bound::Unbounded => min,
     };
 
-    let end = match range.end_bound() {
+    let end = match span.end_bound() {
       Bound::Included(x) | Bound::Excluded(x) => x,
       Bound::Unbounded => max,
     };
 
-    let is_exc = matches!(range.start_bound(), Bound::Excluded(..));
-    let is_inc = matches!(range.end_bound(), Bound::Included(..));
+    let is_exc = matches!(span.start_bound(), Bound::Excluded(..));
+    let is_inc = matches!(span.end_bound(), Bound::Included(..));
 
     self
-      .0
+      .report
       .error(f!(
-        "{} out of range",
-        what.into().for_user_diagnostic(spec, &self.0.ctx)
+        "{} out of span",
+        what.into().for_user_diagnostic(self.spec, &self.report.ctx)
       ))
       .at(at)
       .note(f!(
-        "expected value in the range {start}{}..{}{end}",
+        "expected value in the span {start}{}..{}{end}",
         if is_exc { "<" } else { "" },
         if is_inc { "=" } else { "" },
       ))
@@ -270,7 +279,7 @@ fn non_printable_note(found: Expected, diagnostic: Diagnostic) -> Diagnostic {
   use std::fmt::Write;
 
   // Check to see if any of the characters are outside of the ASCII printable
-  // range.
+  // span.
   let literal = match &found {
     Expected::Literal(y) => y,
     _ => return diagnostic,
@@ -395,7 +404,7 @@ fn pos_iter() {
 /// Something that looks enough like an [`ilex::Token`][token::Token] that it
 /// could be used for diagnostics.
 ///
-/// Self.0 type exists because there are many potential sources for the "name of
+/// Self.report type exists because there are many potential sources for the "name of
 /// a token", and so it's easier to just have a sink type that they all convert
 /// into.
 pub enum Expected<'lex> {
@@ -411,7 +420,7 @@ pub enum Expected<'lex> {
 }
 
 impl Expected<'_> {
-  /// Converts self.0 tokenish into a string that can be used in a diagnostic.
+  /// Converts self.report tokenish into a string that can be used in a diagnostic.
   pub(crate) fn for_user_diagnostic<'a>(
     &'a self,
     spec: &'a Spec,
