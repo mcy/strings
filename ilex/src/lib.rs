@@ -214,8 +214,7 @@ pub use {
   crate::{
     file::Context,
     file::File,
-    file::{Range, Ranged},
-    file::{Span, Spanned},
+    file::{Span, SpanId, Spanned},
     report::{Fatal, Report},
     rule::Rule,
     spec::{Lexeme, Spec, SpecBuilder},

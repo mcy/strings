@@ -22,6 +22,7 @@ use num_traits::Bounded;
 use crate::f;
 use crate::file::Context;
 use crate::file::Span;
+use crate::file::SpanId;
 use crate::file::Spanned;
 use crate::fp;
 use crate::report::Report;
@@ -201,14 +202,14 @@ impl fmt::Debug for Any<'_> {
 }
 
 impl Spanned for Any<'_> {
-  fn span(&self) -> Span {
+  fn span(&self, ctx: &Context) -> Span {
     match self {
-      Self::Eof(tok) => tok.span(),
-      Self::Keyword(tok) => tok.span(),
-      Self::Bracket(tok) => tok.span(),
-      Self::Ident(tok) => tok.span(),
-      Self::Quoted(tok) => tok.span(),
-      Self::Digital(tok) => tok.span(),
+      Self::Eof(tok) => tok.span(ctx),
+      Self::Keyword(tok) => tok.span(ctx),
+      Self::Bracket(tok) => tok.span(ctx),
+      Self::Ident(tok) => tok.span(ctx),
+      Self::Quoted(tok) => tok.span(ctx),
+      Self::Digital(tok) => tok.span(ctx),
     }
   }
 }
@@ -221,7 +222,7 @@ impl Spanned for Any<'_> {
 /// comments within.
 #[derive(Copy, Clone)]
 pub struct Eof<'lex> {
-  span: Span,
+  span: SpanId,
   spec: &'lex Spec,
 }
 
@@ -262,8 +263,8 @@ impl fmt::Debug for Eof<'_> {
 }
 
 impl Spanned for Eof<'_> {
-  fn span(&self) -> Span {
-    self.span
+  fn span(&self, ctx: &Context) -> Span {
+    self.span.span(ctx)
   }
 }
 
@@ -276,7 +277,7 @@ impl Spanned for Eof<'_> {
 pub struct Keyword<'lex> {
   lexeme: Lexeme<rule::Keyword>,
   spec: &'lex Spec,
-  span: Span,
+  span: SpanId,
   _ph: PhantomData<&'lex rt::Token>,
 }
 
@@ -317,8 +318,8 @@ impl fmt::Debug for Keyword<'_> {
 }
 
 impl Spanned for Keyword<'_> {
-  fn span(&self) -> Span {
-    self.span
+  fn span(&self, ctx: &Context) -> Span {
+    self.span.span(ctx)
   }
 }
 
@@ -329,9 +330,9 @@ impl Spanned for Keyword<'_> {
 /// *trees*, like Rust does.
 #[derive(Copy, Clone)]
 pub struct Bracket<'lex> {
-  span: Span,
-  open: Span,
-  close: Span,
+  span: SpanId,
+  open: SpanId,
+  close: SpanId,
   lexeme: Lexeme<rule::Bracket>,
   spec: &'lex Spec,
   contents: Cursor<'lex>,
@@ -339,17 +340,17 @@ pub struct Bracket<'lex> {
 
 impl<'lex> Bracket<'lex> {
   /// Returns this token's open delimiter.
-  pub fn open(self) -> Span {
+  pub fn open(self) -> SpanId {
     self.open
   }
 
   /// Returns this token's close delimiter.
-  pub fn close(self) -> Span {
+  pub fn close(self) -> SpanId {
     self.close
   }
 
   /// Returns this token's quote delimiters.
-  pub fn delimiters(self) -> [Span; 2] {
+  pub fn delimiters(self) -> [SpanId; 2] {
     [self.open, self.close]
   }
 
@@ -410,8 +411,8 @@ impl fmt::Debug for Bracket<'_> {
 }
 
 impl Spanned for Bracket<'_> {
-  fn span(&self) -> Span {
-    self.span
+  fn span(&self, ctx: &Context) -> Span {
+    self.span.span(ctx)
   }
 }
 
@@ -424,7 +425,7 @@ pub struct Ident<'lex> {
 
 impl<'lex> Ident<'lex> {
   /// Returns this token's name span.
-  pub fn name(self) -> Span {
+  pub fn name(self) -> SpanId {
     match &self.tok.kind {
       &Kind::Ident(name) => name,
       _ => panic!("non-lexer::Kind::Ident inside of Ident"),
@@ -432,7 +433,7 @@ impl<'lex> Ident<'lex> {
   }
 
   /// Returns this token's prefix.
-  pub fn prefix(self) -> Option<Span> {
+  pub fn prefix(self) -> Option<SpanId> {
     self.tok.prefix
   }
 
@@ -442,7 +443,7 @@ impl<'lex> Ident<'lex> {
   }
 
   /// Returns this token's suffix.
-  pub fn suffix(&self) -> Option<Span> {
+  pub fn suffix(&self) -> Option<SpanId> {
     self.tok.suffix
   }
 
@@ -504,8 +505,8 @@ impl fmt::Debug for Ident<'_> {
 }
 
 impl Spanned for Ident<'_> {
-  fn span(&self) -> Span {
-    self.tok.span
+  fn span(&self, ctx: &Context) -> Span {
+    self.tok.span.span(ctx)
   }
 }
 
@@ -553,12 +554,12 @@ impl<'lex> Digital<'lex> {
   }
 
   /// Returns the span corresponding to [`Digital::sign()`].
-  pub fn sign_span(self) -> Option<Span> {
+  pub fn sign_span(self) -> Option<SpanId> {
     self.rt_blocks().sign.map(|(_, sp)| sp)
   }
 
   /// Returns the point-separated digit chunks of this digital literal.
-  pub fn digit_blocks(self) -> impl Iterator<Item = Span> + 'lex {
+  pub fn digit_blocks(self) -> impl Iterator<Item = SpanId> + 'lex {
     self.digit_slice().iter().copied()
   }
 
@@ -575,7 +576,7 @@ impl<'lex> Digital<'lex> {
   }
 
   /// Returns this token's prefix.
-  pub fn prefix(self) -> Option<Span> {
+  pub fn prefix(self) -> Option<SpanId> {
     if self.idx > 0 {
       return self.rt_blocks().prefix;
     }
@@ -589,7 +590,7 @@ impl<'lex> Digital<'lex> {
   }
 
   /// Returns this token's suffix.
-  pub fn suffix(&self) -> Option<Span> {
+  pub fn suffix(&self) -> Option<SpanId> {
     if self.idx > 0 {
       // Exponent tokens never have a suffix.
       return None;
@@ -621,8 +622,7 @@ impl<'lex> Digital<'lex> {
     N: Bounded + PartialOrd + FromRadix + fmt::Display,
   {
     for extra in self.digit_blocks().skip(1) {
-      report.builtins().unexpected(
-        self.spec,
+      report.builtins(self.spec).unexpected(
         "extra digits",
         self.lexeme(),
         extra,
@@ -631,8 +631,8 @@ impl<'lex> Digital<'lex> {
 
     for extra in self.exponents() {
       report
-        .builtins()
-        .unexpected(self.spec, "exponent", self.lexeme(), extra);
+        .builtins(self.spec)
+        .unexpected("exponent", self.lexeme(), extra);
     }
 
     self.to_ints(ctx, range, report).drain(..).next().unwrap()
@@ -678,9 +678,8 @@ impl<'lex> Digital<'lex> {
         if value.is_none() || value.as_ref().is_some_and(|v| !range.contains(v))
         {
           report
-            .builtins()
+            .builtins(self.spec())
             .literal_out_of_range(
-              self.spec(),
               Any::from(self),
               span,
               &range,
@@ -717,8 +716,7 @@ impl<'lex> Digital<'lex> {
     let fp: Fp = self.parse_fp(ctx, report, false)?;
 
     if !fp.__is_finite() || !range.contains(&fp) {
-      report.builtins().literal_out_of_range(
-        self.spec(),
+      report.builtins(self.spec()).literal_out_of_range(
         self,
         self,
         &range,
@@ -745,8 +743,7 @@ impl<'lex> Digital<'lex> {
     let fp: Fp = self.parse_fp(ctx, report, true)?;
 
     if !fp.__is_finite() || !range.contains(&fp) {
-      report.builtins().literal_out_of_range(
-        self.spec(),
+      report.builtins(self.spec()).literal_out_of_range(
         self,
         self,
         &range,
@@ -767,7 +764,7 @@ impl<'lex> Digital<'lex> {
     }
   }
 
-  fn digit_slice(self) -> &'lex [Span] {
+  fn digit_slice(self) -> &'lex [SpanId] {
     &self.rt_blocks().blocks
   }
 
@@ -928,8 +925,8 @@ impl fmt::Debug for Digital<'_> {
 }
 
 impl Spanned for Digital<'_> {
-  fn span(&self) -> Span {
-    self.tok.span
+  fn span(&self, ctx: &Context) -> Span {
+    self.tok.span.span(ctx)
   }
 }
 
@@ -942,17 +939,17 @@ pub struct Quoted<'lex> {
 
 impl<'lex> Quoted<'lex> {
   /// Returns this token's open delimiter.
-  pub fn open(self) -> Span {
+  pub fn open(self) -> SpanId {
     self.delimiters().0
   }
 
   /// Returns this token's close delimiter.
-  pub fn close(self) -> Span {
+  pub fn close(self) -> SpanId {
     self.delimiters().0
   }
 
   /// Returns this token's quote delimiters.
-  pub fn delimiters(self) -> (Span, Span) {
+  pub fn delimiters(self) -> (SpanId, SpanId) {
     match &self.tok.kind {
       &Kind::Quoted { open, close, .. } => (open, close),
       _ => panic!("non-lexer::Kind::Quoted inside of Quoted"),
@@ -962,7 +959,7 @@ impl<'lex> Quoted<'lex> {
   /// Returns the raw content of this token.
   ///
   /// There are two kinds of content: either a literal span of Unicode scalars
-  /// (represented as a [`Span`] pointing to those characters) or a single
+  /// (represented as a [`SpanId`] pointing to those characters) or a single
   /// escaped "code", which is an arbitrary `u32` value produced by a callback
   /// in an [`Escape`][crate::rule::Escape].
   ///
@@ -978,7 +975,7 @@ impl<'lex> Quoted<'lex> {
   pub fn to_utf8(
     self,
     ctx: &Context,
-    mut decode_esc: impl FnMut(Span, Option<Span>, &mut String),
+    mut decode_esc: impl FnMut(SpanId, Option<SpanId>, &mut String),
   ) -> String {
     let total = self
       .raw_content()
@@ -1006,7 +1003,7 @@ impl<'lex> Quoted<'lex> {
   }
 
   /// Returns this token's prefix.
-  pub fn prefix(self) -> Option<Span> {
+  pub fn prefix(self) -> Option<SpanId> {
     self.tok.prefix
   }
 
@@ -1016,7 +1013,7 @@ impl<'lex> Quoted<'lex> {
   }
 
   /// Returns this token's suffix.
-  pub fn suffix(self) -> Option<Span> {
+  pub fn suffix(self) -> Option<SpanId> {
     self.tok.suffix
   }
 
@@ -1031,28 +1028,31 @@ impl<'lex> Quoted<'lex> {
 /// The "span type" is configurable; this type is used by multiple parts of
 /// the library.
 #[derive(Copy, Clone, Debug)]
-pub enum Content<Span = self::Span> {
+pub enum Content<SpanId = self::SpanId> {
   /// A literal chunk, i.e. UTF-8 text directly from the source file.
-  Lit(Span),
+  Lit(SpanId),
 
   /// An escape sequence, which may have associated data (e.g. the `NN` from a
   /// `\xNN`).
-  Esc(Span, Option<Span>),
+  Esc(SpanId, Option<SpanId>),
 }
 
-impl<Span> Content<Span> {
+impl<SpanId> Content<SpanId> {
   /// Literal contents.
-  pub fn lit(chunk: impl Into<Span>) -> Self {
+  pub fn lit(chunk: impl Into<SpanId>) -> Self {
     Self::Lit(chunk.into())
   }
 
   /// Escaped contents.
-  pub fn esc(chunk: impl Into<Span>) -> Self {
+  pub fn esc(chunk: impl Into<SpanId>) -> Self {
     Self::Esc(chunk.into(), None)
   }
 
   /// Escaped contents.
-  pub fn esc_with_data(chunk: impl Into<Span>, data: impl Into<Span>) -> Self {
+  pub fn esc_with_data(
+    chunk: impl Into<SpanId>,
+    data: impl Into<SpanId>,
+  ) -> Self {
     Self::Esc(chunk.into(), Some(data.into()))
   }
 }
@@ -1107,8 +1107,8 @@ impl fmt::Debug for Quoted<'_> {
 }
 
 impl Spanned for Quoted<'_> {
-  fn span(&self) -> Span {
-    self.tok.span
+  fn span(&self, ctx: &Context) -> Span {
+    self.tok.span.span(ctx)
   }
 }
 

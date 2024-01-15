@@ -2,8 +2,8 @@ use std::fmt;
 use std::mem;
 use std::panic;
 
-use crate::file::Range;
-use crate::file::Ranged;
+use crate::file::Span;
+use crate::file::Spanned;
 use crate::report::Report;
 
 /// A diagnostic that is being built up.
@@ -13,7 +13,7 @@ use crate::report::Report;
 /// almost always temporaries, e.g.
 ///
 /// ```
-/// # fn x(report: &ilex::Report, span: ilex::Span) {
+/// # fn x(report: &ilex::Report, span: ilex::SpanId) {
 /// report.error("my error message")
 ///   .saying(span, "this is bad code");
 /// # }
@@ -35,7 +35,7 @@ pub use annotate_snippets::AnnotationType as Kind;
 pub struct Info {
   pub kind: Kind,
   pub message: String,
-  pub snippets: Vec<Vec<(Range, String, Kind)>>,
+  pub snippets: Vec<Vec<(Span, String, Kind)>>,
   pub notes: Vec<(String, Kind)>,
   pub reported_at: Option<&'static panic::Location<'static>>,
 }
@@ -70,24 +70,24 @@ impl Diagnostic {
   }
 
   /// Adds a new relevant snippet at the given location.
-  pub fn at(self, range: impl Ranged) -> Self {
-    self.saying(range, "")
+  pub fn at(self, span: impl Spanned) -> Self {
+    self.saying(span, "")
   }
 
   /// Adds a new diagnostic location, with the given message attached to it.
-  pub fn saying(self, range: impl Ranged, message: impl fmt::Display) -> Self {
-    self.snippet(range, message, None)
+  pub fn saying(self, span: impl Spanned, message: impl fmt::Display) -> Self {
+    self.snippet(span, message, None)
   }
 
   /// Like `saying`, but the underline is as for a "note" rather than the
   /// overall diagnostic.
-  pub fn remark(self, range: impl Ranged, message: impl fmt::Display) -> Self {
-    self.snippet(range, message, Some(Kind::Help))
+  pub fn remark(self, span: impl Spanned, message: impl fmt::Display) -> Self {
+    self.snippet(span, message, Some(Kind::Help))
   }
 
   fn snippet(
     mut self,
-    range: impl Ranged,
+    span: impl Spanned,
     message: impl fmt::Display,
     kind: Option<Kind>,
   ) -> Self {
@@ -96,7 +96,7 @@ impl Diagnostic {
     }
 
     self.info.snippets.last_mut().unwrap().push((
-      range.range(&self.report.ctx),
+      span.span(&self.report.ctx),
       message.to_string(),
       kind.unwrap_or(self.info.kind),
     ));

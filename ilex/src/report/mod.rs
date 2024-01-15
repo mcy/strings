@@ -2,7 +2,7 @@
 //!
 //! This module contains types for generating an *error report*: a collection of
 //! diagnostics that describe why an operation failed in detail. Diagnostics
-//! are basically fancy compiler errors: they use [`Span`]s to present faulty
+//! are basically fancy compiler errors: they use [`SpanId`]s to present faulty
 //! input in context.
 //!
 //! The [`Report`] type is a reference-counted list of diagnostics, which is
@@ -18,7 +18,8 @@ use std::sync::Arc;
 
 use crate::file::Context;
 #[cfg(doc)]
-use crate::file::Span;
+use crate::file::SpanId;
+use crate::spec::Spec;
 
 mod builtin;
 mod diagnostic;
@@ -32,7 +33,7 @@ use diagnostic::Kind;
 /// A collection of errors can may built up over the course of an operation.
 ///
 /// To construct a report, see [`Context::new_report()`]. The context that
-/// constructs a report is the only one whose [`Span`]s should be passed into
+/// constructs a report is the only one whose [`SpanId`]s should be passed into
 /// it; doing otherwise will result in unspecified output (or probably a panic).
 pub struct Report {
   ctx: Context,
@@ -69,8 +70,8 @@ impl Report {
   /// Returns a wrapper for accessing commonly-used, built-in message types.
   ///
   /// See [`Builtins`].
-  pub fn builtins(&self) -> Builtins {
-    Builtins(self)
+  pub fn builtins<'a>(&'a self, spec: &'a Spec) -> Builtins {
+    Builtins { report: self, spec }
   }
 
   /// Adds a new error to this report.
