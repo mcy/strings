@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::fmt::Write;
 use std::iter;
-use std::ops;
+use std::ops::Bound;
 use std::ops::Index;
 use std::ops::RangeBounds;
 use std::ptr;
@@ -14,9 +14,7 @@ use std::sync::RwLockReadGuard;
 use byteyarn::Yarn;
 use camino::Utf8Path;
 
-use crate::range::Range;
 use crate::report::Fatal;
-use crate::report::Loc;
 use crate::report::Report;
 use crate::rt;
 use crate::spec::Spec;
@@ -79,8 +77,8 @@ impl<'ctx> File<'ctx> {
   ///
   /// Panics if `start > end`, or if `end` is greater than the length of the
   /// file.
-  pub fn loc(self, range: impl RangeBounds<usize>) -> Loc {
-    Loc::new(self, Range::new(range))
+  pub fn range(self, range: impl RangeBounds<usize>) -> Range {
+    Range::new(self, range)
   }
 
   pub(crate) fn idx(self) -> usize {
@@ -110,35 +108,21 @@ impl PartialEq for File<'_> {
 /// in a compressed format.
 #[derive(Copy, Clone)]
 pub struct Span {
-  /// If < 0, this is a "synthetic span" that does not point into the file and
-  /// whose content is programmatically-generated.
-  start: i32,
+  idx: u32,
 
-  /// If < 0, this is an "atomic span", i.e., the end is in `start`.
+  /// If this is !0, this is an "atomic span", i.e., the end is in `start`.
   /// Otherwise, it is a "fused" span. The end span is never synthetic; only
   /// non-synthetic spans can be joined.
-  end: i32,
+  end: u32,
 }
 
 impl Span {
-  /// Returns whether this span is a synthetic span.
-  pub fn is_synthetic(self) -> bool {
-    self.start < 0
-  }
-
   fn end(self) -> Option<Span> {
-    if self.end < 0 {
+    if self.end == !0 {
       return None;
     }
 
-    let end = Span { start: self.end, end: -1 };
-
-    assert!(
-      !end.is_synthetic(),
-      "Span::end cannot be a synthetic span: {}",
-      self.end
-    );
-    Some(end)
+    Some(Span { idx: self.end, end: !0 })
   }
 
   /// Gets the file for this span.
@@ -148,21 +132,7 @@ impl Span {
   /// May panic if this span is not owned by `ctx` (or it may produce an
   /// unexpected result).
   pub fn file(self, ctx: &Context) -> File {
-    let (_, idx) = ctx.lookup_range(self);
-    ctx.file(idx).unwrap()
-  }
-
-  /// Gets the byte range for this span.
-  ///
-  /// Returns `None` if this is a synthetic span; note that the contents
-  /// of such a span can still be obtained with [`Span::text()`].
-  ///
-  /// # Panics
-  ///
-  /// May panic if this span is not owned by `ctx` (or it may produce an
-  /// unexpected result).
-  pub fn range(self, ctx: &Context) -> Option<ops::Range<usize>> {
-    ctx.lookup_range(self).0.map(Range::bounds)
+    Ranged::range(&self, ctx).file(ctx)
   }
 
   /// Gets the text for the given span.
@@ -172,12 +142,7 @@ impl Span {
   /// May panic if this span is not owned by `ctx` (or it may produce an
   /// unexpected result).
   pub fn text(self, ctx: &Context) -> &str {
-    if let (Some(range), file) = ctx.lookup_range(self) {
-      let (_, text) = ctx.lookup_file(file);
-      &text[range]
-    } else {
-      ctx.lookup_synthetic(self)
-    }
+    Ranged::range(&self, ctx).text(ctx)
   }
 
   /// Gets the comment associated with the given span, if any.
@@ -190,34 +155,11 @@ impl Span {
     Comments { slice: ctx.lookup_comments(self), ctx }
   }
 
-  /// Appends text to the comments associated with a given AST node.
-  ///
-  /// # Panics
-  ///
-  /// May panic if this span is not owned by `ctx` (or it may produce an
-  /// unexpected result).
-  pub fn append_comment(self, ctx: &Context, text: impl Into<Yarn>) {
-    let span = ctx.new_synthetic_span(text.into().into());
-    self.append_comment_span(ctx, span);
-  }
-
   /// Sets the comment associated with a given span. The comment must itself
   /// be specified as a span.
   pub(crate) fn append_comment_span(self, ctx: &Context, comment: Span) {
     ctx.add_comment(self, comment)
   }
-
-  fn index(self) -> usize {
-    if !self.is_synthetic() {
-      self.start as usize
-    } else {
-      !(self.start as usize)
-    }
-  }
-}
-
-thread_local! {
-  static CTX_FOR_SPAN_DEBUG: RefCell<Option<Context>> = RefCell::new(None);
 }
 
 impl fmt::Debug for Span {
@@ -228,21 +170,7 @@ impl fmt::Debug for Span {
         return f.write_str("<elided>");
       };
 
-      let text = self.text(ctx);
-      write!(f, "`")?;
-      for c in text.chars() {
-        if ('\x20'..'\x7e').contains(&c) {
-          f.write_char(c)?;
-        } else {
-          write!(f, "<U+{:X}>", c as u32)?;
-        }
-      }
-      write!(f, "` @ ")?;
-
-      match self.range(ctx) {
-        Some(range) => write!(f, "{}[{range:?}]", self.file(ctx).path()),
-        None => f.write_str("n/a"),
-      }
+      fmt::Debug::fmt(&Ranged::range(&self, ctx), f)
     })
   }
 }
@@ -284,11 +212,6 @@ pub trait Spanned {
     self.span(ctx).file(ctx)
   }
 
-  /// Forwards to [`Span::range()`].
-  fn range(&self, ctx: &Context) -> Option<ops::Range<usize>> {
-    self.span(ctx).range(ctx)
-  }
-
   /// Forwards to [`Span::text()`].
   fn text<'ctx>(&self, ctx: &'ctx Context) -> &'ctx str {
     self.span(ctx).text(ctx)
@@ -321,5 +244,216 @@ impl<S: Spanned> Spanned for &S {
 impl Spanned for Never {
   fn span(&self, _ctx: &Context) -> Span {
     self.from_nothing_anything()
+  }
+}
+
+/// A location in a source file: like a [`Span`], but slightly more general.
+///
+/// Full span information (such as comments) is not necessary for diagnostics,
+/// so anything that implements [`ToLoc`] (which includes anything that is
+/// [`Spanned`]) is suitable for placing spanned data
+/// in diagnostics.
+#[derive(Copy, Clone)]
+pub struct Range {
+  file: u32,
+  start: u32,
+  end: u32,
+}
+
+#[track_caller]
+fn cast<T: Copy + TryInto<u32> + fmt::Debug>(value: T) -> u32 {
+  value
+    .try_into()
+    .unwrap_or_else(|_| bug!("range bound does not fit into u32: {:?}", value))
+}
+
+impl Range {
+  /// Constructs a location from a file and a byte range within it.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `start > end`, or if `end` is greater than the length of the
+  /// file.
+  #[track_caller]
+  pub(crate) fn new<T: Copy + TryInto<u32> + fmt::Debug>(
+    file: File,
+    range: impl RangeBounds<T>,
+  ) -> Range {
+    let start = match range.start_bound() {
+      Bound::Included(&x) => cast(x),
+      Bound::Excluded(&x) => cast(x).saturating_add(1),
+      Bound::Unbounded => 0,
+    };
+
+    let end = match range.end_bound() {
+      Bound::Included(&x) => cast(x).saturating_add(1),
+      Bound::Excluded(&x) => cast(x),
+      Bound::Unbounded => file.len() as u32,
+    };
+
+    assert!(start <= end, "out of order range: {start} > {end}",);
+    assert!(
+      end as usize <= file.text.len(),
+      "got out of bounds range: {end} > {}",
+      file.text.len(),
+    );
+
+    Range { file: file.idx() as u32, start, end }
+  }
+
+  /// Gets the file for this range.
+  ///
+  /// # Panics
+  ///
+  /// May panic if this range is not owned by `ctx` (or it may produce an
+  /// unexpected result).
+  pub fn file(self, ctx: &Context) -> File {
+    ctx.file(self.file as usize).unwrap()
+  }
+
+  /// Returns the start (inclusive) byte offset of this range.
+  pub fn start(self) -> usize {
+    self.start as usize
+  }
+
+  /// Returns the end (exclusive) byte offset of this range.
+  pub fn end(self) -> usize {
+    self.end as usize
+  }
+
+  /// Returns whether this range has zero length.
+  pub fn is_empty(self) -> bool {
+    self.len() == 0
+  }
+
+  /// Returns the length of this range, in bytes.
+  pub fn len(self) -> usize {
+    (self.end - self.start) as usize
+  }
+
+  /// Returns a subrange of this range.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `start` > `end` or `end` > `self.len()`.
+  pub fn subrange<T: Copy + TryInto<u32> + fmt::Debug>(
+    self,
+    range: impl RangeBounds<T>,
+  ) -> Range {
+    let start = match range.start_bound() {
+      Bound::Included(&x) => cast(x),
+      Bound::Excluded(&x) => cast(x).saturating_add(1),
+      Bound::Unbounded => 0,
+    };
+
+    let end = match range.end_bound() {
+      Bound::Included(&x) => cast(x).saturating_add(1),
+      Bound::Excluded(&x) => cast(x),
+      Bound::Unbounded => self.len() as u32,
+    };
+
+    assert!(start <= end, "out of order range: {start} > {end}");
+    assert!(
+      end <= (self.len() as u32),
+      "subrange ends past end of range: {end} > {}",
+      self.len()
+    );
+
+    Range {
+      file: self.file,
+      start: self.start + start,
+      end: self.start + end,
+    }
+  }
+
+  /// Splits this range in two at `at`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `at` is larger than the length of this range.
+  pub fn split_at(self, at: usize) -> (Range, Range) {
+    (self.subrange(..at), self.subrange(at..))
+  }
+
+  /// Splits off a prefix and a suffix from `range`, and returns the split
+  /// parts in order.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `range` is smaller than `pre + suf`.
+  pub fn split_around(self, pre: usize, suf: usize) -> [Range; 3] {
+    let (pre, range) = self.split_at(pre);
+    let (range, suf) = range.split_at(range.len() - suf);
+    [pre, range, suf]
+  }
+
+  /// Looks up the textual content of this range.
+  ///
+  /// # Panics
+  ///
+  /// May panic if this range is not owned by `ctx` (or it may produce an
+  /// unexpected result).
+  pub fn text(self, ctx: &Context) -> &str {
+    self.file(ctx).text(self.start as usize..self.end as usize)
+  }
+
+  /// Bakes this range into a span.
+  pub(crate) fn mksp(self, ctx: &Context) -> Span {
+    ctx.new_span(self)
+  }
+
+  /// Bakes this range into a span.
+  pub(crate) fn mksp_nonempty(self, ctx: &Context) -> Option<Span> {
+    if self.is_empty() {
+      return None;
+    }
+    Some(self.mksp(ctx))
+  }
+}
+
+/// Like [`Spanned`], but produces a [`Range`] instead.
+pub trait Ranged {
+  /// Performs the conversion.
+  fn range(&self, ctx: &Context) -> Range;
+}
+
+impl Ranged for Range {
+  fn range(&self, _ctx: &Context) -> Range {
+    *self
+  }
+}
+
+impl<S: Spanned> Ranged for S {
+  fn range(&self, ctx: &Context) -> Range {
+    ctx.lookup_range(self.span(ctx))
+  }
+}
+
+thread_local! {
+  static CTX_FOR_SPAN_DEBUG: RefCell<Option<Context>> = RefCell::new(None);
+}
+
+impl fmt::Debug for Range {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    CTX_FOR_SPAN_DEBUG.with(|ctx| {
+      if let Some(ctx) = &*ctx.borrow() {
+        let text = self.text(ctx);
+        write!(f, "`")?;
+        for c in text.chars() {
+          if ('\x20'..'\x7e').contains(&c) {
+            f.write_char(c)?;
+          } else if c < '\x20' {
+            write!(f, "{}", c.escape_debug())?
+          } else {
+            write!(f, "<U+{:04X}>", c as u32)?;
+          }
+        }
+        write!(f, "` @ {}", self.file(ctx).path())?;
+      } else {
+        write!(f, "<#{}>", self.file)?;
+      }
+
+      write!(f, "[{}..{}]", self.start(), self.end())
+    })
   }
 }

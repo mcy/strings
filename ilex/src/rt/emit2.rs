@@ -6,8 +6,10 @@ use byteyarn::Yarn;
 use byteyarn::YarnBox;
 
 use crate::f;
+use crate::file::Context;
+use crate::file::Range;
+use crate::file::Ranged;
 use crate::plural;
-use crate::range::Range;
 use crate::report::Expected;
 use crate::rt;
 use crate::rt::lexer::Lexer;
@@ -29,6 +31,8 @@ use super::dfa::Lexeme2;
 use super::unicode::is_xid;
 
 pub fn emit(lexer: &mut Lexer) {
+  let ctx = lexer.file().context();
+
   // Start by searching for the longest matches using the DFA.
   let dfa = lexer.spec().dfa();
   let Some(mut match_) = dfa.search(lexer) else {
@@ -37,8 +41,9 @@ pub fn emit(lexer: &mut Lexer) {
 
   let start = lexer.cursor();
   lexer.advance(match_.len);
-  let span = lexer.mksp(start..lexer.cursor());
-  let text = lexer.text(start..lexer.cursor());
+  let range = lexer.range(start..lexer.cursor());
+  let span = range.mksp(ctx);
+  let text = range.text(ctx);
   lexer.advance(match_.extra);
 
   // Now we have to decide which of `candidates` is the best one, i.e.,
@@ -66,7 +71,7 @@ pub fn emit(lexer: &mut Lexer) {
   // choices; that is independent of which token we decide to create.
   let mut best = None;
   'verify: for &c in &match_.candidates {
-    let (_, text, _) = find_affixes_partial(text, lexer.spec(), c);
+    let [.., range, _] = find_affixes_partial(range, lexer.spec(), c, ctx);
 
     // NOTE: We only need to find the first lexeme that is valid. If it's not
     // valid, we will diagnose that in the next stage.
@@ -75,19 +80,19 @@ pub fn emit(lexer: &mut Lexer) {
       | Any::Comment(Comment(CommentKind::Block(br)))
       | Any::Quoted(Quoted { bracket: br, .. }) => {
         if let BracketKind::CxxLike { ident_rule, open, close } = &br.kind {
-          let (_, text, _) = if !c.is_close {
-            affix_split(text, open.0.len(), open.1.len())
+          let [_, range, _] = if !c.is_close {
+            range.split_around(open.0.len(), open.1.len())
           } else {
-            affix_split(text, close.0.len(), close.1.len())
+            range.split_around(close.0.len(), close.1.len())
           };
 
-          let (_, name, _) = find_affixes(text, &ident_rule.affixes);
-          if name.chars().count() < ident_rule.min_len {
+          let [_, name, _] = find_affixes(range, &ident_rule.affixes, ctx);
+          if name.text(ctx).chars().count() < ident_rule.min_len {
             continue 'verify;
           }
 
           if ident_rule.ascii_only {
-            for c in name.chars() {
+            for c in name.text(ctx).chars() {
               if !c.is_ascii()
                 && !ident_rule.extra_continues.contains(c)
                 && !ident_rule.extra_starts.contains(c)
@@ -193,23 +198,12 @@ pub fn emit(lexer: &mut Lexer) {
   }
 
   let best = best.unwrap_or(match_.candidates[0]);
-  let (pre, text, suf) = find_affixes_partial(text, lexer.spec(), best);
+  let [sign, pre, range, suf] =
+    find_affixes_partial(range, lexer.spec(), best, ctx);
+  let text = range.text(ctx);
 
-  // Need to be slightly clever here. find_affixes_partial throws away the sign of
-  // a digital token, so we need to measure our spans from the cursor position,
-  // instead.
-  let prefix = (!pre.is_empty()).then(|| {
-    let end = lexer.cursor() - match_.extra - suf.len() - text.len();
-    lexer.mksp(end - pre.len()..end)
-  });
-  let core = {
-    let end = lexer.cursor() - match_.extra - suf.len();
-    lexer.mksp(end - text.len()..end)
-  };
-  let suffix = (!suf.is_empty()).then(|| {
-    let end = lexer.cursor() - match_.extra;
-    lexer.mksp(end - suf.len()..end)
-  });
+  let prefix = pre.mksp_nonempty(ctx);
+  let suffix = suf.mksp_nonempty(ctx);
 
   let mirrored = match lexer.spec().rule(best.lexeme) {
     Any::Bracket(br)
@@ -221,29 +215,27 @@ pub fn emit(lexer: &mut Lexer) {
         let (remove, replace) =
           if !best.is_close { (open, close) } else { (close, open) };
 
-        let (_, mid, _) = affix_split(text, remove.0.len(), remove.1.len());
-        Some(yarn!("{}{}{}", replace.0, mid, replace.1))
+        let [_, mid, _] = range.split_around(remove.0.len(), remove.1.len());
+        Some(yarn!("{}{}{}", replace.0, mid.text(ctx), replace.1))
       }
       BracketKind::CxxLike { ident_rule, open, close, .. } => {
         let (remove, replace) =
           if !best.is_close { (open, close) } else { (close, open) };
 
-        let (pre1, mid, _) = affix_split(text, remove.0.len(), remove.1.len());
-        let (pre2, name, _) = find_affixes(mid, &ident_rule.affixes);
+        let [_, mid, _] = range.split_around(remove.0.len(), remove.1.len());
+        let [_, name, _] = find_affixes(mid, &ident_rule.affixes, ctx);
 
-        let span = lexer.file().loc(
-          (Range(0, name.len()) + start + pre1.len() + pre2.len()).bounds(),
-        );
-        let count = name.chars().count();
+        let text = name.text(ctx);
+        let count = text.chars().count();
         if count < ident_rule.min_len {
           lexer.report().builtins().ident_too_small(
             ident_rule.min_len,
             count,
-            span,
+            name,
           );
         }
 
-        for c in name.chars() {
+        for c in text.chars() {
           if !c.is_ascii()
             && !ident_rule.extra_continues.contains(c)
             && !ident_rule.extra_starts.contains(c)
@@ -251,13 +243,13 @@ pub fn emit(lexer: &mut Lexer) {
             lexer.report().builtins().non_ascii_in_ident(
               lexer.spec(),
               best.lexeme,
-              span,
+              name,
             );
             break;
           }
         }
 
-        Some(yarn!("{}{}{}", replace.0, mid, replace.1))
+        Some(yarn!("{}{}{}", replace.0, mid.text(ctx), replace.1))
       }
     },
     _ => None,
@@ -377,7 +369,7 @@ pub fn emit(lexer: &mut Lexer) {
               lexer.report().builtins().non_ascii_in_ident(
                 lexer.spec(),
                 best.lexeme,
-                core,
+                range,
               );
               break;
             }
@@ -385,7 +377,7 @@ pub fn emit(lexer: &mut Lexer) {
         }
 
         lexer.add_token(rt::Token {
-          kind: rt::Kind::Ident(core),
+          kind: rt::Kind::Ident(range.mksp(ctx)),
           span,
           lexeme: best.lexeme,
           prefix,
@@ -394,44 +386,36 @@ pub fn emit(lexer: &mut Lexer) {
       }
 
       Any::Digital(rule) => {
-        let sign = 'sign: {
-          let end =
-            lexer.cursor() - match_.extra - suf.len() - text.len() - pre.len();
-          if end == start {
-            break 'sign None;
-          }
-          let sign = &span.text(lexer.file().context())[..end - start];
-          let span = lexer.mksp(start..end);
+        let sign_text = sign.text(ctx);
+        let sign = sign.mksp_nonempty(ctx).map(|span| {
           for (text, value) in &rule.mant.signs {
-            if text == sign {
-              break 'sign Some((*value, span));
+            if text == sign_text {
+              return (*value, span);
             }
           }
-
           bug!("could not find appropriate sign for Digital rule")
-        };
+        });
 
         let mut chunks = vec![DigitBlocks {
-          span: Some(core),
           prefix,
           sign,
           blocks: Vec::new(),
           which_exp: !0,
         }];
 
-        let end = core.range(lexer.file().context()).unwrap().end;
+        let mut offset = 0;
         let mut text = text;
 
         let mut digits = &rule.mant;
-        let mut block_start = end - text.len();
+        let mut block_start = 0;
         let mut last_was_sep = false;
+        let sep = rule.separator.as_str();
         'digits: while let Some(c) = text.chars().next() {
-          let cursor = end - text.len();
           let chunk = chunks.last_mut().unwrap();
 
-          if !rule.separator.is_empty() {
-            if let Some(rest) = text.strip_prefix(rule.separator.as_str()) {
-              if block_start == cursor {
+          if !sep.is_empty() {
+            if let Some(rest) = text.strip_prefix(sep) {
+              if block_start == offset {
                 let ok = if !chunk.blocks.is_empty() {
                   rule.corner_cases.around_point
                 } else if ptr::eq(digits, &rule.mant) {
@@ -441,17 +425,17 @@ pub fn emit(lexer: &mut Lexer) {
                 };
 
                 if !ok {
-                  let span = lexer.mksp(cursor..cursor + rule.separator.len());
                   lexer.report().builtins().unexpected(
                     lexer.spec(),
                     Expected::Name(yarn!("digit separator")),
                     best.lexeme,
-                    span,
+                    range.subrange(offset..offset + sep.len()),
                   );
                 }
               }
 
               text = rest;
+              offset += rule.separator.len();
               last_was_sep = true;
               continue;
             }
@@ -459,18 +443,20 @@ pub fn emit(lexer: &mut Lexer) {
 
           if let Some(rest) = text.strip_prefix(rule.point.as_str()) {
             if last_was_sep && !rule.corner_cases.around_point {
-              let span = lexer.mksp(cursor - rule.separator.len()..cursor);
               lexer.report().builtins().unexpected(
                 lexer.spec(),
                 Expected::Name(yarn!("digit separator")),
                 best.lexeme,
-                span,
+                range.subrange(offset..offset + sep.len()),
               );
             }
 
+            chunk
+              .blocks
+              .push(range.subrange(block_start..offset).mksp(ctx));
             text = rest;
-            chunk.blocks.push(lexer.mksp(block_start..cursor));
-            block_start = cursor + rule.point.len();
+            offset += rule.point.len();
+            block_start = offset;
             last_was_sep = false;
             continue;
           }
@@ -478,65 +464,67 @@ pub fn emit(lexer: &mut Lexer) {
           for (i, (pre, exp)) in rule.exps.iter().enumerate() {
             if let Some(rest) = text.strip_prefix(pre.as_str()) {
               if last_was_sep && !rule.corner_cases.around_exp {
-                let span = lexer.mksp(cursor - rule.separator.len()..cursor);
                 lexer.report().builtins().unexpected(
                   lexer.spec(),
                   Expected::Name(yarn!("digit separator")),
                   best.lexeme,
-                  span,
+                  range.subrange(offset..offset + sep.len()),
                 );
               }
 
-              chunk.blocks.push(lexer.mksp(block_start..cursor));
+              chunk
+                .blocks
+                .push(range.subrange(block_start..offset).mksp(ctx));
 
+              let prefix = range.subrange(offset..offset + pre.len()).mksp(ctx);
               text = rest;
+
+              offset += pre.len();
+
               let sign = exp
                 .signs
                 .iter()
                 .filter(|(y, _)| rest.starts_with(y.as_str()))
                 .max_by_key(|(y, _)| y.len())
                 .map(|(y, s)| {
+                  let sign = range.subrange(offset..offset + y.len()).mksp(ctx);
                   text = &text[y.len()..];
-                  let range = Range(0, y.len()) + cursor + pre.len();
-                  (*s, lexer.mksp(range.bounds()))
+                  offset += y.len();
+                  (*s, sign)
                 });
 
               chunks.push(DigitBlocks {
-                span: Some(core),
-                prefix: Some(lexer.mksp(cursor..cursor + pre.len())),
+                prefix: Some(prefix),
                 sign,
                 blocks: Vec::new(),
                 which_exp: i,
               });
 
               digits = exp;
-              block_start = end - text.len();
+              block_start = offset;
               last_was_sep = false;
               continue 'digits;
             }
           }
 
-          // Encountered an unexpected character; diagnose.
           text = &text[c.len_utf8()..];
+          offset += c.len_utf8();
         }
 
         if last_was_sep && !rule.corner_cases.suffix {
-          let span = lexer.mksp(end - rule.separator.len()..end);
           lexer.report().builtins().unexpected(
             lexer.spec(),
             Expected::Name(yarn!("digit separator")),
             best.lexeme,
-            span,
+            range.subrange(offset - sep.len()..),
           );
         }
 
-        if block_start < end {
-          chunks
-            .last_mut()
-            .unwrap()
-            .blocks
-            .push(lexer.mksp(block_start..end));
-        }
+        chunks
+          .last_mut()
+          .unwrap()
+          .blocks
+          .push(range.subrange(block_start..).mksp(ctx));
 
         let mant = chunks.remove(0);
         let tok = rt::Token {
@@ -565,28 +553,7 @@ pub fn emit(lexer: &mut Lexer) {
             .context()
             .join(chunk.prefix.into_iter().chain(chunk.blocks.iter().copied()));
 
-          if chunk.blocks.is_empty() {
-            let prefix = chunk.prefix.unwrap();
-            let end = prefix.range(lexer.file().context()).unwrap().end;
-            let span = lexer.mksp(end..end);
-
-            lexer
-              .report()
-              .builtins()
-              .expected(
-                lexer.spec(),
-                [Expected::Name(yarn!(
-                  "digits after `{}`",
-                  prefix.text(lexer.file().context()),
-                ))],
-                match lexer.text(end..).chars().next() {
-                  Some(c) => Expected::Literal(Yarn::from(c)),
-                  None => Expected::Lexeme(Lexeme::eof().any()),
-                },
-                span,
-              )
-              .saying(prefix, "because of this prefix");
-          } else if (chunk.blocks.len() as u32) < digits.min_chunks {
+          if (chunk.blocks.len() as u32) < digits.min_chunks {
             lexer
               .report()
               .error(f!(
@@ -599,12 +566,31 @@ pub fn emit(lexer: &mut Lexer) {
           }
 
           for block in &chunk.blocks {
-            let ctx = lexer.file().context();
-            let end = block.range(ctx).unwrap().end;
+            let range = block.range(ctx);
             let mut text = block.text(ctx);
 
+            if range.is_empty() {
+              let prefix = chunk.prefix.unwrap();
+              lexer
+                .report()
+                .builtins()
+                .expected(
+                  lexer.spec(),
+                  [Expected::Name(yarn!(
+                    "digits after `{}`",
+                    prefix.text(ctx),
+                  ))],
+                  match lexer.text(range.end()..).chars().next() {
+                    Some(c) => Expected::Literal(Yarn::from(c)),
+                    None => Expected::Lexeme(Lexeme::eof().any()),
+                  },
+                  range,
+                )
+                .saying(prefix, "because of this prefix");
+            }
+
             while let Some(c) = text.chars().next() {
-              let cursor = end - text.len();
+              let cursor = range.end() - text.len();
               if !rule.separator.is_empty() {
                 if let Some(rest) = text.strip_prefix(rule.separator.as_str()) {
                   text = rest;
@@ -614,12 +600,11 @@ pub fn emit(lexer: &mut Lexer) {
 
               text = &text[c.len_utf8()..];
               if !c.is_digit(digits.radix as u32) {
-                let span = lexer.mksp(cursor..cursor + c.len_utf8());
                 lexer.report().builtins().unexpected(
                   lexer.spec(),
                   Expected::Literal(c.into()),
                   token,
-                  span,
+                  lexer.range(cursor..cursor + c.len_utf8()),
                 )
                 .remark(
                   chunk_span,
@@ -671,11 +656,10 @@ pub fn emit(lexer: &mut Lexer) {
           lexer.advance(esc.len());
           let value = match rule {
             rule::Escape::Invalid => {
-              let span = lexer.mksp(esc_start..lexer.cursor());
-              lexer
-                .report()
-                .builtins()
-                .invalid_escape(span, "invalid escape sequence");
+              lexer.report().builtins().invalid_escape(
+                lexer.range(esc_start..lexer.cursor()),
+                "invalid escape sequence",
+              );
               !0
             }
 
@@ -701,9 +685,8 @@ pub fn emit(lexer: &mut Lexer) {
               }
 
               if count != *char_count {
-                let span = lexer.mksp(esc_start..lexer.cursor());
                 lexer.report().builtins().invalid_escape(
-                  span,
+                  lexer.range(esc_start..lexer.cursor()),
                   f!(
                     "expected exactly {char_count} character{} here",
                     plural(*char_count)
@@ -715,8 +698,10 @@ pub fn emit(lexer: &mut Lexer) {
               match parse(data) {
                 Ok(code) => code,
                 Err(msg) => {
-                  let span = lexer.mksp(esc_start..lexer.cursor());
-                  lexer.report().builtins().invalid_escape(span, msg);
+                  lexer.report().builtins().invalid_escape(
+                    lexer.range(esc_start..lexer.cursor()),
+                    msg,
+                  );
                   !0
                 }
               }
@@ -731,11 +716,10 @@ pub fn emit(lexer: &mut Lexer) {
               // it's not worth supporting more complicated escapes...
 
               if !lexer.rest().starts_with(open.as_str()) {
-                let span = lexer.mksp(esc_start..lexer.cursor());
-                lexer
-                  .report()
-                  .builtins()
-                  .invalid_escape(span, f!("expected a `{open}`"));
+                lexer.report().builtins().invalid_escape(
+                  lexer.range(esc_start..lexer.cursor()),
+                  f!("expected a `{open}`"),
+                );
                 break 'delim !0;
               } else {
                 lexer.advance(open.len());
@@ -743,11 +727,10 @@ pub fn emit(lexer: &mut Lexer) {
 
               let arg_start = lexer.cursor();
               let Some(len) = lexer.rest().find(close.as_str()) else {
-                let span = lexer.mksp(esc_start..lexer.cursor());
-                lexer
-                  .report()
-                  .builtins()
-                  .invalid_escape(span, f!("expected a `{close}`"));
+                lexer.report().builtins().invalid_escape(
+                  lexer.range(esc_start..lexer.cursor()),
+                  f!("expected a `{close}`"),
+                );
                 break 'delim !0;
               };
               lexer.advance(len);
@@ -755,8 +738,10 @@ pub fn emit(lexer: &mut Lexer) {
               match parse(data) {
                 Ok(code) => code,
                 Err(msg) => {
-                  let span = lexer.mksp(esc_start..lexer.cursor());
-                  lexer.report().builtins().invalid_escape(span, msg);
+                  lexer.report().builtins().invalid_escape(
+                    lexer.range(esc_start..lexer.cursor()),
+                    msg,
+                  );
                   !0
                 }
               }
@@ -788,7 +773,6 @@ pub fn emit(lexer: &mut Lexer) {
           .map(|y| y.len())
           .max()
           .unwrap_or_else(|| {
-            let span = lexer.mksp(lexer.cursor()..lexer.cursor());
             lexer.report().builtins().expected(
               lexer.spec(),
               rule
@@ -797,18 +781,21 @@ pub fn emit(lexer: &mut Lexer) {
                 .iter()
                 .map(|y| Expected::Literal(y.aliased())),
               Expected::Literal("fixme".into()),
-              span,
+              lexer.range(lexer.cursor()..lexer.cursor()),
             );
 
             0
           });
         let suf_start = lexer.cursor();
         lexer.advance(suf);
-        let suffix = (suf > 0).then(|| lexer.mksp(suf_start..lexer.cursor()));
+        let suffix = lexer.range(suf_start..lexer.cursor()).mksp_nonempty(ctx);
 
-        let close = lexer.mksp(uq_end..suf_start);
         lexer.add_token(rt::Token {
-          kind: rt::Kind::Quoted { content, open: core, close },
+          kind: rt::Kind::Quoted {
+            content,
+            open: range.mksp(ctx),
+            close: lexer.mksp(uq_end..suf_start),
+          },
           span,
           lexeme: best.lexeme,
           prefix,
@@ -825,9 +812,6 @@ pub fn emit(lexer: &mut Lexer) {
   // and diagnose that.
 
   if match_.extra > 0 {
-    let span =
-      lexer.mksp(start + match_.len..start + match_.len + match_.extra);
-
     let expected = if generated_token {
       Expected::Token(token::Cursor::fake_token(
         lexer.spec(),
@@ -843,10 +827,12 @@ pub fn emit(lexer: &mut Lexer) {
       Expected::Lexeme(best.lexeme)
     };
 
-    lexer
-      .report()
-      .builtins()
-      .extra_chars(lexer.spec(), expected, span);
+    let start = start + match_.len;
+    lexer.report().builtins().extra_chars(
+      lexer.spec(),
+      expected,
+      lexer.range(start..start + match_.extra),
+    );
   }
 
   let prev = lexer.rest().chars().next_back();
@@ -858,7 +844,6 @@ pub fn emit(lexer: &mut Lexer) {
     if xids > 0 {
       let start = lexer.cursor();
       lexer.advance(xids);
-      let span = lexer.mksp(start..lexer.cursor());
 
       let expected = if generated_token {
         Expected::Token(token::Cursor::fake_token(
@@ -875,22 +860,29 @@ pub fn emit(lexer: &mut Lexer) {
         Expected::Lexeme(best.lexeme)
       };
 
-      lexer
-        .report()
-        .builtins()
-        .extra_chars(lexer.spec(), expected, span);
+      lexer.report().builtins().extra_chars(
+        lexer.spec(),
+        expected,
+        lexer.range(start..lexer.cursor()),
+      );
     }
   }
 }
 
 /// Extracts the affixes from `text`.
-fn find_affixes_partial<'a>(
-  text: &'a str,
+fn find_affixes_partial(
+  range: Range,
   spec: &Spec,
   best: Lexeme2,
-) -> (&'a str, &'a str, &'a str) {
+  ctx: &Context,
+) -> [Range; 4] {
+  let text = range.text(ctx);
+  let ep = range.file(ctx).range(0..0);
   match spec.rule(best.lexeme) {
-    Any::Ident(rule) => find_affixes(text, &rule.affixes),
+    Any::Ident(rule) => {
+      let [pre, range, suf] = find_affixes(range, &rule.affixes, ctx);
+      [ep, pre, range, suf]
+    }
     Any::Digital(rule) => {
       let sign = rule
         .mant
@@ -900,33 +892,36 @@ fn find_affixes_partial<'a>(
         .map(|(y, _)| y.len())
         .max()
         .unwrap_or(0);
+      let (sign, range) = range.split_at(sign);
 
-      // Discard the sign; it can be rediscovered later on.
-      find_affixes(&text[sign..], &rule.affixes)
+      let [pre, range, suf] = find_affixes(range, &rule.affixes, ctx);
+      [sign, pre, range, suf]
     }
     Any::Quoted(rule) if !best.is_close => {
-      let (pre, text) = find_prefix(text, &rule.affixes);
-      (pre, text, "")
+      let (pre, range) = find_prefix(range, &rule.affixes, ctx);
+      [ep, pre, range, ep]
     }
     Any::Quoted(rule) => {
-      let (text, suf) = find_suffix(text, &rule.affixes);
-      ("", text, suf)
+      let (range, suf) = find_suffix(range, &rule.affixes, ctx);
+      [ep, ep, range, suf]
     }
-    _ => ("", text, ""),
+    _ => [ep, ep, range, ep],
   }
 }
 
 /// Extracts the affixes from `text`.
-fn find_affixes<'a>(
-  text: &'a str,
-  affixes: &Affixes,
-) -> (&'a str, &'a str, &'a str) {
-  let (prefix, text) = find_prefix(text, affixes);
-  let (text, suffix) = find_suffix(text, affixes);
-  (prefix, text, suffix)
+fn find_affixes(range: Range, affixes: &Affixes, ctx: &Context) -> [Range; 3] {
+  let (prefix, range) = find_prefix(range, affixes, ctx);
+  let (range, suffix) = find_suffix(range, affixes, ctx);
+  [prefix, range, suffix]
 }
 
-fn find_prefix<'a>(text: &'a str, affixes: &Affixes) -> (&'a str, &'a str) {
+fn find_prefix(
+  range: Range,
+  affixes: &Affixes,
+  ctx: &Context,
+) -> (Range, Range) {
+  let text = range.text(ctx);
   let prefix = affixes
     .prefixes()
     .iter()
@@ -934,10 +929,15 @@ fn find_prefix<'a>(text: &'a str, affixes: &Affixes) -> (&'a str, &'a str) {
     .map(|y| y.len())
     .max()
     .unwrap_or_else(|| bug!("could not find matching prefix post-DFA"));
-  text.split_at(prefix)
+  range.split_at(prefix)
 }
 
-fn find_suffix<'a>(text: &'a str, affixes: &Affixes) -> (&'a str, &'a str) {
+fn find_suffix(
+  range: Range,
+  affixes: &Affixes,
+  ctx: &Context,
+) -> (Range, Range) {
+  let text = range.text(ctx);
   let suffix = affixes
     .suffixes()
     .iter()
@@ -945,10 +945,5 @@ fn find_suffix<'a>(text: &'a str, affixes: &Affixes) -> (&'a str, &'a str) {
     .map(|y| y.len())
     .max()
     .unwrap_or_else(|| bug!("could not find matching suffix post-DFA"));
-  text.split_at(text.len() - suffix)
-}
-
-/// Extracts the affixes from `text`.
-fn affix_split(text: &str, pre: usize, suf: usize) -> (&str, &str, &str) {
-  (&text[..pre], &text[pre..text.len() - suf], &text[text.len() - suf..])
+  range.split_at(text.len() - suffix)
 }

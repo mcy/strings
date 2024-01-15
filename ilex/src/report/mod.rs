@@ -28,8 +28,6 @@ pub use builtin::Builtins;
 pub use builtin::Expected;
 pub use diagnostic::Diagnostic;
 use diagnostic::Kind;
-pub use diagnostic::Loc;
-pub use diagnostic::ToLoc;
 
 /// A collection of errors can may built up over the course of an operation.
 ///

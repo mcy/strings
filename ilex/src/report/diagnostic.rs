@@ -2,11 +2,8 @@ use std::fmt;
 use std::mem;
 use std::panic;
 
-use crate::file::Context;
-use crate::file::File;
-use crate::file::Span;
-use crate::file::Spanned;
-use crate::range::Range;
+use crate::file::Range;
+use crate::file::Ranged;
 use crate::report::Report;
 
 /// A diagnostic that is being built up.
@@ -38,67 +35,9 @@ pub use annotate_snippets::AnnotationType as Kind;
 pub struct Info {
   pub kind: Kind,
   pub message: String,
-  pub snippets: Vec<Vec<(Loc, String, Kind)>>,
+  pub snippets: Vec<Vec<(Range, String, Kind)>>,
   pub notes: Vec<(String, Kind)>,
   pub reported_at: Option<&'static panic::Location<'static>>,
-}
-
-/// A location in a source file: like a [`Span`], but slightly more general.
-///
-/// Full span information (such as comments) is not necessary for diagnostics,
-/// so anything that implements [`ToLoc`] (which includes anything that is
-/// [`Spanned`]) is suitable for placing spanned data
-/// in diagnostics.
-#[derive(Copy, Clone)]
-pub struct Loc {
-  pub(super) file: usize,
-  pub(super) range: Range,
-}
-
-impl Loc {
-  /// Constructs a location from a file and a byte range within it.
-  ///
-  /// # Panics
-  ///
-  /// Panics if `start > end`, or if `end` is greater than the length of the
-  /// file.
-  #[track_caller]
-  pub(crate) fn new(file: File<'_>, range: Range) -> Loc {
-    range.bounds_check(file.len());
-    Loc { file: file.idx(), range }
-  }
-
-  /// Bakes this location into a source code span.
-  pub(crate) fn bake(self, ctx: &Context) -> Span {
-    ctx.new_span(self.range, self.file)
-  }
-
-  pub(crate) fn text(self, ctx: &Context) -> &str {
-    ctx.file(self.file).unwrap().text(self.range.bounds())
-  }
-}
-
-/// Converts a value to a file [`Loc`].
-pub trait ToLoc {
-  /// Performs the conversion.
-  fn to_loc(&self, ctx: &Context) -> Loc;
-}
-
-impl ToLoc for Loc {
-  fn to_loc(&self, _ctx: &Context) -> Loc {
-    *self
-  }
-}
-
-impl<S: Spanned> ToLoc for S {
-  fn to_loc(&self, ctx: &Context) -> Loc {
-    let span = self.span(ctx);
-    let range = span
-      .range(ctx)
-      .expect("synthetic spans are not supported in diagnostics yet");
-
-    Loc::new(span.file(ctx), Range::new(range))
-  }
 }
 
 impl Diagnostic {
@@ -131,24 +70,24 @@ impl Diagnostic {
   }
 
   /// Adds a new relevant snippet at the given location.
-  pub fn at(self, span: impl ToLoc) -> Self {
-    self.saying(span, "")
+  pub fn at(self, range: impl Ranged) -> Self {
+    self.saying(range, "")
   }
 
   /// Adds a new diagnostic location, with the given message attached to it.
-  pub fn saying(self, span: impl ToLoc, message: impl fmt::Display) -> Self {
-    self.snippet(span, message, None)
+  pub fn saying(self, range: impl Ranged, message: impl fmt::Display) -> Self {
+    self.snippet(range, message, None)
   }
 
   /// Like `saying`, but the underline is as for a "note" rather than the
   /// overall diagnostic.
-  pub fn remark(self, span: impl ToLoc, message: impl fmt::Display) -> Self {
-    self.snippet(span, message, Some(Kind::Help))
+  pub fn remark(self, range: impl Ranged, message: impl fmt::Display) -> Self {
+    self.snippet(range, message, Some(Kind::Help))
   }
 
   fn snippet(
     mut self,
-    span: impl ToLoc,
+    range: impl Ranged,
     message: impl fmt::Display,
     kind: Option<Kind>,
   ) -> Self {
@@ -157,14 +96,14 @@ impl Diagnostic {
     }
 
     self.info.snippets.last_mut().unwrap().push((
-      span.to_loc(&self.report.ctx),
+      range.range(&self.report.ctx),
       message.to_string(),
       kind.unwrap_or(self.info.kind),
     ));
     self
   }
 
-  /// Starts a new snippet, even if the next span is in the same file.
+  /// Starts a new snippet, even if the next range is in the same file.
   pub fn new_snippet(mut self) -> Self {
     self.info.snippets.push(Vec::new());
     self

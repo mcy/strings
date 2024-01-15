@@ -134,8 +134,8 @@ pub fn render_fmt(
       let mut cur_file = None;
       let mut cur_slice = None::<Slice>;
       let mut has_eof = false;
-      for (span, text, kind) in snips {
-        let file = report.ctx.file(span.file).unwrap();
+      for (range, text, kind) in snips {
+        let file = range.file(&report.ctx);
         if cur_file != Some(file) {
           cur_file = Some(file);
           if let Some(mut slice) = cur_slice.take() {
@@ -155,10 +155,10 @@ pub fn render_fmt(
         }
 
         let slice = cur_slice.as_mut().unwrap();
-        let mut start = span.range.start();
-        let mut end = span.range.end();
+        let mut start = range.start();
+        let mut end = range.end();
 
-        // Ensure that all spans have length at least one, and try to get them
+        // Ensure that all ranges have length at least one, and try to get them
         // to point just after non-whitespace.
         // If this is the EOF, it will point at the extra space.
         if start == end {
@@ -170,7 +170,7 @@ pub fn render_fmt(
           end += 1;
           has_eof |= end == slice.source.len();
         } else {
-          // Crop a span so that it does not contain leading or trailing
+          // Crop a range so that it does not contain leading or trailing
           // whitespace.
           let chunk = &slice.source[start..end];
           let ws_pre =

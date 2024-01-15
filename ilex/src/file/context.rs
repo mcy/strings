@@ -11,12 +11,11 @@ use crate::f;
 use crate::file::File;
 use crate::file::Span;
 use crate::file::CTX_FOR_SPAN_DEBUG;
-use crate::range::Range;
 use crate::report;
 use crate::report::Fatal;
 use crate::report::Report;
 
-pub type Offset = u32;
+use super::Range;
 
 /// A source context, which tracks source files.
 ///
@@ -32,10 +31,8 @@ pub struct Context {
 pub struct State {
   files: Vec<(Utf8PathBuf, String)>,
 
-  // Maps a span id to (start, end, file index).
-  ranges: Vec<(Range, Offset)>,
-  synthetics: Vec<String>,
-  comments: HashMap<i32, Vec<Span>>,
+  ranges: Vec<Range>,
+  comments: HashMap<u32, Vec<Span>>,
 }
 
 unsafe impl Send for Context {}
@@ -152,40 +149,16 @@ impl Context {
   }
 
   /// Gets the byte range for the given span, if it isn't the synthetic span.
-  pub(crate) fn lookup_file(&self, idx: usize) -> (&Utf8Path, &str) {
-    if idx == !0 {
-      return (Utf8Path::new("<scratch>"), "");
-    }
-
-    let file = self.file(idx).unwrap();
-    (file.path(), file.text(..))
-  }
-
-  /// Gets the byte range for the given span, if it isn't the synthetic span.
-  pub(crate) fn lookup_range(&self, span: Span) -> (Option<Range>, usize) {
-    if span.is_synthetic() {
-      return (None, !0);
-    }
-
+  pub(crate) fn lookup_range(&self, span: Span) -> Range {
     let state = self.state.read().unwrap();
-    let (mut range, file) = state.ranges[span.index()];
+    let mut range = state.ranges[span.idx as usize];
 
     if let Some(end_span) = span.end() {
-      let (actual, _) = state.ranges[end_span.index()];
-      range = Range(range.start, actual.end);
+      let end = state.ranges[end_span.idx as usize];
+      range.end = end.end;
     }
 
-    (Some(range), file as usize)
-  }
-
-  pub(crate) fn lookup_synthetic(&self, span: Span) -> &str {
-    let state = self.state.read().unwrap();
-    let text = state.synthetics[span.index()].as_str();
-    unsafe {
-      // SAFETY: The pointer to the file's text is immutable and pointer-stable,
-      // so we can safely extend its lifetime here.
-      &*(text as *const str)
-    }
+    range
   }
 
   pub(crate) fn lookup_comments(
@@ -195,7 +168,7 @@ impl Context {
     let state = self.state.read().unwrap();
     let ptr = state
       .comments
-      .get(&span.start)
+      .get(&span.idx)
       .map(|x| x.as_slice())
       .unwrap_or_default() as *const [Span];
     (state, ptr)
@@ -207,42 +180,19 @@ impl Context {
       .write()
       .unwrap()
       .comments
-      .entry(span.start)
+      .entry(span.idx)
       .or_default()
       .push(comment)
   }
 
   /// Creates a new synthetic span with the given contents.
-  pub(crate) fn new_span(&self, range: Range, file_idx: usize) -> Span {
-    let file = self
-      .file(file_idx)
-      .unwrap_or_else(|| panic!("invalid file index for span: {file_idx}"));
-
+  pub(crate) fn new_span(&self, range: Range) -> Span {
     let mut state = self.state.write().unwrap();
-    assert!(state.ranges.len() < (i32::MAX as usize), "ran out of spans");
-    range.bounds_check(file.len());
+    assert!(state.ranges.len() <= (u32::MAX as usize), "ran out of spans");
 
-    let span = Span {
-      start: state.ranges.len() as i32,
-      end: -1,
-    };
+    let span = Span { idx: state.ranges.len() as u32, end: !0 };
 
-    state.ranges.push((range, file_idx as u32));
-    span
-  }
-
-  /// Creates a new synthetic span with the given contents.
-  pub(crate) fn new_synthetic_span(&self, text: String) -> Span {
-    let mut state = self.state.write().unwrap();
-
-    assert!(state.synthetics.len() < (i32::MAX as usize), "ran out of spans",);
-
-    let span = Span {
-      start: !state.synthetics.len() as i32,
-      end: -1,
-    };
-
-    state.synthetics.push(text);
+    state.ranges.push(range);
     span
   }
 
@@ -254,42 +204,42 @@ impl Context {
   /// part of the same file, or if `spans` is empty.
   pub fn join(&self, spans: impl IntoIterator<Item = Span>) -> Span {
     struct Best {
-      file: usize,
-      start: i32,
-      end: i32,
+      span: Span,
       range: Range,
     }
     let mut best = None;
 
     for span in spans {
-      let (range, f) = self.lookup_range(span);
-      let range = range.expect("attempted to join synthetic span");
+      let range = self.lookup_range(span);
 
       let best = best.get_or_insert(Best {
-        file: f,
-        start: span.start,
-        end: span.end().unwrap_or(span).start,
+        span: Span {
+          idx: span.idx,
+          end: span.end().unwrap_or(span).idx,
+        },
         range,
       });
 
-      assert_eq!(best.file, f, "attempted to join spans of different files");
+      assert_eq!(
+        best.range.file, range.file,
+        "attempted to join spans of different files"
+      );
 
       if best.range.start > range.start {
         best.range.start = range.start;
-        best.start = span.start;
+        best.span.idx = span.idx;
       }
 
       if best.range.end < range.end {
         best.range.end = range.end;
-        best.end = span.end().unwrap_or(span).start;
+        best.span.end = span.end().unwrap_or(span).idx;
       }
     }
 
     let best = best.expect("attempted to join zero spans");
-    let mut span = Span { start: best.start, end: best.end };
-
-    if span.end == span.start {
-      span.end = -1;
+    let mut span = best.span;
+    if span.end == span.idx {
+      span.end = !0;
     }
 
     span

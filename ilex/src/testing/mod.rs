@@ -14,6 +14,7 @@ use std::ops::Range;
 use std::path::Path;
 
 use crate::file::Context;
+use crate::file::Ranged;
 use crate::file::Span;
 use crate::report::Report;
 use crate::rule;
@@ -336,10 +337,10 @@ impl Text {
       .text
       .as_ref()
       .is_some_and(|text| text != span.text(ctx))
-      && !self
-        .range
-        .as_ref()
-        .is_some_and(|range| range != &span.range(ctx).unwrap())
+      && !self.range.as_ref().is_some_and(|range| {
+        let r = span.range(ctx);
+        range != &(r.start()..r.end())
+      })
   }
 }
 
