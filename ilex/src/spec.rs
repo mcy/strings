@@ -1,16 +1,18 @@
 //! Lexer specifications.
 
+use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::Display;
+use std::hash::Hash;
 use std::marker::PhantomData;
 
 use byteyarn::yarn;
 use byteyarn::Yarn;
 use byteyarn::YarnBox;
 use byteyarn::YarnRef;
-use twie::Trie;
 
 use crate::report::Expected;
+use crate::rt;
 use crate::rule;
 use crate::rule::Rule;
 
@@ -65,8 +67,7 @@ impl<R> fmt::Debug for Lexeme<R> {
 /// language. The [`Spec::builder()`] function returns a builder for
 pub struct Spec {
   builder: SpecBuilder,
-  /// The set of rules keyed by the longest fixed prefix that can start them.
-  trie: Trie<str, Vec<Action>>,
+  dfa: rt::Dfa,
 }
 
 impl Spec {
@@ -86,21 +87,9 @@ impl Spec {
     R::try_from_ref(&self.builder.rules[lexeme.index()]).unwrap()
   }
 
-  /// Returns an iterator over rules that could generate the next token at
-  /// `src`
-  pub(crate) fn possible_rules<'a>(
-    &'a self,
-    src: &'a str,
-  ) -> impl IntoIterator<Item = (&str, &Action)> + 'a {
-    self
-      .trie
-      .prefixes(src)
-      .flat_map(|(k, v)| v.iter().map(move |v| (k, v)))
-  }
-
   /// Returns the name of a rule corresponding to a particular lexeme, if it has
   /// one.
-  pub(super) fn rule_name(
+  pub(crate) fn rule_name(
     &self,
     lexeme: Lexeme<rule::Any>,
   ) -> Option<YarnRef<str>> {
@@ -109,7 +98,7 @@ impl Spec {
 
   /// Returns the name of a rule corresponding to a particular lexeme, if it has
   /// one.
-  pub(super) fn rule_name_or(
+  pub(crate) fn rule_name_or(
     &self,
     lexeme: Lexeme<rule::Any>,
     or: impl Display,
@@ -119,13 +108,18 @@ impl Spec {
       .map(|y| Expected::Name(y.to_box()))
       .unwrap_or(Expected::Literal(or.to_string().into()))
   }
+
+  /// Returns the underlying DFAs for this spec.
+  pub(crate) fn dfa(&self) -> &rt::Dfa {
+    &self.dfa
+  }
 }
 
 /// A builder for constructing a [`Spec`].
 #[derive(Default)]
 pub struct SpecBuilder {
-  pub(super) rules: Vec<rule::Any>,
-  pub(super) names: Vec<Yarn>,
+  pub(crate) rules: Vec<rule::Any>,
+  pub(crate) names: Vec<Yarn>,
 }
 
 impl SpecBuilder {
@@ -140,9 +134,8 @@ impl SpecBuilder {
   /// Panics if any of the invariants of a [`Spec`] are violated, or if any rule
   /// combinations are ambiguous (e.g., they have the same prefix).
   pub fn compile(self) -> Spec {
-    let mut spec = Spec { builder: self, trie: Trie::new() };
-    spec.build_trie();
-    spec
+    let dfa = rt::compile(&self.rules);
+    Spec { builder: self, dfa }
   }
 
   /// Adds a new rule to the [`Spec`] being built.
@@ -275,165 +268,6 @@ macro_rules! spec {
   };
 }
 
-/// An action to perform in response to matching a prefix.
-#[derive(Debug, Copy, Clone)]
-pub(crate) struct Action {
-  /// The lexeme we should match on.
-  pub lexeme: Lexeme<rule::Any>,
-  /// How much of the actually matched prefix in the trie is actual skippable
-  /// prefix.
-  ///
-  /// However, if this is u32::MAX, it means this is a bracket's closer. This
-  /// action exists only for generating diagnostics.
-  pub prefix_len: u32,
-}
-
-impl Spec {
-  fn build_trie(&mut self) {
-    // First, insert all of the rules into the trie.
-    for (lexeme, rule) in self.builder.rules.iter().enumerate() {
-      let lexeme = Lexeme::new(lexeme as u32);
-      match rule {
-        rule::Any::Comment(rule::Comment(rule::CommentKind::Line(open))) => {
-          add_lexeme(&mut self.trie, open, lexeme)
-        }
-
-        rule::Any::Comment(rule::Comment(rule::CommentKind::Block(
-          bracket,
-        ))) => {
-          let open = make_open(bracket);
-          add_lexeme(&mut self.trie, &open, lexeme);
-        }
-
-        rule::Any::Keyword(rule) => {
-          add_lexeme(&mut self.trie, &rule.value, lexeme)
-        }
-
-        rule::Any::Bracket(rule) => {
-          let open = make_open(rule);
-          add_lexeme(&mut self.trie, &open, lexeme);
-
-          let close = match &rule.kind {
-            rule::BracketKind::Paired(.., close) => close.aliased(),
-            rule::BracketKind::CxxLike { close: (close, _), .. }
-            | rule::BracketKind::RustLike { close: (close, _), .. } => {
-              close.aliased()
-            }
-          };
-          add_action(
-            &mut self.trie,
-            &close,
-            Action { lexeme, prefix_len: u32::MAX },
-          );
-        }
-
-        rule::Any::Ident(rule) => {
-          for prefix in rule.affixes.prefixes() {
-            add_action(
-              &mut self.trie,
-              prefix,
-              Action { lexeme, prefix_len: prefix.len() as u32 },
-            );
-          }
-        }
-
-        rule::Any::Quoted(rule) => {
-          let open = make_open(&rule.bracket);
-          for prefix in rule.affixes.prefixes() {
-            add_action(
-              &mut self.trie,
-              &Yarn::concat(&[prefix, &open]),
-              Action { lexeme, prefix_len: prefix.len() as u32 },
-            );
-          }
-        }
-
-        rule::Any::Digital(rule) => {
-          const ALPHABET: &str = "0123456789abcdef";
-
-          // We need to include the digit. Notably, this happens to make things
-          // like the classic C-style octal escapes work: if b.prefix is `0`,
-          // this will generate prefixes like `01`, `02`, `03`, etc, which will
-          // override the weaker `0` prefix that comes from e.g. decimal
-          // integers.
-          //
-          // However, this does mean that `08` matches as a decimal integer.
-          // Hopefully users are writing good tests. :D
-          //
-          // TODO(mcyoung): Add an API for disallowing leading zeros?
-          let mut insert_with_digit = |digit: YarnRef<str>| {
-            for sign in rule
-              .mant
-              .signs
-              .iter()
-              .map(|(s, _)| s.as_str())
-              .chain(Some(""))
-            {
-              for prefix in rule.affixes.prefixes() {
-                let key = Yarn::concat(&[sign, prefix, &digit]);
-                if key.is_empty() {
-                  continue;
-                }
-                add_action(
-                  &mut self.trie,
-                  &key,
-                  Action { lexeme, prefix_len: prefix.len() as u32 },
-                );
-              }
-            }
-          };
-
-          for lower in ALPHABET[..rule.mant.radix as usize].chars() {
-            let upper = lower.to_ascii_uppercase();
-
-            insert_with_digit(lower.into());
-            if upper != lower {
-              insert_with_digit(upper.into());
-            }
-          }
-
-          // We add a version with a leading separator unconditionally,
-          // since this improves diagnostics in the case that a prefix
-          // separator is forbidden.
-          if !rule.separator.is_empty() {
-            insert_with_digit(rule.separator.as_ref());
-          }
-
-          // Throw in extra rules consisting of just the prefixes to catch
-          // potential ambiguities.
-          insert_with_digit("".into());
-        }
-      }
-    }
-
-    fn add_lexeme(
-      trie: &mut Trie<str, Vec<Action>>,
-      key: &str,
-      lexeme: Lexeme<rule::Any>,
-    ) {
-      trie
-        .get_or_insert_default(key)
-        .push(Action { lexeme, prefix_len: 0 });
-    }
-
-    fn add_action(
-      trie: &mut Trie<str, Vec<Action>>,
-      key: &str,
-      action: Action,
-    ) {
-      trie.get_or_insert_default(key).push(action);
-    }
-
-    fn make_open(delim: &rule::Bracket) -> YarnBox<str> {
-      match &delim.kind {
-        rule::BracketKind::Paired(open, ..) => open.aliased(),
-        rule::BracketKind::CxxLike { open: (open, _), .. }
-        | rule::BracketKind::RustLike { open: (open, _), .. } => open.aliased(),
-      }
-    }
-  }
-}
-
 impl<R> Clone for Lexeme<R> {
   fn clone(&self) -> Self {
     *self
@@ -447,8 +281,23 @@ impl<R> PartialEq<Lexeme<R>> for Lexeme<R> {
     self.id == other.id
   }
 }
-
 impl<R> Eq for Lexeme<R> {}
+impl<R> PartialOrd for Lexeme<R> {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+impl<R> Ord for Lexeme<R> {
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.id.cmp(&other.id)
+  }
+}
+
+impl<R> Hash for Lexeme<R> {
+  fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    u32::hash(&self.id, state)
+  }
+}
 
 /// Converts a lexeme into a string, for printing as a diagnostic.
 impl Lexeme<rule::Any> {

@@ -1,3 +1,4 @@
+use std::array;
 use std::fmt;
 use std::iter;
 use std::marker::PhantomData;
@@ -184,6 +185,19 @@ impl<'lex> Cursor<'lex> {
       }
     })
   }
+
+  pub(crate) fn fake_token(
+    spec: &'lex Spec,
+    tok: &'lex rt::Token,
+  ) -> token::Any<'lex> {
+    Self {
+      spec,
+      toks: array::from_ref(tok),
+      cursor: 0,
+    }
+    .next()
+    .unwrap()
+  }
 }
 
 impl fmt::Debug for Cursor<'_> {
@@ -232,6 +246,20 @@ impl<'lex> Iterator for Cursor<'lex> {
       }
 
       Kind::Open { offset_to_close } => {
+        if *offset_to_close == !0 {
+          // This was called from deep inside the lexer to generate a token
+          // name for a diagnostic, so we're just gonna give it a...
+          // stringifyable token.
+
+          return Some(token::Any::Bracket(token::Bracket {
+            open: tok.span,
+            close: tok.span,
+            lexeme: tok.lexeme.cast(),
+            spec: self.spec,
+            contents: *self,
+          }));
+        }
+
         let open_idx = self.cursor;
         let close_idx = open_idx + (*offset_to_close as usize);
         self.cursor = close_idx + 1;

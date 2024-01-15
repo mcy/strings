@@ -47,7 +47,7 @@ pub fn check_report(report: &Report, path: &(impl AsRef<Path> + ?Sized)) {
   };
 
   eprintln!("checking against {}...", path.display());
-  similar_asserts::assert_eq!(want, got);
+  similar_asserts::assert_eq!(got, want);
 }
 
 /// Checks that `report` contains no diagnostics.

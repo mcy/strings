@@ -1194,7 +1194,7 @@ impl<'lex> Any<'lex> {
       }
       (Some(pre), None) => yarn!("`{pre}`-prefixed {kind}"),
       (None, Some(suf)) => yarn!("`{suf}`-suffixed {kind}"),
-      (None, None) => yarn!("`{kind}`"),
+      (None, None) => yarn!("{kind}"),
     }
   }
 }

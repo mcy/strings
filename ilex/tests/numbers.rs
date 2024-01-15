@@ -7,14 +7,6 @@ ilex::spec! {
   struct Numbers {
     comma: Keyword = ',',
 
-    #[named = "decimal number"]
-    dec: Digital = Digital::new(10)
-      .separator('_')
-      .plus().minus()
-      .point_limit(0..2)
-      .exponents(["e", "E"], Digits::new(10).plus().minus())
-      .exponent("^", Digits::new(16).plus().minus()),
-
     #[named = "binary number"]
     bin: Digital = Digital::new(2)
       .separator('_')
@@ -22,14 +14,6 @@ ilex::spec! {
       .point_limit(0..2)
       .exponent("2", Digits::new(2).plus().minus())
       .prefixes(["0b", "0B", "%"]),
-
-    #[named = "octal number"]
-    oct: Digital = Digital::new(8)
-      .separator('_')
-      .plus().minus()
-      .point_limit(0..2)
-      .exponents(["p", "P"], Digits::new(10).plus().minus())
-      .prefixes(["0o", "0O", "0"]),
 
     #[named = "hexadecimal number"]
     hex: Digital = Digital::new(16)
@@ -39,13 +23,29 @@ ilex::spec! {
       .exponents(["p", "P"], Digits::new(10).plus().minus())
       .prefixes(["0x", "0X", "$"]),
 
-    #[named = "quatrenary number"]
+    #[named = "quaternary number"]
     qua: Digital = Digital::new(4)
       .separator('_')
       .plus().minus()
       .point_limit(0..2)
       .exponents(["p", "P"], Digits::new(10).plus().minus())
       .prefixes(["0q", "0Q"]),
+
+    #[named = "octal number"]
+    oct: Digital = Digital::new(8)
+      .separator('_')
+      .plus().minus()
+      .point_limit(0..2)
+      .exponents(["p", "P"], Digits::new(10).plus().minus())
+      .prefixes(["0o", "0O", "0"]),
+
+    #[named = "decimal number"]
+    dec: Digital = Digital::new(10)
+      .separator('_')
+      .plus().minus()
+      .point_limit(0..2)
+      .exponents(["e", "E"], Digits::new(10).plus().minus())
+      .exponent("^", Digits::new(16).plus().minus()),
   }
 }
 

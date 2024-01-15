@@ -174,6 +174,49 @@ impl Builtins<'_> {
     non_printable_note(found, diagnostic)
   }
 
+  /// Generates an "unclosed delimiter" diagnostic, for when a delimiter is
+  /// not closed before expected.
+  #[track_caller]
+  pub(crate) fn non_ascii_in_ident<'a>(
+    &self,
+    spec: &Spec,
+    expected: impl Into<Expected<'a>>,
+    at: impl ToLoc,
+  ) -> Diagnostic {
+    self
+      .0
+      .error(f!(
+        "unexpected non-ASCII characters in {}",
+        expected.into().for_user_diagnostic(spec, &self.0.ctx)
+      ))
+      .at(at)
+      .reported_at(Location::caller())
+  }
+
+  #[track_caller]
+  pub(crate) fn ident_too_small(
+    &self,
+    min_len: usize,
+    actual: usize,
+    at: impl ToLoc,
+  ) -> Diagnostic {
+    let diagnostic = self
+      .0
+      .error(f!(
+        "expected at least {min_len} character{} in identifier, but found {}",
+        plural(min_len),
+        if actual == 0 { yarn!("none") } else { yarn!("only {actual}") }
+      ))
+      .saying(at, f!("expected at least {min_len} here"))
+      .reported_at(Location::caller());
+
+    if actual == 0 {
+      diagnostic.help("this appears to be an empty identifier")
+    } else {
+      diagnostic
+    }
+  }
+
   /// Generates an "invalid escape sequence" diagnostic.
   #[track_caller]
   pub fn invalid_escape(

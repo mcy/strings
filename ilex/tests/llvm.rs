@@ -129,7 +129,7 @@ fn llvm() {
 
   Matcher::new()
     .prefix1(llvm.bare, "@", ".str")
-    .comments(["; Declare the string constant as a global constant."])
+    .comments(["; Declare the string constant as a global constant.\n"])
     .then1(llvm.equal, "=")
     .then1(llvm.private, "private")
     .then1(llvm.unnamed_addr, "unnamed_addr")
@@ -150,7 +150,7 @@ fn llvm() {
     )
     //
     .then1(llvm.declare, "declare")
-    .comments(["; External declaration of the puts function"])
+    .comments(["; External declaration of the puts function\n"])
     .prefix2(llvm.int, "i", 10, ["32"])
     .prefix2(llvm.quoted, "@", ('"', '"'), ["non trivial name"])
     .then2(
@@ -163,7 +163,7 @@ fn llvm() {
     .then1(llvm.nounwind, "nounwind")
     //
     .then1(llvm.define, "define")
-    .comments(["; Definition of main function"])
+    .comments(["; Definition of main function\n"])
     .prefix2(llvm.int, "i", 10, ["32"])
     .prefix1(llvm.bare, "@", "main")
     .then2(
@@ -181,7 +181,7 @@ fn llvm() {
       ("{", "}"),
       Matcher::new()
         .then1(llvm.call, "call")
-        .comments(["; Call puts function to write out the string to stdout."])
+        .comments(["; Call puts function to write out the string to stdout.\n"])
         .prefix2(llvm.int, "i", 10, ["32"])
         .prefix2(llvm.quoted, "@", ('"', '"'), ["non trivial name"])
         .then2(
@@ -197,7 +197,7 @@ fn llvm() {
     )
     //
     .prefix1(llvm.bare, "!", "0")
-    .comments(["; Named metadata"])
+    .comments(["; Named metadata\n"])
     .then1(llvm.equal, "=")
     .then2(
       llvm.meta,
@@ -254,7 +254,7 @@ fn llvm() {
         .prefix1(llvm.bare, "%", "BB_CONTINUE")
         //
         .suffix1(llvm.label_ident, "BB_EXIT", ":")
-        .comments(["; escapes %a"])
+        .comments(["; escapes %a\n"])
         //
         .then1(llvm.call, "call")
         .then1(llvm.void, "void")

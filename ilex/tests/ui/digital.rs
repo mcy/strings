@@ -80,6 +80,9 @@ fn invalid_digits() {
 
 ilex::spec! {
   struct Spec {
+    m1: Digital = Digital::new(16).prefix("0x"),
+    m2: Digital = Digital::new(8).prefix("0o"),
+
     m0: Digital = Digital::new(10)
       .point_limit(2..3)
       .point('/')
@@ -91,9 +94,6 @@ ilex::spec! {
           around_point: true,
           around_exp: true,
         }),
-
-    m1: Digital = Digital::new(16).prefix("0x"),
-    m2: Digital = Digital::new(8).prefix("0o"),
 
     n0: Digital = Digital::new(10)
     .prefix("all_ok@")

@@ -4,9 +4,6 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::RwLockReadGuard;
 
-use bitvec::bits;
-use bitvec::slice::BitSlice;
-use bitvec::vec::BitVec;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
@@ -33,7 +30,7 @@ pub struct Context {
 
 #[derive(Default)]
 pub struct State {
-  files: Vec<(Utf8PathBuf, String, BitVec)>,
+  files: Vec<(Utf8PathBuf, String)>,
 
   // Maps a span id to (start, end, file index).
   ranges: Vec<(Range, Offset)>,
@@ -98,27 +95,9 @@ impl Context {
                     // to point to in diagnostics; user code will never see
                     // it.
 
-    // Figure out which kind of character is at this byte offset. Each byte
-    // offset has two bits in the bit vector. The possible bitpatterns are:
-    // - 0b00, ordinary char.
-    // - 0b01, XID continue.
-    // - 0b10, not a char.
-    // - 0b11, XID start.
-    let mut kinds = BitVec::new();
-    for c in text.chars() {
-      use unicode_xid::UnicodeXID as _;
-
-      kinds.push(c.is_xid_continue());
-      kinds.push(c.is_xid_start());
-      for _ in 1..c.len_utf8() {
-        kinds.push(false);
-        kinds.push(true);
-      }
-    }
-
     let idx = {
       let mut state = self.state.write().unwrap();
-      state.files.push((name.into(), text, kinds));
+      state.files.push((name.into(), text));
       state.files.len() - 1
     };
 
@@ -157,18 +136,14 @@ impl Context {
     }
 
     let state = self.state.read().unwrap();
-    let (path, text, kinds) = state.files.get(idx)?;
-    let (path, text, kinds) = unsafe {
+    let (path, text) = state.files.get(idx)?;
+    let (path, text) = unsafe {
       // SAFETY: The pointer to the file's text is immutable and pointer-stable,
       // so we can safely extend its lifetime here.
-      (
-        &*(path.as_path() as *const Utf8Path),
-        &*(text.as_str() as *const str),
-        &*(kinds.as_bitslice() as *const BitSlice),
-      )
+      (&*(path.as_path() as *const Utf8Path), &*(text.as_str() as *const str))
     };
 
-    Some(File { path, text, kinds, ctx: self, idx })
+    Some(File { path, text, ctx: self, idx })
   }
 
   /// Gets the number of files currently tracked by this source context.
@@ -324,7 +299,6 @@ impl Context {
     File {
       path: Utf8Path::new("<scratch>"),
       text: "",
-      kinds: bits![static 0; 0],
       ctx: self,
       idx: !0,
     }
