@@ -8,7 +8,6 @@ use byteyarn::Yarn;
 use twie::Trie;
 
 use crate::f;
-use crate::file::IsXid;
 use crate::token;
 use crate::Never;
 use crate::WrongKind;
@@ -498,38 +497,6 @@ impl Ident {
   }
 
   affixes!();
-
-  pub(crate) fn is_valid_start(&self, c: char, is_xid: IsXid) -> bool {
-    if !self.ascii_only && is_xid != IsXid::No {
-      return true;
-    }
-
-    if c.is_ascii_alphabetic() || c == '_' {
-      return true;
-    }
-
-    if self.extra_starts.contains(c) || self.extra_continues.contains(c) {
-      return true;
-    }
-
-    false
-  }
-
-  pub(crate) fn is_valid_continue(&self, c: char, is_xid: IsXid) -> bool {
-    if !self.ascii_only && is_xid == IsXid::Continue {
-      return true;
-    }
-
-    if c.is_ascii_alphanumeric() || c == '_' {
-      return true;
-    }
-
-    if self.extra_continues.contains(c) {
-      return true;
-    }
-
-    false
-  }
 }
 
 impl Rule for Ident {
@@ -615,12 +582,20 @@ impl Quoted {
   ///     ("\\", '\\'),
   ///   ]);
   /// ```
-  pub fn escapes<Y: Into<Yarn>, R: Into<Escape>>(
+  pub fn escapes<Y: Into<Yarn>, Esc: Into<Escape>>(
     mut self,
-    xs: impl IntoIterator<Item = (Y, R)>,
+    xs: impl IntoIterator<Item = (Y, Esc)>,
   ) -> Self {
-    for (y, r) in xs {
-      self.escapes.insert(&y.into(), r.into());
+    for (y, e) in xs {
+      let esc = e.into();
+      if let Escape::Bracketed { bracket, .. } = &esc {
+        assert!(
+          matches!(&bracket.kind, BracketKind::Paired(..)),
+          "Quoted::escapes() does not support non-paired brackets yet"
+        )
+      };
+
+      self.escapes.insert(&y.into(), esc);
     }
     self
   }

@@ -11,9 +11,13 @@ use crate::spec::Spec;
 use crate::token;
 use crate::token::Content;
 
-pub mod emit;
-pub mod find;
+mod emit2;
 pub mod lexer;
+mod unicode;
+
+mod dfa;
+pub use dfa::compile;
+pub use dfa::Dfa;
 
 pub fn lex<'spec>(
   file: File,
@@ -36,17 +40,18 @@ pub fn lex<'spec>(
         continue;
       }
 
-      if let Some(best) = find::find(&lexer) {
-        if let Some(start) = unexpected_start.take() {
-          lexer.add_unexpected(start, lexer.cursor());
+      emit2::emit(&mut lexer);
+      if lexer.cursor() != start {
+        if let Some(ustart) = unexpected_start.take() {
+          lexer.add_unexpected(ustart, start);
         }
 
-        emit::emit(&mut lexer, best);
-        unexpected_start = None;
         continue;
-      } else if unexpected_start.is_none() {
-        // We failed to make progress. Skip this character and start an
-        // "unexpected" token.
+      }
+
+      // We failed to make progress. Skip this character and start an
+      // "unexpected" token.
+      if unexpected_start.is_none() {
         unexpected_start = Some(lexer.cursor());
       }
     }

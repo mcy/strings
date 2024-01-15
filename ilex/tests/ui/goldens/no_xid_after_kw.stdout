@@ -1,9 +1,8 @@
-error: extraneous characters after `null`
- --> <input>:1:10
+error: unexpected closing `nullable`
+ --> <input>:1:6
   |
 1 | null nullable
-  |          ^^^^
-  |         -- help: maybe you meant to include a space here
+  |      ^^^^^^^^ expected to be opened by `--nullable`
   |
 
 error: aborting due to previous error

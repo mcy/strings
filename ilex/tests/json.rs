@@ -227,6 +227,7 @@ fn parse(data: &str) -> Result<Json, impl fmt::Debug> {
   let json = JsonSpec::get();
 
   let ctx = ilex::Context::new();
+  let _u = ctx.use_for_debugging_spans();
   let report = ctx.new_report();
   let stream = ctx
     .new_file("<i>", data)

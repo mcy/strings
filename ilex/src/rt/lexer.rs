@@ -3,18 +3,20 @@ use std::ops::Index;
 use std::ops::RangeBounds;
 
 use byteyarn::Yarn;
+use regex_automata::hybrid::dfa::Cache;
 
 use crate::f;
 use crate::file::File;
 use crate::file::Span;
 use crate::report::Report;
 use crate::rt;
-use crate::rt::find;
 use crate::rule;
 use crate::rule::Bracket;
 use crate::spec::Lexeme;
 use crate::spec::Spec;
 use crate::token;
+
+use super::unicode::is_xid;
 
 /// The lexer state struct, that tracks everything going on during a lexing
 /// operation.
@@ -29,6 +31,7 @@ pub struct Lexer<'a, 'spec, 'ctx> {
   comments: Vec<Span>,
 
   eof: Span,
+  cache: Cache,
 }
 
 /// Yet-unclosed brackets.
@@ -44,6 +47,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   pub fn new(file: File<'ctx>, report: &'a Report, spec: &'spec Spec) -> Self {
     Lexer {
       eof: file.loc(file.len()..file.len()).bake(file.context()),
+      cache: Cache::new(&spec.dfa().engine),
 
       file,
       report,
@@ -71,12 +75,12 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   }
 
   /// Returns the spec we're lexing against.
-  pub fn spec(&self) -> &Spec {
+  pub fn spec(&self) -> &'spec Spec {
     self.spec
   }
 
   /// Returns the spec we're lexing against.
-  pub fn file(&self) -> File {
+  pub fn file(&self) -> File<'ctx> {
     self.file
   }
 
@@ -94,7 +98,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   }
 
   /// Returns everything after the current cursor position.
-  pub fn rest(&self) -> &str {
+  pub fn rest(&self) -> &'ctx str {
     self.text(self.cursor..)
   }
 
@@ -106,6 +110,14 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   /// Creates a new span in the current file with the given range.
   pub fn mksp(&mut self, range: impl RangeBounds<usize>) -> Span {
     self.file.loc(range).bake(self.file.context())
+  }
+
+  pub fn cache(&mut self) -> &mut Cache {
+    &mut self.cache
+  }
+
+  pub fn last_token(&self) -> &rt::Token {
+    self.tokens.last().unwrap()
   }
 
   /// Pushes a closer.
@@ -151,18 +163,26 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
     }
     let open_sp = self.tokens[close.open_idx].span;
 
-    if let Some(len) = find::expect_non_xid(self, self.cursor()) {
-      let sp = self.mksp(self.cursor()..self.cursor() + len);
-      self.report().builtins().extra_chars(
-        self.spec(),
-        self.spec().rule_name_or(
-          close.lexeme.any(),
-          f!("{} ... {}", open_sp.text(self.file.context()), close.close),
-        ),
-        sp,
-      );
+    let prev = self.rest().chars().next_back();
+    if prev.is_some_and(is_xid) {
+      let xids = self
+        .rest()
+        .find(|c| !is_xid(c))
+        .unwrap_or(self.rest().len());
+      if xids > 0 {
+        let start = self.cursor();
+        self.advance(xids);
 
-      self.advance(len);
+        let span = self.mksp(start..self.cursor());
+        self.report().builtins().extra_chars(
+          self.spec(),
+          self.spec().rule_name_or(
+            close.lexeme.any(),
+            f!("{} ... {}", open_sp.text(self.file.context()), close.close),
+          ),
+          span,
+        );
+      }
     }
 
     let span = self.mksp(start..self.cursor);

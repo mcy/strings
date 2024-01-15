@@ -29,7 +29,7 @@ fn greedy() {
     poisonous
     poisonous[xyz]>
     poisonous#%#%[xyz]#%#%>
-    poisonous[xyz]
+    poisonous [xyz]
     R"cc(some c++)" )cc"
   "#;
 

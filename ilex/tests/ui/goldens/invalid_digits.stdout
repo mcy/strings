@@ -19,7 +19,7 @@ error: unexpected `a` in number
   |
 5 | 0/0/aa11g
   |     ^
-  | -------- help: because this value is decimal (base 10), digits should be within '0'..='9'
+  | --------- help: because this value is decimal (base 10), digits should be within '0'..='9'
   |
 
 error: unexpected `a` in number
@@ -27,15 +27,15 @@ error: unexpected `a` in number
   |
 5 | 0/0/aa11g
   |      ^
-  | -------- help: because this value is decimal (base 10), digits should be within '0'..='9'
+  | --------- help: because this value is decimal (base 10), digits should be within '0'..='9'
   |
 
-error: extraneous character after number
+error: unexpected `g` in number
  --> <input>:5:9
   |
 5 | 0/0/aa11g
   |         ^
-  |        -- help: maybe you meant to include a space here
+  | --------- help: because this value is decimal (base 10), digits should be within '0'..='9'
   |
 
 error: aborting due to 5 errors
