@@ -222,7 +222,6 @@ macro_rules! bug {
 pub(crate) use format_args as f;
 
 mod file;
-mod range;
 mod rt;
 mod spec;
 
@@ -238,6 +237,7 @@ pub use {
   crate::{
     file::Context,
     file::File,
+    file::{Range, Ranged},
     file::{Span, Spanned},
     report::{Fatal, Report},
     rule::Rule,

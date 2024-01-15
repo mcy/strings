@@ -10,12 +10,10 @@ use byteyarn::YarnBox;
 
 use crate::f;
 use crate::file::Context;
+use crate::file::Ranged;
 use crate::plural;
-use crate::range::Range;
 use crate::report::Diagnostic;
-use crate::report::Loc;
 use crate::report::Report;
-use crate::report::ToLoc;
 use crate::rule;
 use crate::spec::Lexeme;
 use crate::spec::Spec;
@@ -34,7 +32,7 @@ impl Builtins<'_> {
     spec: &Spec,
     found: impl Into<Expected<'a>>,
     unexpected_in: impl Into<Expected<'b>>,
-    at: impl ToLoc,
+    at: impl Ranged,
   ) -> Diagnostic {
     let found = found.into();
 
@@ -52,8 +50,8 @@ impl Builtins<'_> {
   }
 
   #[track_caller]
-  pub(crate) fn unexpected_token(&self, at: impl ToLoc) -> Diagnostic {
-    let at = at.to_loc(&self.0.ctx);
+  pub(crate) fn unexpected_token(&self, at: impl Ranged) -> Diagnostic {
+    let at = at.range(&self.0.ctx);
     let found = at.text(&self.0.ctx);
 
     let diagnostic = self
@@ -70,9 +68,9 @@ impl Builtins<'_> {
     &self,
     spec: &Spec,
     unexpected_in: impl Into<Expected<'a>>,
-    at: impl ToLoc,
+    at: impl Ranged,
   ) -> Diagnostic {
-    let at = at.to_loc(&self.0.ctx);
+    let at = at.range(&self.0.ctx);
     let found = at.text(&self.0.ctx);
 
     let diagnostic = self
@@ -84,13 +82,8 @@ impl Builtins<'_> {
       ))
       .at(at)
       .remark(
-        Loc {
-          file: at.file,
-          range: Range(
-            at.range.start.saturating_sub(1),
-            at.range.start.saturating_add(1),
-          ),
-        },
+        at.file(&self.0.ctx)
+          .range(at.start().saturating_sub(1)..at.start().saturating_add(1)),
         "maybe you meant to include a space here",
       )
       .reported_at(Location::caller());
@@ -106,7 +99,7 @@ impl Builtins<'_> {
     spec: &Spec,
     expected: impl IntoIterator<Item = E>,
     found: impl Into<Expected<'b>>,
-    at: impl ToLoc,
+    at: impl Ranged,
   ) -> Diagnostic {
     let expected = expected.into_iter().map(Into::into).collect::<Vec<_>>();
     let alts = disjunction_to_string(spec, &self.0.ctx, &expected);
@@ -132,7 +125,7 @@ impl Builtins<'_> {
     spec: &Spec,
     expected: &str,
     found: impl Into<Expected<'a>>,
-    at: impl ToLoc,
+    at: impl Ranged,
   ) -> Diagnostic {
     let found = found.into();
 
@@ -154,10 +147,10 @@ impl Builtins<'_> {
   pub(crate) fn unclosed<'a>(
     &self,
     spec: &Spec,
-    open: impl ToLoc,
+    open: impl Ranged,
     expected: &str,
     found: impl Into<Expected<'a>>,
-    at: impl ToLoc,
+    at: impl Ranged,
   ) -> Diagnostic {
     let found = found.into();
 
@@ -181,7 +174,7 @@ impl Builtins<'_> {
     &self,
     spec: &Spec,
     expected: impl Into<Expected<'a>>,
-    at: impl ToLoc,
+    at: impl Ranged,
   ) -> Diagnostic {
     self
       .0
@@ -198,7 +191,7 @@ impl Builtins<'_> {
     &self,
     min_len: usize,
     actual: usize,
-    at: impl ToLoc,
+    at: impl Ranged,
   ) -> Diagnostic {
     let diagnostic = self
       .0
@@ -221,11 +214,11 @@ impl Builtins<'_> {
   #[track_caller]
   pub fn invalid_escape(
     &self,
-    at: impl ToLoc,
+    at: impl Ranged,
     why: impl fmt::Display,
   ) -> Diagnostic {
-    let at = at.to_loc(&self.0.ctx);
-    let seq = &&self.0.ctx.file(at.file).unwrap().text(at.range.bounds());
+    let at = at.range(&self.0.ctx);
+    let seq = at.text(&self.0.ctx);
     self
       .0
       .error(f!("found an invalid escape sequence: `{seq}`"))
@@ -239,7 +232,7 @@ impl Builtins<'_> {
     &self,
     spec: &Spec,
     what: impl Into<Expected<'a>>,
-    at: impl ToLoc,
+    at: impl Ranged,
     range: &impl RangeBounds<N>,
     min: &dyn fmt::Display,
     max: &dyn fmt::Display,

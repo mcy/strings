@@ -101,7 +101,6 @@ pub enum Kind {
 
 #[derive(Clone)]
 pub struct DigitBlocks {
-  pub span: Option<Span>,
   pub prefix: Option<Span>,
   pub sign: Option<(Sign, Span)>,
   pub blocks: Vec<Span>,

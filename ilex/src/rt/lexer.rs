@@ -6,7 +6,9 @@ use byteyarn::Yarn;
 use regex_automata::hybrid::dfa::Cache;
 
 use crate::f;
+use crate::file::Context;
 use crate::file::File;
+use crate::file::Range;
 use crate::file::Span;
 use crate::report::Report;
 use crate::rt;
@@ -46,7 +48,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   /// Creates a new lexer.
   pub fn new(file: File<'ctx>, report: &'a Report, spec: &'spec Spec) -> Self {
     Lexer {
-      eof: file.loc(file.len()..file.len()).bake(file.context()),
+      eof: file.range(file.len()..file.len()).mksp(file.context()),
       cache: Cache::new(&spec.dfa().engine),
 
       file,
@@ -107,9 +109,19 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
     self.eof
   }
 
+  /// Creates a new range in the current file.
+  pub fn range(&self, range: impl RangeBounds<usize>) -> Range {
+    self.file.range(range)
+  }
+
+  /// Creates a new range in the current file and bakes it.
+  pub fn mksp(&self, range: impl RangeBounds<usize>) -> Span {
+    self.file.range(range).mksp(self.ctx())
+  }
+
   /// Creates a new span in the current file with the given range.
-  pub fn mksp(&mut self, range: impl RangeBounds<usize>) -> Span {
-    self.file.loc(range).bake(self.file.context())
+  pub fn ctx(&self) -> &'ctx Context {
+    self.file().context()
   }
 
   pub fn cache(&mut self) -> &mut Cache {
@@ -173,7 +185,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
         let start = self.cursor();
         self.advance(xids);
 
-        let span = self.mksp(start..self.cursor());
+        let span = self.range(start..self.cursor());
         self.report().builtins().extra_chars(
           self.spec(),
           self.spec().rule_name_or(
@@ -185,7 +197,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
       }
     }
 
-    let span = self.mksp(start..self.cursor);
+    let span = self.range(start..self.cursor).mksp(self.ctx());
     if idx != self.closers.len() {
       // This is a so-called "mixed delimiter", and an error we need to
       // diagnose.
@@ -230,7 +242,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
     while let Some(c) = self.text(idx..end).chars().next() {
       if c.is_whitespace() {
         if idx > start {
-          let span = self.mksp(start..idx);
+          let span = self.range(start..idx);
           self.report().builtins().unexpected_token(span);
         }
         start = idx + c.len_utf8();
@@ -240,7 +252,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
     }
 
     if idx > start {
-      let span = self.mksp(start..idx);
+      let span = self.range(start..idx);
       self.report().builtins().unexpected_token(span);
     }
   }

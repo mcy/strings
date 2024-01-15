@@ -13,10 +13,10 @@ error: unexpected digit separator in `no_suffix@`-prefixed number
   |
 
 error: unexpected digit separator in `no_point@`-prefixed number
- --> <input>:5:14
+ --> <input>:5:15
   |
 5 | no_point@_123_._456_e_789_._012_
-  |              ^
+  |               ^
   |
 
 error: unexpected digit separator in `no_point@`-prefixed number
@@ -27,10 +27,10 @@ error: unexpected digit separator in `no_point@`-prefixed number
   |
 
 error: unexpected digit separator in `no_point@`-prefixed number
- --> <input>:5:26
+ --> <input>:5:27
   |
 5 | no_point@_123_._456_e_789_._012_
-  |                          ^
+  |                           ^
   |
 
 error: unexpected digit separator in `no_point@`-prefixed number
@@ -41,10 +41,10 @@ error: unexpected digit separator in `no_point@`-prefixed number
   |
 
 error: unexpected digit separator in `no_exp@`-prefixed number
- --> <input>:6:18
+ --> <input>:6:19
   |
 6 | no_exp@_123_._456_e_789_._012_
-  |                  ^
+  |                   ^
   |
 
 error: unexpected digit separator in `no_exp@`-prefixed number
