@@ -70,7 +70,7 @@ impl<'ctx> File<'ctx> {
     self.ctx
   }
 
-  /// Creates a new [`Loc`] for diagnostics from this file.
+  /// Creates a new [`Span`] for diagnostics from this file.
   ///
   /// # Panics
   ///

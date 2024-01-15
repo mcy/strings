@@ -179,7 +179,7 @@ impl Bracket {
   /// and then a `close_end`.
   ///
   /// To specify the exact syntax from Rust, you would write
-  /// `Bracket::rust_raw_string(('#', 0), ('r', '"'), ('"', ""))`.
+  /// `Bracket::rust_style(('#', 0), ('r', '"'), ('"', ""))`.
   ///
   /// # Panics
   ///
@@ -222,13 +222,13 @@ impl Bracket {
   /// A C++ raw string-like bracket. This corresponds to `R"xyz(foo)xyz"` raw
   /// strings in C++.
   ///
-  /// This is similar to [`Bracket::rust_raw_string()`], but for C++'s raw
+  /// This is similar to [`Bracket::rust_style()`], but for C++'s raw
   /// strings. Instead of parsing repeated copies of some string, we parse a
   /// whole identifier (prefixes and suffixes and all) and expect it to be at
   /// the other end.
   ///
   /// To specify the exact syntax from C++, you would write
-  /// `Bracket::cxx_raw_string(Ident::new(), ("R\"", '('), (')', '"'))`.
+  /// `Bracket::cxx_style(Ident::new(), ("R\"", '('), (')', '"'))`.
   ///
   /// # Panics
   ///
@@ -778,7 +778,7 @@ pub struct Digital {
 /// There is no configuration for whether the separator is permitted
 /// "internally", since that is always allowed. (e.g., `1_000`).
 ///
-/// See [`Digital::separator_in()`].
+/// See [`Digital::separator_with()`].
 #[derive(Debug)]
 pub struct SeparatorCornerCases {
   /// As a prefix to the whole [`Digital`] (after the sign and prefix). E.g.,
@@ -1060,8 +1060,8 @@ impl TryFrom<Any> for Digital {
 /// A comment rule.
 ///
 /// Comments do not generate tokens, unlike most rules. Instead, they are
-/// attached to the overall span of a token, and can be inspected through
-/// [`SpanId::comments()`][crate::SpanId::comments].
+/// attached to the span of a token, and can be inspected through
+/// [`Span::comments()`][crate::Span::comments].
 #[derive(Debug)]
 pub struct Comment(pub(crate) CommentKind);
 

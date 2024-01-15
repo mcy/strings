@@ -960,8 +960,7 @@ impl<'lex> Quoted<'lex> {
   ///
   /// There are two kinds of content: either a literal span of Unicode scalars
   /// (represented as a [`SpanId`] pointing to those characters) or a single
-  /// escaped "code", which is an arbitrary `u32` value produced by a callback
-  /// in an [`Escape`][crate::rule::Escape].
+  /// escape, potentially with some side data.
   ///
   /// It is up to the user of the library to decode these two content types into
   /// strings. [`Quoted::to_utf8()`] helps with the common case of doing this for
