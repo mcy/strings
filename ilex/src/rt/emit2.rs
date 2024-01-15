@@ -654,21 +654,22 @@ pub fn emit(lexer: &mut Lexer) {
 
           let esc_start = lexer.cursor();
           lexer.advance(esc.len());
+          let esc = lexer.mksp(esc_start..lexer.cursor());
           let value = match rule {
             rule::Escape::Invalid => {
               lexer.report().builtins().invalid_escape(
                 lexer.range(esc_start..lexer.cursor()),
                 "invalid escape sequence",
               );
-              !0
+              None
             }
 
-            rule::Escape::Literal(lit) => *lit,
+            rule::Escape::Basic => None,
 
-            rule::Escape::Fixed { char_count, parse } => {
+            rule::Escape::Fixed(chars) => {
               let arg_start = lexer.cursor();
               let mut count = 0;
-              for _ in 0..*char_count {
+              for _ in 0..*chars {
                 // TRICKY: We have just skipped over \x. If we were to take *any*
                 // characters, we would lex `"\x" ` as being `\x` with arg `" `.
                 // So, we want to check for a closer on *every* loop iteration, and
@@ -684,43 +685,26 @@ pub fn emit(lexer: &mut Lexer) {
                 count += 1;
               }
 
-              if count != *char_count {
+              if count != *chars {
                 lexer.report().builtins().invalid_escape(
                   lexer.range(esc_start..lexer.cursor()),
                   f!(
-                    "expected exactly {char_count} character{} here",
-                    plural(*char_count)
+                    "expected exactly {chars} character{} here",
+                    plural(*chars)
                   ),
                 );
               }
 
-              let data = lexer.text(arg_start..lexer.cursor());
-              match parse(data) {
-                Ok(code) => code,
-                Err(msg) => {
-                  lexer.report().builtins().invalid_escape(
-                    lexer.range(esc_start..lexer.cursor()),
-                    msg,
-                  );
-                  !0
-                }
-              }
+              Some(lexer.mksp(arg_start..lexer.cursor()))
             }
 
-            rule::Escape::Bracketed { bracket, parse } => 'delim: {
-              let BracketKind::Paired(open, close) = &bracket.kind else {
-                bug!("sorry, only BracketKind::Pair is supported for now");
-              };
-
-              // TODO: Use a DFA here? This is a bit of a painful API; perhaps
-              // it's not worth supporting more complicated escapes...
-
+            rule::Escape::Bracketed(open, close) => 'delim: {
               if !lexer.rest().starts_with(open.as_str()) {
                 lexer.report().builtins().invalid_escape(
                   lexer.range(esc_start..lexer.cursor()),
                   f!("expected a `{open}`"),
                 );
-                break 'delim !0;
+                break 'delim None;
               } else {
                 lexer.advance(open.len());
               }
@@ -731,25 +715,14 @@ pub fn emit(lexer: &mut Lexer) {
                   lexer.range(esc_start..lexer.cursor()),
                   f!("expected a `{close}`"),
                 );
-                break 'delim !0;
+                break 'delim None;
               };
-              lexer.advance(len);
-              let data = lexer.text(arg_start..lexer.cursor());
-              match parse(data) {
-                Ok(code) => code,
-                Err(msg) => {
-                  lexer.report().builtins().invalid_escape(
-                    lexer.range(esc_start..lexer.cursor()),
-                    msg,
-                  );
-                  !0
-                }
-              }
+              lexer.advance(len + close.len());
+              Some(lexer.mksp(arg_start..lexer.cursor() - close.len()))
             }
           };
 
-          content
-            .push(Content::Esc(lexer.mksp(esc_start..lexer.cursor()), value));
+          content.push(Content::Esc(esc, value));
           chunk_start = lexer.cursor();
         };
 
@@ -796,7 +769,7 @@ pub fn emit(lexer: &mut Lexer) {
             open: range.mksp(ctx),
             close: lexer.mksp(uq_end..suf_start),
           },
-          span,
+          span: lexer.mksp(span.range(ctx).start()..lexer.cursor()),
           lexeme: best.lexeme,
           prefix,
           suffix,

@@ -966,23 +966,8 @@ impl<'lex> Quoted<'lex> {
   /// in an [`Escape`][crate::rule::Escape].
   ///
   /// It is up to the user of the library to decode these two content types into
-  /// strings. This is one way it could be done for a Unicode string (of
-  /// unspecified target encoding, although the compiler encoding is UTF-8
-  /// here):
-  ///
-  /// ```
-  /// # use ilex::token::{Content, Quoted};
-  /// fn decode_unicode(q: Quoted, ctx: &ilex::Context) -> String {
-  ///   let mut out = String::new();
-  ///   for chunk in q.raw_content() {
-  ///     match chunk {
-  ///       Content::Lit(span) => out.push_str(span.text(ctx)),
-  ///       Content::Esc(_, code) => out.push(char::from_u32(code).unwrap()),
-  ///     }
-  ///   }
-  ///   out
-  /// }
-  /// ```
+  /// strings. [`Quoted::to_utf8()`] helps with the common case of doing this for
+  /// UTF-8 strings.
   pub fn raw_content(self) -> impl Iterator<Item = Content> + 'lex {
     self.content_slice().iter().copied()
   }
@@ -992,7 +977,7 @@ impl<'lex> Quoted<'lex> {
   pub fn to_utf8(
     self,
     ctx: &Context,
-    mut esc2str: impl FnMut(u32, &mut String),
+    mut decode_esc: impl FnMut(Span, Option<Span>, &mut String),
   ) -> String {
     let total = self
       .raw_content()
@@ -1006,7 +991,7 @@ impl<'lex> Quoted<'lex> {
     for chunk in self.raw_content() {
       match chunk {
         Content::Lit(sp) => buf.push_str(sp.text(ctx)),
-        Content::Esc(_, code) => esc2str(code, &mut buf),
+        Content::Esc(sp, data) => decode_esc(sp, data, &mut buf),
       }
     }
     buf
@@ -1044,15 +1029,14 @@ impl<'lex> Quoted<'lex> {
 ///
 /// The "span type" is configurable; this type is used by multiple parts of
 /// the library.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Content<Span = self::Span> {
   /// A literal chunk, i.e. UTF-8 text directly from the source file.
   Lit(Span),
 
-  /// An escape sequence (which may be invalid, check your [`Report`][crate::Report]),
-  /// and the span that contained the original contents. E.g. something like
-  /// `Esc("\\n", '\n' as u32)`.
-  Esc(Span, u32),
+  /// An escape sequence, which may have associated data (e.g. the `NN` from a
+  /// `\xNN`).
+  Esc(Span, Option<Span>),
 }
 
 impl<Span> Content<Span> {
@@ -1062,17 +1046,13 @@ impl<Span> Content<Span> {
   }
 
   /// Escaped contents.
-  pub fn esc(chunk: impl Into<Span>, code: impl Into<u32>) -> Self {
-    Self::Esc(chunk.into(), code.into())
+  pub fn esc(chunk: impl Into<Span>) -> Self {
+    Self::Esc(chunk.into(), None)
   }
-}
 
-impl<Span: fmt::Debug> fmt::Debug for Content<Span> {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      Self::Lit(s) => fmt::Debug::fmt(s, f),
-      Self::Esc(s, c) => write!(f, "Esc({s:?} -> 0x{c:04x})"),
-    }
+  /// Escaped contents.
+  pub fn esc_with_data(chunk: impl Into<Span>, data: impl Into<Span>) -> Self {
+    Self::Esc(chunk.into(), Some(data.into()))
   }
 }
 

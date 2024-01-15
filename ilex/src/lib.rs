@@ -38,7 +38,6 @@ use ilex::Lexeme;
 use ilex::rule::Keyword;
 use ilex::rule::Bracket;
 use ilex::rule::Quoted;
-use ilex::rule::Escape;
 use ilex::rule::Digital;
 use ilex::rule::Digits;
 
@@ -88,20 +87,12 @@ let json = Json {
   string: spec.named_rule(
     "string",
     Quoted::new('"')
-      .escape("\\", Escape::Invalid)
+      .invalid_escape(r"\")
       .escapes([
-        ("\\\"", '\"'), (r"\", '\\'), (r"\/", '/'),
-        (r"\b", '\x08'), (r"\f", '\x0C'),
-        (r"\n", '\n'), (r"\t", '\t'), (r"\r", '\r'),
+        "\\\"", r"\\", r"\/",
+        r"\b", r"\f",  r"\n", r"\t", r"\r",
       ])
-      .escape(
-        r"\u",
-        Escape::Fixed {
-          char_count: 4,
-          parse: Box::new(|hex| u32::from_str_radix(hex, 16)
-            .map_err(|_| "expected hexadecimal".into())),
-        },
-      ),
+      .fixed_length_escape(r"\u", 4),
   ),
 
   // A digital rule is something that, resembles a number! Digitals are of a
@@ -126,7 +117,6 @@ let json = Json {
 use ilex::rule::Keyword;
 use ilex::rule::Bracket;
 use ilex::rule::Quoted;
-use ilex::rule::Escape;
 use ilex::rule::Digital;
 use ilex::rule::Digits;
 
@@ -142,25 +132,12 @@ ilex::spec! {
     #[named] array: Bracket = ('[', ']'),
     #[named] object: Bracket = ('{','}'),
     #[named] string: Quoted = Quoted::new('"')
-      .escape(r"\", Escape::Invalid)
+      .invalid_escape(r"\")
       .escapes([
-        ("\\\"", '\"'),
-        (r"\\", '\\'),
-        (r"\/", '/'),
-        (r"\b", '\x08'),
-        (r"\f", '\x0c'),
-        (r"\n", '\n'),
-        (r"\t", '\t'),
-        (r"\r", '\r'),
+        "\\\"", r"\\", r"\/",
+        r"\b", r"\f",  r"\n", r"\t", r"\r",
       ])
-      .escape(
-        r"\u",
-        Escape::Fixed {
-          char_count: 4,
-          parse: Box::new(|hex| u32::from_str_radix(hex, 16)
-            .map_err(|_| "expected hexadecimal".into())),
-        },
-      ),
+      .fixed_length_escape(r"\u", 4),
 
     #[named] number: Digital = Digital::new(10)
       .minus()

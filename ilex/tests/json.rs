@@ -2,6 +2,7 @@ use core::fmt;
 use std::fmt::Write;
 
 use ilex::fp::Fp64;
+use ilex::report::Expected;
 use ilex::report::Report;
 use ilex::rule::*;
 use ilex::testing::DigitalMatcher;
@@ -18,28 +19,16 @@ ilex::spec! {
     false_: Keyword = "false",
     null: Keyword = "null",
 
+
     #[named] array: Bracket = ('[', ']'),
     #[named] object: Bracket = ('{','}'),
     #[named] string: Quoted = Quoted::new('"')
-      .escape(r"\", Escape::Invalid)
+      .invalid_escape(r"\")
       .escapes([
-        ("\\\"", '\"'),
-        (r"\\", '\\'),
-        (r"\/", '/'),
-        (r"\b", '\x08'),
-        (r"\f", '\x0c'),
-        (r"\n", '\n'),
-        (r"\t", '\t'),
-        (r"\r", '\r'),
+        "\\\"", r"\\", r"\/",
+        r"\b", r"\f",  r"\n", r"\t", r"\r",
       ])
-      .escape(
-        r"\u",
-        Escape::Fixed {
-          char_count: 4,
-          parse: Box::new(|hex| u32::from_str_radix(hex, 16)
-            .map_err(|_| "expected hexadecimal".into())),
-        },
-      ),
+      .fixed_length_escape(r"\u", 4),
 
     #[named] number: Digital = Digital::new(10)
       .minus()
@@ -138,27 +127,23 @@ fn check_tokens() {
           json.object,
           ("{", "}"),
           Matcher::new()
-            .then2(
-              json.string,
-              ('"', '"'),
-              [C::lit("escapes"), C::esc(r"\n", '\n')],
-            )
+            .then2(json.string, ('"', '"'), [C::lit("escapes"), C::esc(r"\n")])
             .then1(json.colon, ":")
             .then2(
               json.string,
               ('"', '"'),
               [
-                C::esc("\\\"", '\"'),
-                C::esc(r"\\", '\\'),
-                C::esc(r"\/", '/'),
-                C::esc(r"\b", 0x8_u32),
-                C::esc(r"\f", 0xc_u32),
-                C::esc(r"\n", '\n'),
-                C::esc(r"\t", '\t'),
-                C::esc(r"\r", '\r'),
-                C::esc(r"\u0000", 0x0000_u32),
-                C::esc(r"\u1234", 0x1234_u32),
-                C::esc(r"\uffff", 0xffff_u32),
+                C::esc("\\\""),
+                C::esc(r"\\"),
+                C::esc(r"\/"),
+                C::esc(r"\b"),
+                C::esc(r"\f"),
+                C::esc(r"\n"),
+                C::esc(r"\t"),
+                C::esc(r"\r"),
+                C::esc_with_data(r"\u", "0000"),
+                C::esc_with_data(r"\u", "1234"),
+                C::esc_with_data(r"\u", "ffff"),
               ],
             ),
         ),
@@ -244,20 +229,46 @@ fn parse0(
   json: &JsonSpec,
   cursor: &mut Cursor,
 ) -> Json {
-  fn quote2str(ctx: &ilex::Context, str: token::Quoted) -> String {
-    // This is sloppy about surrogates but this is just an example.
-    str.to_utf8(ctx, |code, buf| {
-      for c in char::decode_utf16([code as u16]) {
-        buf.push(c.unwrap_or('😢'))
-      }
+  let quote2str = |str: token::Quoted| -> String {
+    str.to_utf8(ctx, |key, data, buf| {
+      let char = match key.text(ctx) {
+        "\\\"" => '\"',
+        r"\\" => '\\',
+        r"\/" => '/',
+        r"\b" => '\x08',
+        r"\f" => '\x0c',
+        r"\n" => '\n',
+        r"\t" => '\t',
+        r"\r" => '\r',
+        // This is sloppy about surrogates but this is just an example.
+        r"\u" => {
+          let data = data.unwrap();
+          let code =
+            u16::from_str_radix(data.text(ctx), 16).unwrap_or_else(|_| {
+              report.builtins().expected(
+                json.spec(),
+                [Expected::Name("hex-encoded u16".into())],
+                data.text(ctx),
+                data,
+              );
+              0
+            });
+          for c in char::decode_utf16([code]) {
+            buf.push(c.unwrap_or('😢'))
+          }
+          return;
+        }
+        esc => panic!("{}", esc),
+      };
+      buf.push(char);
     })
-  }
+  };
 
-  token::switch()
+  let value = token::switch()
     .case(json.null, |_, _| Json::Null)
     .case(json.false_, |_, _| Json::Bool(false))
     .case(json.true_, |_, _| Json::Bool(true))
-    .case(json.string, |str: token::Quoted, _| Json::Str(quote2str(ctx, str)))
+    .case(json.string, |str: token::Quoted, _| Json::Str(quote2str(str)))
     .case(json.number, |num: token::Digital, _| {
       Json::Num(num.to_float::<Fp64>(ctx, .., report).unwrap().to_hard())
     })
@@ -287,7 +298,7 @@ fn parse0(
         .delimited(json.comma, |c| {
           let key = c
             .take(json.string, report)
-            .map(|q| quote2str(ctx, q))
+            .map(|q| quote2str(q))
             .unwrap_or("😢".into());
           c.take(json.colon, report);
           let value = parse0(ctx, report, json, c);
@@ -307,6 +318,6 @@ fn parse0(
 
       Json::Obj(vec)
     })
-    .take(cursor, report)
-    .unwrap_or(Json::Null)
+    .take(cursor, report);
+  value.unwrap_or(Json::Null)
 }
