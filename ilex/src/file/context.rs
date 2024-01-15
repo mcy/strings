@@ -128,10 +128,6 @@ impl Context {
 
   /// Gets the `idx`th file in this source context.
   pub fn file(&self, idx: usize) -> Option<File> {
-    if idx == !0 {
-      return Some(self.synthetic_file());
-    }
-
     let state = self.state.read().unwrap();
     let (path, text) = state.files.get(idx)?;
     let (path, text) = unsafe {
@@ -151,14 +147,7 @@ impl Context {
   /// Gets the byte range for the given span, if it isn't the synthetic span.
   pub(crate) fn lookup_range(&self, span: Span) -> Range {
     let state = self.state.read().unwrap();
-    let mut range = state.ranges[span.idx as usize];
-
-    if let Some(end_span) = span.end() {
-      let end = state.ranges[end_span.idx as usize];
-      range.end = end.end;
-    }
-
-    range
+    state.ranges[span.idx as usize]
   }
 
   pub(crate) fn lookup_comments(
@@ -190,67 +179,9 @@ impl Context {
     let mut state = self.state.write().unwrap();
     assert!(state.ranges.len() <= (u32::MAX as usize), "ran out of spans");
 
-    let span = Span { idx: state.ranges.len() as u32, end: !0 };
+    let span = Span { idx: state.ranges.len() as u32 };
 
     state.ranges.push(range);
     span
-  }
-
-  /// Joins a collection of spans into a new span that subsumes all of them
-  ///
-  /// # Panics
-  ///
-  /// Panics if not all of the spans are part of this [`Context`] and are are
-  /// part of the same file, or if `spans` is empty.
-  pub fn join(&self, spans: impl IntoIterator<Item = Span>) -> Span {
-    struct Best {
-      span: Span,
-      range: Range,
-    }
-    let mut best = None;
-
-    for span in spans {
-      let range = self.lookup_range(span);
-
-      let best = best.get_or_insert(Best {
-        span: Span {
-          idx: span.idx,
-          end: span.end().unwrap_or(span).idx,
-        },
-        range,
-      });
-
-      assert_eq!(
-        best.range.file, range.file,
-        "attempted to join spans of different files"
-      );
-
-      if best.range.start > range.start {
-        best.range.start = range.start;
-        best.span.idx = span.idx;
-      }
-
-      if best.range.end < range.end {
-        best.range.end = range.end;
-        best.span.end = span.end().unwrap_or(span).idx;
-      }
-    }
-
-    let best = best.expect("attempted to join zero spans");
-    let mut span = best.span;
-    if span.end == span.idx {
-      span.end = !0;
-    }
-
-    span
-  }
-
-  pub(crate) fn synthetic_file(&self) -> File {
-    File {
-      path: Utf8Path::new("<scratch>"),
-      text: "",
-      ctx: self,
-      idx: !0,
-    }
   }
 }

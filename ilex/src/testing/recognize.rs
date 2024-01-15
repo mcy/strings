@@ -64,7 +64,7 @@ impl Matcher {
     tok: token::Any,
     ctx: &Context,
   ) {
-    state.match_spans("token span", &self.span, tok.span(ctx));
+    state.match_spans("token span", &self.span, tok.span());
 
     zip_eq(
       "comments",

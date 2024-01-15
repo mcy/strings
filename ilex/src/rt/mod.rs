@@ -96,6 +96,7 @@ pub enum Kind {
   },
   Close {
     offset_to_open: u32,
+    full_span: Span,
   },
 }
 
