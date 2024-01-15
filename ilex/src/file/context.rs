@@ -32,7 +32,7 @@ pub struct State {
   files: Vec<(Utf8PathBuf, String)>,
 
   ranges: Vec<Range>,
-  comments: HashMap<u32, Vec<Span>>,
+  comments: HashMap<(u32, u32), Vec<Span>>,
 }
 
 unsafe impl Send for Context {}
@@ -152,24 +152,25 @@ impl Context {
 
   pub(crate) fn lookup_comments(
     &self,
-    span: Span,
+    file: File,
+    offset: usize,
   ) -> (RwLockReadGuard<State>, *const [Span]) {
     let state = self.state.read().unwrap();
     let ptr = state
       .comments
-      .get(&span.idx)
+      .get(&(file.idx as u32, offset as u32))
       .map(|x| x.as_slice())
       .unwrap_or_default() as *const [Span];
     (state, ptr)
   }
 
-  pub(crate) fn add_comment(&self, span: Span, comment: Span) {
+  pub(crate) fn add_comment(&self, file: File, offset: usize, comment: Span) {
     self
       .state
       .write()
       .unwrap()
       .comments
-      .entry(span.idx)
+      .entry((file.idx as u32, offset as u32))
       .or_default()
       .push(comment)
   }

@@ -138,13 +138,15 @@ impl Span {
   /// May panic if this span is not owned by `ctx` (or it may produce an
   /// unexpected result).
   pub fn comments(self, ctx: &Context) -> Comments {
-    Comments { slice: ctx.lookup_comments(self), ctx }
+    let range = self.range(ctx);
+    Comments { slice: ctx.lookup_comments(range.file(ctx), range.start()), ctx }
   }
 
   /// Sets the comment associated with a given span. The comment must itself
   /// be specified as a span.
   pub(crate) fn append_comment_span(self, ctx: &Context, comment: Span) {
-    ctx.add_comment(self, comment)
+    let range = self.range(ctx);
+    ctx.add_comment(range.file(ctx), range.start(), comment)
   }
 }
 
