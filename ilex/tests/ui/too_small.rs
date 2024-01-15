@@ -6,8 +6,8 @@ ilex::spec! {
   struct Spec {
     i1: Ident = Ident::new().prefix("%"),
     i2: Ident = Ident::new().prefix("$").min_len(3),
-    r1: Quoted = Bracket::rust_style(("#", 1), ("r#", "'"), ("'#", "")),
-    r2: Quoted = Bracket::rust_style(("#", 3), ("q###", "'"), ("'###", "")),
+    r1: Quoted = Bracket::rust_style("#", ("r#", "'"), ("'#", "")),
+    r2: Quoted = Bracket::rust_style("#", ("q###", "'"), ("'###", "")),
     c1: Quoted = Bracket::cxx_style(Ident::new().min_len(1), ("R'", "("), (")", "'")),
     c2: Quoted = Bracket::cxx_style(Ident::new().min_len(3), ("Q'", "("), (")", "'")),
   }

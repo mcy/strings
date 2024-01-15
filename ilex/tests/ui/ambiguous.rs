@@ -9,7 +9,7 @@ ilex::spec! {
     kw3: Keyword = ")null",
 
     cm: Comment = Bracket::rust_style(
-      ("/", 0),
+      "/",
       ("-", ""),
       ("", "-"),
     ),
