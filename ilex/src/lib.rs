@@ -1,4 +1,4 @@
-//! Painless lexing for C-like languages.
+//! `ilex` - painless lexing for C-like languages. ⛩️🎋
 //!
 //! This crate provides a general lexer for a "C-like language", also
 //! sometimes called a "curly brace language". It is highly configurable and has

@@ -16,6 +16,9 @@ depend on each other.
 - 🌲 [`twie`](https://github.com/mcy/strings/tree/main/twie) - Fast and compact
   prefix tries.
 
+- ⛩️ [`ilex`](https://github.com/mcy/strings/tree/main/ilex) - The last lexer I
+  ever want to write.
+
 ---
 
 All libraries are Apache-2.0 licensed.
