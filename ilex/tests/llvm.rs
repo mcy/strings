@@ -5,7 +5,7 @@ use ilex::Lexeme;
 
 #[ilex::spec]
 struct Llvm {
-  #[rule(Comment::line(";"))]
+  #[rule(";")]
   comment: Lexeme<Comment>,
 
   #[rule('(', ')')]

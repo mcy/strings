@@ -14,6 +14,7 @@ use byteyarn::YarnRef;
 use crate::report::Expected;
 use crate::rt;
 use crate::rule;
+use crate::rule::Comment;
 use crate::rule::Rule;
 
 /// An ID for a lexeme that a [`Spec`][crate::Spec] can capture.
@@ -241,28 +242,27 @@ impl Lexeme<rule::Any> {
 
     match spec.rule(self) {
       rule::Any::Keyword(rule) => yarn!("`{}`", rule.value),
-      rule::Any::Comment(rule::Comment(rule::CommentKind::Line(open))) => {
-        yarn!("`{open} ...`")
-      }
       rule::Any::Bracket(d)
-      | rule::Any::Comment(rule::Comment(rule::CommentKind::Block(d))) => {
-        match &d.kind {
-          rule::BracketKind::Paired(open, close) => {
-            yarn!("`{open} ... {close}`")
-          }
-          rule::BracketKind::RustLike {
-            repeating,
-            open: (o1, o2),
-            close: (c1, c2),
-            ..
-          } => yarn!("`{o1}{repeating}{o2} ... {c1}{repeating}{c2}`"),
-          rule::BracketKind::CxxLike {
-            open: (o1, o2),
-            close: (c1, c2),
-            ..
-          } => yarn!("`{o1}<ident>{o2} ... {c1}<ident>{c2}`"),
+      | rule::Any::Comment(Comment { bracket: d, .. }) => match &d.kind {
+        rule::BracketKind::Paired(open, close) => {
+          yarn!(
+            "`{open} ...{}{}`",
+            // This little hack is so line comments get a reasonable generated
+            // name. :)
+            if close == "\n" { "" } else { " " },
+            if close == "\n" { "" } else { close },
+          )
         }
-      }
+        rule::BracketKind::RustLike {
+          repeating,
+          open: (o1, o2),
+          close: (c1, c2),
+          ..
+        } => yarn!("`{o1}{repeating}{o2} ... {c1}{repeating}{c2}`"),
+        rule::BracketKind::CxxLike {
+          open: (o1, o2), close: (c1, c2), ..
+        } => yarn!("`{o1}<ident>{o2} ... {c1}<ident>{c2}`"),
+      },
 
       rule::Any::Ident(tok) => {
         yarn!("{}identifier", tok.affixes)

@@ -47,7 +47,7 @@ use proc_macro::TokenTree;
 /// Additionally, the following functions will be defined for the `MySpec` type.
 ///
 /// ```
-/// # use ilex::Spec;
+/// # struct Spec;
 /// # struct MySpec;
 /// # fn norun(_: i32) {
 /// impl MySpec {

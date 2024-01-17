@@ -1062,12 +1062,9 @@ impl TryFrom<Any> for Digital {
 /// attached to the span of a token, and can be inspected through
 /// [`Span::comments()`][crate::Span::comments].
 #[derive(Debug)]
-pub struct Comment(pub(crate) CommentKind);
-
-#[derive(Debug)]
-pub(crate) enum CommentKind {
-  Line(Yarn),
-  Block(Bracket),
+pub struct Comment {
+  pub(crate) bracket: Bracket,
+  pub(crate) can_nest: bool,
 }
 
 impl Comment {
@@ -1075,20 +1072,24 @@ impl Comment {
   /// starting delimiter (which is something like `//` or `#`) to the next
   /// `'\n'` character (not including it).
   pub fn line(delim: impl Into<Yarn>) -> Self {
-    Self(CommentKind::Line(delim.into()))
+    Self::non_nesting((delim, "\n").into())
   }
 
-  /// Creates a new block comment with paired delimiters.
-  ///
-  /// See [`Self::block()`].
-  pub fn paired(open: impl Into<Yarn>, close: impl Into<Yarn>) -> Self {
-    Self::block((open, close).into())
+  /// Creates a new nestable block comment with paired delimiters.
+  pub fn block(open: impl Into<Yarn>, close: impl Into<Yarn>) -> Self {
+    Self::nesting((open, close).into())
   }
 
-  /// Creates a new block comment. Block comments can nest, and use the rules of
-  /// `bracket` to determine where they open and close.
-  pub fn block(bracket: Bracket) -> Self {
-    Self(CommentKind::Block(bracket))
+  /// Creates a new comment that can nest. For example, Rust block comments
+  /// can nest: `/* /* */ */`
+  pub fn nesting(bracket: Bracket) -> Self {
+    Self { bracket, can_nest: true }
+  }
+
+  /// Creates a new comment that can't nest. For example, a line comment is a
+  /// non-nesting comment where a newline '\n' is the closing delimiter.
+  pub fn non_nesting(bracket: Bracket) -> Self {
+    Self { bracket, can_nest: false }
   }
 }
 
@@ -1112,13 +1113,7 @@ impl From<Yarn> for Comment {
 
 impl<Y: Into<Yarn>, Z: Into<Yarn>> From<(Y, Z)> for Comment {
   fn from((y, z): (Y, Z)) -> Self {
-    Self::paired(y, z)
-  }
-}
-
-impl From<Bracket> for Comment {
-  fn from(value: Bracket) -> Self {
-    Self::block(value)
+    Self::block(y, z)
   }
 }
 
