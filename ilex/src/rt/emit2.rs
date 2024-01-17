@@ -19,7 +19,6 @@ use crate::rule::Affixes;
 use crate::rule::Any;
 use crate::rule::BracketKind;
 use crate::rule::Comment;
-use crate::rule::CommentKind;
 use crate::rule::Quoted;
 use crate::spec::Lexeme;
 use crate::spec::Spec;
@@ -76,10 +75,11 @@ pub fn emit(lexer: &mut Lexer) {
     // NOTE: We only need to find the first lexeme that is valid. If it's not
     // valid, we will diagnose that in the next stage.
     match lexer.spec().rule(c.lexeme) {
-      Any::Bracket(br)
-      | Any::Comment(Comment(CommentKind::Block(br)))
-      | Any::Quoted(Quoted { bracket: br, .. }) => {
-        if let BracketKind::CxxLike { ident_rule, open, close } = &br.kind {
+      Any::Bracket(bracket)
+      | Any::Comment(Comment { bracket, .. })
+      | Any::Quoted(Quoted { bracket, .. }) => {
+        if let BracketKind::CxxLike { ident_rule, open, close } = &bracket.kind
+        {
           let [_, range, _] = if !c.is_close {
             range.split_around(open.0.len(), open.1.len())
           } else {
@@ -206,9 +206,9 @@ pub fn emit(lexer: &mut Lexer) {
   let suffix = suf.intern_nonempty(ctx);
 
   let mirrored = match lexer.spec().rule(best.lexeme) {
-    Any::Bracket(br)
-    | Any::Comment(Comment(CommentKind::Block(br)))
-    | Any::Quoted(Quoted { bracket: br, .. }) => match &br.kind {
+    Any::Bracket(bracket)
+    | Any::Comment(Comment { bracket, .. })
+    | Any::Quoted(Quoted { bracket, .. }) => match &bracket.kind {
       BracketKind::Paired(open, _) if best.is_close => Some(open.aliased()),
       BracketKind::Paired(_, close) => Some(close.aliased()),
       BracketKind::RustLike { open, close, .. } => {
@@ -291,51 +291,34 @@ pub fn emit(lexer: &mut Lexer) {
         });
       }
 
-      Any::Comment(Comment(rule)) => {
+      Any::Comment(rule) => {
         // Comments aren't real tokens.
         generated_token = false;
 
         // The span we created only contains the open bracket for the comment.
         // We still need to lex the comment to the end.
-        match rule {
-          CommentKind::Line(..) => {
-            // Find the next newline; that is our comment span.
-            let offset = lexer
-              .rest()
-              .bytes()
-              .position(|b| b == b'\n')
-              .map(|x| x + 1)
-              .unwrap_or(lexer.rest().len());
-
-            lexer.advance(offset);
-          }
-          CommentKind::Block(..) => {
-            let mut depth = 1;
-            let close = mirrored.clone().unwrap().immortalize();
-            while let Some(c) = lexer.rest().chars().next() {
-              if lexer.rest().starts_with(text) {
-                depth += 1;
-                lexer.advance(text.len());
-              } else if lexer.rest().starts_with(close.as_str()) {
-                depth -= 1;
-                lexer.advance(close.len());
-                if depth == 0 {
-                  break;
-                }
-              } else {
-                lexer.advance(c.len_utf8());
-              }
+        let mut depth = 1;
+        let close = mirrored.clone().unwrap().immortalize();
+        while let Some(c) = lexer.rest().chars().next() {
+          if rule.can_nest && lexer.rest().starts_with(text) {
+            depth += 1;
+            lexer.advance(text.len());
+          } else if lexer.rest().starts_with(close.as_str()) {
+            depth -= 1;
+            lexer.advance(close.len());
+            if depth == 0 {
+              break;
             }
-
-            if depth != 0 {
-              lexer.builtins().unclosed(
-                span,
-                &close,
-                Lexeme::eof(),
-                lexer.eof(),
-              );
-            }
+          } else {
+            lexer.advance(c.len_utf8());
           }
+        }
+
+        // The EOF marker is just a funny newline, right?
+        if close != "\n" && depth != 0 {
+          lexer
+            .builtins()
+            .unclosed(span, &close, Lexeme::eof(), lexer.eof());
         }
 
         let span = lexer.intern(start..lexer.cursor());

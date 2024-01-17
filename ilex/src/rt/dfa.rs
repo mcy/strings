@@ -23,7 +23,6 @@ use crate::rt::unicode;
 use crate::rule::Affixes;
 use crate::rule::Any;
 use crate::rule::BracketKind;
-use crate::rule::CommentKind;
 use crate::rule::Digital;
 use crate::rule::Digits;
 use crate::rule::Ident;
@@ -168,13 +167,14 @@ fn compile_rule(rule: &Any) -> Rule {
   let (pat, close) = match rule {
     Any::Keyword(rule) => (lit(&rule.value), None),
 
-    Any::Comment(rule) => match &rule.0 {
-      CommentKind::Line(open) => (lit(open), None),
-      CommentKind::Block(rule) => {
-        let (open, close) = compile_bracket(&rule.kind);
-        (open, Some(close))
-      }
-    },
+    Any::Comment(rule) => {
+      // We can just throw the bracket in, regardless of whether it's a line
+      // comment. Because of how the outer lexer loop works, we will run the DFA
+      // on a string with leading whitespace, so the ("//", "\n") pair from a
+      // line comment won't generate weird diagnostics when it hits a newline.
+      let (open, close) = compile_bracket(&rule.bracket.kind);
+      (open, Some(close))
+    }
 
     Any::Bracket(rule) => {
       let (open, close) = compile_bracket(&rule.kind);

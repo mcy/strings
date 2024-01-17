@@ -12,17 +12,17 @@ struct Spec {
   #[rule(")null")]
   kw3: Lexeme<Keyword>,
 
-  #[rule(Bracket::rust_style(
+  #[rule(Comment::nesting(Bracket::rust_style(
       "/",
       ("-", ""),
       ("", "-"),
-    ))]
+    )))]
   cm: Lexeme<Comment>,
-  #[rule(Bracket::cxx_style(
+  #[rule(Comment::nesting(Bracket::cxx_style(
       Ident::new().min_len(1),
       ("--", ""),
       ("", ""),
-    ))]
+    )))]
   cm2: Lexeme<Comment>,
   #[rule(Bracket::cxx_style(
       Ident::new(),
