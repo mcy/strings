@@ -1,12 +1,14 @@
 use ilex::rule::*;
 use ilex::testing;
 use ilex::Context;
+use ilex::Lexeme;
 
-ilex::spec! {
-  struct Spec {
-    kw: Keyword = "null",
-    cm: Bracket = ("[", "]")
-  }
+#[ilex::spec]
+struct Spec {
+  null: Lexeme<Keyword>,
+
+  #[rule("[", "]")]
+  cm: Lexeme<Bracket>,
 }
 
 #[test]

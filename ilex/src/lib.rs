@@ -1,27 +1,67 @@
-//! Quick and easy lexing for C-like languages.
+//! Painless lexing for C-like languages.
 //!
-//! This crate provides a highly general lexer for a C-like language, as well as
-//! comprehensive span support. This library is based off of a specific kind of
-//! parser I have re-written, verbatim, many times over in my career.
+//! This crate provides a general lexer for a "C-like language", also
+//! sometimes called a "curly brace language". It is highly configurable and has
+//! comprehensive [`Span`] support. This library is based off of a specific
+//! parser stack I have copied from project to project and re-written verbatim
+//! many times over in my career.
 //!
-//! The goals of this library are:
+//! Internally it uses lazy DFAs from [`regex_automata`] for much of the
+//! heavy-lifting, so it should be reasonably performant, although speed is not
+//! a priority.
 //!
-//! - Predictably greedy behavior. Always parse the longest token at any
-//!   particular position.
+//! The goals of this library are as follows.
 //!
-//! - Easy to set up. Writing lexers is a bunch of pain, and they all look the
+//! - **Predictably greedy.** Always parse the longest token at any particular
+//!   position, with user-defined disambiguation between same-length tokens.
+//!
+//! - **Easy to set up.** Writing lexers is a bunch of pain, and they all look the
 //!   same more-or-less, and you want to be "in and out".
 //!
-//! - It can lex a reasonably large number of grammars. It should be able to do
-//!   any language with a cursory resemblance to C, such as Rust, JavaScript,
-//!   LLVM IR, Go, Protobuf, and so on.
+//! - **Flexible.** It can lex a reasonably large number of grammars. It should be
+//!   able to do any language with a cursory resemblance to C, such as Rust,
+//!   JavaScript (and JSON), LLVM IR, Go, Protobuf, Perl, and so on.
 //!
-//! - Unicode XID support (this, in particular, means this lexer doesn't use
-//!   action tables or finite automata).
+//!   - Some exotic lexemes are not supported. This includes Python and YAML
+//!     significant whitespace, user-defined operators that mess with the lexer
+//!     like in Haskell, and ALGOL-style `end` when there isn't a clear pair of
+//!     tokens to lex as a pair of open/close delimiters (Ruby has this problem).
 //!
-//! - Diagnostics and span management. The lexer should be able to generate
+//! - **Unicode support.** This means that e.g. `エルフーン` is an identifier
+//!   by default. ASCII-only filters exist for backwards compatibility with old
+//!   stuff. `ilex` will only support UTF-8-encoded input files, and always uses
+//!   the Unicode definition of whitespace for delimiting tokens, not just
+//!   ASCII whitespace (`" \t\n\t"`).
+//!
+//! - **Diagnostics and spans.** The lexer should be able to generate pretty good
 //!   diagnostics, and this API is exposed for tools built on top of the lexer
-//!   to emit diagnostics.
+//!   to emit diagnostics. Spans are interned automatically.
+//!
+//!   - Custom error recovery is hard, so I don't plan to support that.
+//!
+//! - **Token trees.** Token trees are a far better abstraction than
+//!   token streams, because many LR(k) curly-brace languages become regular or
+//!   close to regular if you decide that every pair of braces or parentheses
+//!   with unknown contents is inside
+//!
+//! This library also provides basic software float support. You should *never*
+//! convert user-provided text into hardware floats if you care about
+//! byte-for-byte portability. This library helps with that.
+//!
+//! ## Stability Ground Rules
+//!
+//! I have tried to define exactly how rules map onto the internal finite
+//! automata, but breaking changes happen! I will try not to break things across
+//! patch releases, but I can't promise perfect stability across even minor
+//! releases.
+//!
+//! Write good tests for your frontend and don't expose your `ilex` guts if you
+//! can. This will make it easier for you to just pin a version and avoid
+//! thinking about this problem.
+//!
+//! Diagnostics are completely unstable. Don't try to parse them, don't write
+//! golden tests against them. If you must, use [`testing::check_report()`] so
+//! that you can regenerate them.
 //!
 //! # Quick Start
 //!
@@ -110,8 +150,8 @@ let json = Json {
   spec: spec.compile(),
 };
 ```*/
-//! This is the intended idiom for using `ilex`; there is a convenient macro
-//! for doing this in a single step.
+//! This is the intended idiom for using `ilex`; the [`#[ilex::spec]`][macro@spec]
+//! can do this in one step, but is completely optional.
 //!
 /*! ```
 use ilex::rule::Keyword;
@@ -119,31 +159,49 @@ use ilex::rule::Bracket;
 use ilex::rule::Quoted;
 use ilex::rule::Digital;
 use ilex::rule::Digits;
+use ilex::Lexeme;
 
-ilex::spec! {
-  struct Json {
-    comma: Keyword = ',',
-    colon: Keyword = ':',
-    minus: Keyword = '-',
-    true_: Keyword = "true",
-    false_: Keyword = "false",
-    null: Keyword = "null",
+#[ilex::spec]
+struct Json {
+  #[rule(",")]
+  comma: Lexeme<Keyword>,
 
-    #[named] array: Bracket = ('[', ']'),
-    #[named] object: Bracket = ('{','}'),
-    #[named] string: Quoted = Quoted::new('"')
-      .invalid_escape(r"\")
-      .escapes([
-        "\\\"", r"\\", r"\/",
-        r"\b", r"\f",  r"\n", r"\t", r"\r",
-      ])
-      .fixed_length_escape(r"\u", 4),
+  #[rule(":")]
+  colon: Lexeme<Keyword>,
 
-    #[named] number: Digital = Digital::new(10)
-      .minus()
-      .point_limit(0..2)
-      .exponents(["e", "E"], Digits::new(10).plus().minus()),
-  }
+  #[rule("true")]
+  true_: Lexeme<Keyword>,
+
+  #[rule("false")]
+  false_: Lexeme<Keyword>,
+
+  #[rule("null")]
+  null: Lexeme<Keyword>,
+
+  #[named]
+  #[rule("[", "]")]
+  array: Lexeme<Bracket>,
+
+  #[named]
+  #[rule("{", "}")]
+  object: Lexeme<Bracket>,
+
+  #[named]
+  #[rule(Quoted::new('"')
+    .invalid_escape(r"\")
+    .escapes([
+      "\\\"", r"\\", r"\/",
+      r"\b", r"\f",  r"\n", r"\t", r"\r",
+    ])
+    .fixed_length_escape(r"\u", 4))]
+  string: Lexeme<Quoted>,
+
+  #[named]
+  #[rule(Digital::new(10)
+    .minus()
+    .point_limit(0..2)
+    .exponents(["e", "E"], Digits::new(10).plus().minus()))]
+  number: Lexeme<Digital>,
 }
 
 let json = Json::get();
@@ -161,10 +219,9 @@ let my_lexeme = json.object;  // Etc.
 //! use ilex::report;
 //! # fn ignore(_: i32) {
 //!
-//! ilex::spec! {
-//!   struct Json {
-//!     // As above...
-//!   }
+//! #[ilex::spec]
+//! struct Json {
+//!   // As above...
 //! }
 //!
 //! // Set up a source context. This tracks all of the source files
@@ -220,7 +277,7 @@ pub use {
     spec::{Lexeme, Spec, SpecBuilder},
     token::Token,
   },
-  byteyarn::Yarn,
+  ilex_attr::{derive_hack, spec},
 };
 
 /// The error returned by [`TryFrom`] implementations in this crate.

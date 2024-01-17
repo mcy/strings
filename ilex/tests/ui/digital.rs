@@ -1,6 +1,7 @@
 use ilex::rule::*;
 use ilex::testing;
 use ilex::Context;
+use ilex::Lexeme;
 
 #[test]
 fn digit_points() {
@@ -78,77 +79,83 @@ fn invalid_digits() {
   testing::check_report(&report, "tests/ui/goldens/invalid_digits.stdout");
 }
 
-ilex::spec! {
-  struct Spec {
-    m1: Digital = Digital::new(16).prefix("0x"),
-    m2: Digital = Digital::new(8).prefix("0o"),
+#[ilex::spec]
+struct Spec {
+  #[rule(Digital::new(16).prefix("0x"))]
+  m1: Lexeme<Digital>,
+  #[rule(Digital::new(8).prefix("0o"))]
+  m2: Lexeme<Digital>,
 
-    m0: Digital = Digital::new(10)
-      .point_limit(2..3)
-      .point('/')
-      .exponent("e", Digits::new(10).point_limit(1..2))
+  #[rule( Digital::new(10)
+    .point_limit(2..3)
+    .point('/')
+    .exponent("e", Digits::new(10).point_limit(1..2))
+    .separator_with("_",
+      SeparatorCornerCases {
+        prefix: true,
+        suffix: true,
+        around_point: true,
+        around_exp: true,
+      }))]
+  m0: Lexeme<Digital>,
+  #[rule(Digital::new(10)
+        .prefix("all_ok@")
+        .point_limit(0..3)
+        .exponent("e", Digits::new(10).point_limit(0..3))
+        .separator_with("_",
+          SeparatorCornerCases {
+            prefix: true,
+            suffix: true,
+            around_point: true,
+            around_exp: true,
+          }))]
+  n0: Lexeme<Digital>,
+  #[rule( Digital::new(10)
+      .prefix("no_prefix@")
+      .point_limit(0..3)
+      .exponent("e", Digits::new(10).point_limit(0..3))
+      .separator_with("_",
+        SeparatorCornerCases {
+          prefix: false,
+          suffix: true,
+          around_point: true,
+          around_exp: true,
+        }))]
+  n1: Lexeme<Digital>,
+  #[rule(Digital::new(10)
+      .prefix("no_suffix@")
+      .point_limit(0..3)
+      .exponent("e", Digits::new(10).point_limit(0..3))
+      .separator_with("_",
+        SeparatorCornerCases {
+          prefix: true,
+          suffix: false,
+          around_point: true,
+          around_exp: true,
+        }))]
+  n2: Lexeme<Digital>,
+  #[rule( Digital::new(10)
+      .prefix("no_point@")
+      .point_limit(0..3)
+      .exponent("e", Digits::new(10).point_limit(0..3))
+      .separator_with("_",
+        SeparatorCornerCases {
+          prefix: true,
+          suffix: true,
+          around_point: false,
+          around_exp: true,
+        }))]
+  n3: Lexeme<Digital>,
+  #[rule(Digital::new(10)
+      .prefix("no_exp@")
+      .point_limit(0..3)
+      .exponent("e", Digits::new(10).point_limit(0..3))
       .separator_with("_",
         SeparatorCornerCases {
           prefix: true,
           suffix: true,
           around_point: true,
-          around_exp: true,
-        }),
-
-    n0: Digital = Digital::new(10)
-    .prefix("all_ok@")
-    .point_limit(0..3)
-    .exponent("e", Digits::new(10).point_limit(0..3))
-    .separator_with("_",
-      SeparatorCornerCases {
-        prefix: true,
-        suffix: true,
-        around_point: true,
-        around_exp: true,
-      }),
-    n1: Digital = Digital::new(10)
-    .prefix("no_prefix@")
-    .point_limit(0..3)
-    .exponent("e", Digits::new(10).point_limit(0..3))
-    .separator_with("_",
-      SeparatorCornerCases {
-        prefix: false,
-        suffix: true,
-        around_point: true,
-        around_exp: true,
-      }),
-    n2: Digital = Digital::new(10)
-    .prefix("no_suffix@")
-    .point_limit(0..3)
-    .exponent("e", Digits::new(10).point_limit(0..3))
-    .separator_with("_",
-      SeparatorCornerCases {
-        prefix: true,
-        suffix: false,
-        around_point: true,
-        around_exp: true,
-      }),
-    n3: Digital = Digital::new(10)
-    .prefix("no_point@")
-    .point_limit(0..3)
-    .exponent("e", Digits::new(10).point_limit(0..3))
-    .separator_with("_",
-      SeparatorCornerCases {
-        prefix: true,
-        suffix: true,
-        around_point: false,
-        around_exp: true,
-      }),
-    n4: Digital = Digital::new(10)
-    .prefix("no_exp@")
-    .point_limit(0..3)
-    .exponent("e", Digits::new(10).point_limit(0..3))
-    .separator_with("_",
-      SeparatorCornerCases {
-        prefix: true,
-        suffix: true,
-        around_point: true,
-        around_exp: false,
-      }),
-  }
+          around_exp: false,
+        }))]
+  n4: Lexeme<Digital>,
 }

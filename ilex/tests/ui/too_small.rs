@@ -1,16 +1,24 @@
 use ilex::rule::*;
 use ilex::testing;
 use ilex::Context;
+use ilex::Lexeme;
 
-ilex::spec! {
-  struct Spec {
-    i1: Ident = Ident::new().prefix("%"),
-    i2: Ident = Ident::new().prefix("$").min_len(3),
-    r1: Quoted = Bracket::rust_style("#", ("r#", "'"), ("'#", "")),
-    r2: Quoted = Bracket::rust_style("#", ("q###", "'"), ("'###", "")),
-    c1: Quoted = Bracket::cxx_style(Ident::new().min_len(1), ("R'", "("), (")", "'")),
-    c2: Quoted = Bracket::cxx_style(Ident::new().min_len(3), ("Q'", "("), (")", "'")),
-  }
+#[ilex::spec]
+struct Spec {
+  #[rule(Ident::new().prefix("%"))]
+  i1: Lexeme<Ident>,
+  #[rule(Ident::new().prefix("$").min_len(3))]
+  i2: Lexeme<Ident>,
+
+  #[rule(Bracket::rust_style("#", ("r#", "'"), ("'#", "")))]
+  r1: Lexeme<Quoted>,
+  #[rule(Bracket::rust_style("#", ("q###", "'"), ("'###", "")))]
+  r2: Lexeme<Quoted>,
+
+  #[rule(Bracket::cxx_style(Ident::new().min_len(1), ("R'", "("), (")", "'")))]
+  c1: Lexeme<Quoted>,
+  #[rule(Bracket::cxx_style(Ident::new().min_len(3), ("Q'", "("), (")", "'")))]
+  c2: Lexeme<Quoted>,
 }
 
 #[test]

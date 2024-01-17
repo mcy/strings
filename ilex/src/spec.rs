@@ -53,6 +53,11 @@ impl<R> Lexeme<R> {
   pub(crate) fn new(id: u32) -> Self {
     Self { id, _ph: PhantomData }
   }
+
+  /// Creates a new lexeme.
+  pub fn z() -> Self {
+    Self { id: 0, _ph: PhantomData }
+  }
 }
 
 impl<R> fmt::Debug for Lexeme<R> {
@@ -140,8 +145,8 @@ impl SpecBuilder {
 
   /// Adds a new rule to the [`Spec`] being built.
   ///
-  /// [`SpecBuilder::compile()`] will ensure that
-  /// every rule begins with a unique prefix (and panic if not).
+  /// When parsing the next token, the `ilex` lexer will select the longest
+  /// matching token, giving priority to tokens *added first*.
   ///
   /// ```
   /// # use ilex::*;
@@ -178,94 +183,18 @@ impl SpecBuilder {
     self.rules.push(rule.into());
     Lexeme::new(self.rules.len() as u32 - 1)
   }
-}
 
-/// Generates a lexer spec struct.
-///
-/// This macro generates the type of struct described in the
-/// [crate documentation][crate].
-///
-/// The syntax is as follows:
-///
-/// ```
-/// use ilex::rule;
-///
-/// ilex::spec! {
-///   /// My cool spec.
-///   struct MySpec {
-///     dollar: rule::Keyword = "$",
-///   }
-/// }
-/// ```
-///
-/// The thing after the field name must be a [`Rule`] type, and the thing after
-/// the `=` must be any value that is `Into<ThatRule>`. If a rule is annotated
-/// with `#[named]`, it will be passed to [`SpecBuilder::named_rule()`], with
-/// the field name as the name. You can specify a custom name by writing
-/// `#[named = "some name"]`.
-///
-/// This will generate a struct `MySpec` with the following impl:
-///
-/// ```
-/// # use ilex::Spec;
-/// # struct MySpec;
-/// # fn norun(_: i32) {
-/// impl MySpec {
-///   /// Gets the global instance of this spec.
-///   pub fn get() -> &'static Self {
-///     todo!()
-///   }
-///
-///   /// Gets the actual compiled spec.
-///   pub fn spec(&self) -> &Spec {
-///     todo!()
-///   }
-/// }
-/// # }
-/// ```
-#[macro_export]
-macro_rules! spec {
-  (
-    $(#[$meta:meta])*
-    $vis:vis struct $name:ident {$(
-      $(#[$modifier:ident $(= $arg:expr)?])? $rule:ident: $ty:ty = $expr:expr
-    ),* $(,)?}
-  ) => {
-    $(#[$meta])*
-    $vis struct $name {
-      __spec: $crate::Spec,
-      $(pub $rule: $crate::Lexeme<$ty>),*
+  #[doc(hidden)]
+  pub fn __macro_rule<R: Rule>(
+    &mut self,
+    name: Option<&'static str>,
+    rule: impl Into<R>,
+  ) -> Lexeme<R> {
+    match name {
+      Some(name) => self.named_rule(name, rule.into()),
+      None => self.rule(rule.into()),
     }
-
-    impl $name {
-      pub fn get() -> &'static Self {
-        static SPEC: std::sync::OnceLock<$name> = std::sync::OnceLock::new();
-        SPEC.get_or_init(|| {
-          let mut spec = $crate::Spec::builder();
-          Self {
-            $($rule: $crate::spec!(@impl spec, $ty, $rule, $($modifier $(($arg))?,)? $expr),)*
-            __spec: spec.compile(),
-          }
-        })
-      }
-
-      pub fn spec(&self) -> &$crate::Spec {
-        &self.__spec
-      }
-    }
-  };
-
-  (@impl $spec:ident, $ty:ty, $rule:ident, named, $expr:expr) => {
-    $spec.named_rule::<$ty>(stringify!($rule), $expr.into())
-  };
-
-  (@impl $spec:ident, $ty:ty, $rule:ident, named($name:expr), $expr:expr) => {
-    $spec.named_rule::<$ty>($name, $expr.into())
-  };
-
-  (@impl $spec:ident, $ty:ty, $rule:ident, $expr:expr) => {
-    $spec.rule::<$ty>($expr.into())
-  };
+  }
 }
 
 impl<R> Clone for Lexeme<R> {
@@ -346,4 +275,103 @@ impl Lexeme<rule::Any> {
       }
     }
   }
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __spec__ {
+  (
+    $(#[$meta:meta])*
+    $vis:vis struct $name:ident {$(
+      $(#[$($fmeta:tt)*])*
+      $fvis:vis $rule:ident: $ty:ty
+    ),* $(,)?}
+  ) => {
+    $(#[$meta])*
+    #[derive($crate::derive_hack)]
+    $vis struct $name {
+      #[doc(hidden)]
+      __spec: $crate::Spec,
+      $(
+        $(#[$($fmeta)*])*
+        $fvis $rule: $ty
+      ),*
+    }
+
+    impl $name {
+      /// Returns this spec's value.
+      ///
+      /// If necessary, compiles it for the first time.
+      pub fn get() -> &'static Self {
+        static SPEC: std::sync::OnceLock<$name> = std::sync::OnceLock::new();
+        SPEC.get_or_init(|| {
+          let mut spec = $crate::Spec::builder();
+          Self {
+            $($rule: $crate::__spec__!(
+              @impl "call-meta"
+              $(#[$($fmeta)*])*;
+              spec, $ty, $rule, name: None, rule: stringify!($rule)
+            ),)*
+            __spec: spec.compile(),
+          }
+        })
+      }
+
+      /// Returns the underlying compiled spec.
+      pub fn spec(&self) -> &$crate::Spec {
+        &self.__spec
+      }
+    }
+  };
+
+  (@impl "call-meta"
+    #[named($arg:literal)]
+    $(#[$($rest:tt)+])*;
+    $spec:ident, $ty:ty, $ident:ident, name: $name:expr, rule: $rule:expr
+  ) => {
+    $crate::__spec__!(@impl "call-meta"
+      $(#[$($rest)+])*;
+      $spec, $ty, $ident, name: Some($arg), rule: $rule
+    )
+  };
+
+  (@impl "call-meta"
+    #[named]
+    $(#[$($rest:tt)+])*;
+    $spec:ident, $ty:ty, $ident:ident, name: $name:expr, rule: $rule:expr
+  ) => {
+    $crate::__spec__!(@impl "call-meta"
+      $(#[$($rest)+])*;
+      $spec, $ty, $ident, name: Some(stringify!($ident)), rule: $rule
+    )
+  };
+
+  (@impl "call-meta"
+    #[rule($($arg:tt)*)]
+    $(#[$($rest:tt)+])*;
+    $spec:ident, $ty:ty, $ident:ident, name: $name:expr, rule: $rule:expr
+  ) => {
+    $crate::__spec__!(@impl "call-meta"
+      $(#[$($rest)+])*;
+      $spec, $ty, $ident, name: $name, rule: ($($arg)*)
+    )
+  };
+
+  (@impl "call-meta"
+    #[$($meta:tt)+]
+    $(#[$($rest:tt)+])*;
+    $spec:ident, $ty:ty, $ident:ident, name: $name:expr, rule: $rule:expr
+  ) => {
+    $crate::__spec__!(@impl "call-meta"
+      $(#[$($rest)+])*;
+      $spec, $ty, $ident, name: $name, rule: $rule
+    )
+  };
+
+  (@impl "call-meta"
+    ;
+    $spec:ident, $ty:ty, $ident:ident, name: $name:expr, rule: $rule:expr
+  ) => {
+    $spec.__macro_rule($name, $rule)
+  };
 }

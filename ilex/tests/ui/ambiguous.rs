@@ -1,43 +1,53 @@
 use ilex::rule::*;
 use ilex::testing;
 use ilex::Context;
+use ilex::Lexeme;
 
-ilex::spec! {
-  struct Spec {
-    kw: Keyword = "null",
-    kw2: Keyword = "-null",
-    kw3: Keyword = ")null",
+#[ilex::spec]
+struct Spec {
+  #[rule("null")]
+  kw: Lexeme<Keyword>,
+  #[rule("-null")]
+  kw2: Lexeme<Keyword>,
+  #[rule(")null")]
+  kw3: Lexeme<Keyword>,
 
-    cm: Comment = Bracket::rust_style(
+  #[rule(Bracket::rust_style(
       "/",
       ("-", ""),
       ("", "-"),
-    ),
-    cm2: Comment = Bracket::cxx_style(
+    ))]
+  cm: Lexeme<Comment>,
+  #[rule(Bracket::cxx_style(
       Ident::new().min_len(1),
       ("--", ""),
       ("", ""),
-    ),
-    br: Bracket = Bracket::cxx_style(
+    ))]
+  cm2: Lexeme<Comment>,
+  #[rule(Bracket::cxx_style(
       Ident::new(),
       ("$", "["),
       ("]", ""),
-    ),
-    id: Ident = Ident::new()
-      .prefix("/")
-      .suffixes(["", "%q", "/"]),
-    nm: Digital = Digital::new(10)
+    ))]
+  br: Lexeme<Bracket>,
+  #[rule(Ident::new()
+    .prefix("/")
+    .suffixes(["", "%q", "/"]))]
+  id: Lexeme<Ident>,
+  #[rule(Digital::new(10)
       .prefixes(["", "%"])
-      .suffixes(["", "%", "q", "/"]),
-    st: Quoted = Quoted::new("'")
+      .suffixes(["", "%", "q", "/"]))]
+  nm: Lexeme<Digital>,
+  #[rule(Quoted::new("'")
       .prefixes(["%", "q"])
-      .suffixes(["", "%", "q"]),
-    st2: Quoted = Quoted::with(Bracket::cxx_style(
+      .suffixes(["", "%", "q"]))]
+  st: Lexeme<Quoted>,
+  #[rule(Quoted::with(Bracket::cxx_style(
         Ident::new(),
         ("q", "("),
         (")", ""),
-      )),
-  }
+      )))]
+  st2: Lexeme<Quoted>,
 }
 
 #[test]

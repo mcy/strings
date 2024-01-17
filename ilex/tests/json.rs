@@ -10,32 +10,50 @@ use ilex::testing::Matcher;
 use ilex::token;
 use ilex::token::Content as C;
 use ilex::token::Cursor;
+use ilex::Lexeme;
 use ilex::Spanned;
 
-ilex::spec! {
-  struct JsonSpec {
-    comma: Keyword = ',',
-    colon: Keyword = ':',
-    true_: Keyword = "true",
-    false_: Keyword = "false",
-    null: Keyword = "null",
+#[ilex::spec]
+struct JsonSpec {
+  #[rule(",")]
+  comma: Lexeme<Keyword>,
 
+  #[rule(":")]
+  colon: Lexeme<Keyword>,
 
-    #[named] array: Bracket = ('[', ']'),
-    #[named] object: Bracket = ('{','}'),
-    #[named] string: Quoted = Quoted::new('"')
-      .invalid_escape(r"\")
-      .escapes([
-        "\\\"", r"\\", r"\/",
-        r"\b", r"\f",  r"\n", r"\t", r"\r",
-      ])
-      .fixed_length_escape(r"\u", 4),
+  #[rule("true")]
+  true_: Lexeme<Keyword>,
 
-    #[named] number: Digital = Digital::new(10)
-      .minus()
-      .point_limit(0..2)
-      .exponents(["e", "E"], Digits::new(10).plus().minus())
-  }
+  #[rule("false")]
+  false_: Lexeme<Keyword>,
+
+  #[rule("null")]
+  null: Lexeme<Keyword>,
+
+  #[named]
+  #[rule("[", "]")]
+  array: Lexeme<Bracket>,
+
+  #[named]
+  #[rule("{", "}")]
+  object: Lexeme<Bracket>,
+
+  #[named]
+  #[rule(Quoted::new('"')
+    .invalid_escape(r"\")
+    .escapes([
+      "\\\"", r"\\", r"\/",
+      r"\b", r"\f",  r"\n", r"\t", r"\r",
+    ])
+    .fixed_length_escape(r"\u", 4))]
+  string: Lexeme<Quoted>,
+
+  #[named]
+  #[rule(Digital::new(10)
+    .minus()
+    .point_limit(0..2)
+    .exponents(["e", "E"], Digits::new(10).plus().minus()))]
+  number: Lexeme<Digital>,
 }
 
 const SOME_JSON: &str = r#"

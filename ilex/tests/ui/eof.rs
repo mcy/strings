@@ -1,14 +1,21 @@
 use ilex::rule::*;
 use ilex::testing;
 use ilex::Context;
+use ilex::Lexeme;
 
-ilex::spec! {
-  struct Spec {
-    c1: Comment = ("/*", "*/"),
-    b1: Bracket = ("[", "]"),
-    b2: Bracket = ("(", ")"),
-    q1: Quoted = Quoted::new("'"),
-  }
+#[ilex::spec]
+struct Spec {
+  #[rule("/*", "*/")]
+  c1: Lexeme<Comment>,
+
+  #[rule("[", "]")]
+  b1: Lexeme<Bracket>,
+
+  #[rule("(", ")")]
+  b2: Lexeme<Bracket>,
+
+  #[rule(Quoted::new("'"))]
+  q1: Lexeme<Quoted>,
 }
 
 #[test]

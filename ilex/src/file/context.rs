@@ -17,7 +17,7 @@ use crate::report::Report;
 
 use super::Span;
 
-/// A source context, which tracks source files.
+/// A source context, which owns source code files.
 ///
 /// A `Context` contains the full text of all the loaded source files, which
 /// [`SpanId`]s ultimately refer to. Most [`SpanId`] operations need their
@@ -29,6 +29,8 @@ pub struct Context {
 
 #[derive(Default)]
 pub struct State {
+  // TODO(mcyoung): Be smarter about this and use something something concurrent
+  // vector? We don't need to have all this stuff behind a lock I think.
   files: Vec<(Utf8PathBuf, String)>,
 
   ranges: Vec<Span>,
