@@ -3,50 +3,55 @@ use ilex::rule::*;
 use ilex::token;
 use ilex::Lexeme;
 
-ilex::spec! {
-  struct Numbers {
-    comma: Keyword = ',',
+#[ilex::spec]
+struct Numbers {
+  #[rule(",")]
+  comma: Lexeme<Keyword>,
 
-    #[named = "binary number"]
-    bin: Digital = Digital::new(2)
-      .separator('_')
-      .plus().minus()
-      .point_limit(0..2)
-      .exponent("2", Digits::new(2).plus().minus())
-      .prefixes(["0b", "0B", "%"]),
+  #[named("binary number")]
+  #[rule(Digital::new(2)
+    .separator('_')
+    .plus().minus()
+    .point_limit(0..2)
+    .exponent("2", Digits::new(2).plus().minus())
+    .prefixes(["0b", "0B", "%"]))]
+  bin: Lexeme<Digital>,
 
-    #[named = "hexadecimal number"]
-    hex: Digital = Digital::new(16)
-      .separator('_')
-      .plus().minus()
-      .point_limit(0..2)
-      .exponents(["p", "P"], Digits::new(10).plus().minus())
-      .prefixes(["0x", "0X", "$"]),
+  #[named = "hexadecimal number"]
+  #[rule(Digital::new(16)
+    .separator('_')
+    .plus().minus()
+    .point_limit(0..2)
+    .exponents(["p", "P"], Digits::new(10).plus().minus())
+    .prefixes(["0x", "0X", "$"]))]
+  hex: Lexeme<Digital>,
 
-    #[named = "quaternary number"]
-    qua: Digital = Digital::new(4)
-      .separator('_')
-      .plus().minus()
-      .point_limit(0..2)
-      .exponents(["p", "P"], Digits::new(10).plus().minus())
-      .prefixes(["0q", "0Q"]),
+  #[named = "quaternary number"]
+  #[rule(Digital::new(4)
+    .separator('_')
+    .plus().minus()
+    .point_limit(0..2)
+    .exponents(["p", "P"], Digits::new(10).plus().minus())
+    .prefixes(["0q", "0Q"]))]
+  qua: Lexeme<Digital>,
 
-    #[named = "octal number"]
-    oct: Digital = Digital::new(8)
-      .separator('_')
-      .plus().minus()
-      .point_limit(0..2)
-      .exponents(["p", "P"], Digits::new(10).plus().minus())
-      .prefixes(["0o", "0O", "0"]),
+  #[named = "octal number"]
+  #[rule(Digital::new(8)
+    .separator('_')
+    .plus().minus()
+    .point_limit(0..2)
+    .exponents(["p", "P"], Digits::new(10).plus().minus())
+    .prefixes(["0o", "0O", "0"]))]
+  oct: Lexeme<Digital>,
 
-    #[named = "decimal number"]
-    dec: Digital = Digital::new(10)
-      .separator('_')
-      .plus().minus()
-      .point_limit(0..2)
-      .exponents(["e", "E"], Digits::new(10).plus().minus())
-      .exponent("^", Digits::new(16).plus().minus()),
-  }
+  #[named = "decimal number"]
+  #[rule(Digital::new(10)
+    .separator('_')
+    .plus().minus()
+    .point_limit(0..2)
+    .exponents(["e", "E"], Digits::new(10).plus().minus())
+    .exponent("^", Digits::new(16).plus().minus()))]
+  dec: Lexeme<Digital>,
 }
 
 #[test]

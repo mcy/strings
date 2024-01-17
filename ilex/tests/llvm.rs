@@ -1,77 +1,96 @@
 use ilex::rule::*;
 use ilex::testing::Matcher;
 use ilex::token::Content as C;
+use ilex::Lexeme;
 
-ilex::spec! {
-  struct Llvm {
-    comment: Comment = Comment::line(';'),
+#[ilex::spec]
+struct Llvm {
+  #[rule(Comment::line(";"))]
+  comment: Lexeme<Comment>,
 
-    parens: Bracket = ('(', ')'),
-    brackets: Bracket = ('[', ']'),
-    vector: Bracket = ('<', '>'),
-    braces: Bracket = ('{', '}'),
-    packed: Bracket = ("<{", "}>"),
-    meta: Bracket = ("!{", "}"),
+  #[rule('(', ')')]
+  parens: Lexeme<Bracket>,
+  #[rule('[', ']')]
+  brackets: Lexeme<Bracket>,
+  #[rule('<', '>')]
+  vector: Lexeme<Bracket>,
+  #[rule('{', '}')]
+  braces: Lexeme<Bracket>,
+  #[rule("<{", "}>")]
+  packed: Lexeme<Bracket>,
+  #[rule("!{", "}")]
+  meta: Lexeme<Bracket>,
 
-    comma: Keyword = ',',
-    equal: Keyword = '=',
-    star: Keyword = '*',
-    times: Keyword = 'x',
+  #[rule(',')]
+  comma: Lexeme<Keyword>,
+  #[rule('=')]
+  equal: Lexeme<Keyword>,
+  #[rule('*')]
+  star: Lexeme<Keyword>,
+  #[rule('x')]
+  times: Lexeme<Keyword>,
 
-    br: Keyword = "br",
-    call: Keyword = "call",
-    icmp: Keyword = "icmp",
-    icmp_eq: Keyword = "eq",
-    ret: Keyword = "ret",
-    unreachable: Keyword = "unreachable",
+  br: Lexeme<Keyword>,
+  call: Lexeme<Keyword>,
+  icmp: Lexeme<Keyword>,
+  #[rule("eq")]
+  icmp_eq: Lexeme<Keyword>,
+  ret: Lexeme<Keyword>,
+  unreachable: Lexeme<Keyword>,
 
-    constant: Keyword = "constant",
-    declare: Keyword = "declare",
-    define: Keyword = "define",
-    global: Keyword = "global",
+  constant: Lexeme<Keyword>,
+  declare: Lexeme<Keyword>,
+  define: Lexeme<Keyword>,
+  global: Lexeme<Keyword>,
 
-    label: Keyword = "label",
-    null: Keyword = "null",
-    ptr: Keyword = "ptr",
-    int: Digital = Digital::new(10).prefix("i"),
-    void: Keyword = "void",
+  label: Lexeme<Keyword>,
+  null: Lexeme<Keyword>,
+  ptr: Lexeme<Keyword>,
+  #[rule(Digital::new(10).prefix("i"))]
+  int: Lexeme<Digital>,
+  void: Lexeme<Keyword>,
 
-    private: Keyword = "private",
-    unnamed_addr: Keyword = "unnamed_addr",
-    nocapture: Keyword = "nocapture",
-    nounwind: Keyword = "nounwind",
+  private: Lexeme<Keyword>,
+  unnamed_addr: Lexeme<Keyword>,
+  nocapture: Lexeme<Keyword>,
+  nounwind: Lexeme<Keyword>,
 
-    #[named]
-    string: Quoted = Quoted::new('"')
-      .fixed_length_escape(r"\", 2)
-      .prefixes(["", "c"]),
+  #[named]
+  #[rule(Quoted::new('"')
+    .fixed_length_escape(r"\", 2)
+    .prefixes(["", "c"]))]
+  string: Lexeme<Quoted>,
 
-    #[named = "identifier"]
-    label_ident: Ident = Ident::new()
-      .ascii_only()
-      .extra_starts(".0123456789".chars())
-      .suffix(":"),
+  #[named("identifier")]
+  #[rule(Ident::new()
+    .ascii_only()
+    .extra_starts(".0123456789".chars())
+    .suffix(":"))]
+  label_ident: Lexeme<Ident>,
 
-    #[named = "identifier"]
-    bare: Ident = Ident::new()
-      .ascii_only()
-      .extra_starts(".0123456789".chars())
-      .prefixes(["!", "@", "%"]),
+  #[named("identifier")]
+  #[rule(Ident::new()
+    .ascii_only()
+    .extra_starts(".0123456789".chars())
+    .prefixes(["!", "@", "%"]))]
+  bare: Lexeme<Ident>,
 
-    #[named = "quoted identifier"]
-    quoted: Quoted = Quoted::new('"')
-      .fixed_length_escape(r"\", 2)
-      .prefixes(["!", "@", "%"]),
+  #[named("quoted identifier")]
+  #[rule(Quoted::new('"')
+    .fixed_length_escape(r"\", 2)
+    .prefixes(["!", "@", "%"]))]
+  quoted: Lexeme<Quoted>,
 
-    #[named = "number"]
-    dec: Digital = Digital::new(10)
-      .minus()
-      .point_limit(0..2)
-      .exponents(["e", "E"], Digits::new(10).plus().minus()),
+  #[named = "number"]
+  #[rule(Digital::new(10)
+    .minus()
+    .point_limit(0..2)
+    .exponents(["e", "E"], Digits::new(10).plus().minus()))]
+  dec: Lexeme<Digital>,
 
-    #[named = "number"]
-    hex: Digital = Digital::new(16).minus().prefix("0x"),
-  }
+  #[named = "number"]
+  #[rule(Digital::new(16).minus().prefix("0x"))]
+  hex: Lexeme<Digital>,
 }
 
 #[test]
