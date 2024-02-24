@@ -19,11 +19,11 @@ mod dfa;
 pub use dfa::compile;
 pub use dfa::Dfa;
 
-pub fn lex<'spec>(
-  file: File,
+pub fn lex<'ctx>(
+  file: File<'ctx>,
   report: &Report,
-  spec: &'spec Spec,
-) -> Result<token::Stream<'spec>, Fatal> {
+  spec: &'ctx Spec,
+) -> Result<token::Stream<'ctx>, Fatal> {
   let mut lexer = lexer::Lexer::new(file, report, spec);
 
   let mut unexpected_start = None;

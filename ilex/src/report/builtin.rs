@@ -9,7 +9,6 @@ use byteyarn::yarn;
 use byteyarn::YarnBox;
 
 use crate::f;
-use crate::file::Context;
 use crate::file::Spanned;
 use crate::plural;
 use crate::report::Diagnostic;
@@ -43,10 +42,10 @@ impl Builtins<'_> {
       .report
       .error(f!(
         "unexpected {} in {}",
-        found.for_user_diagnostic(self.spec, &self.report.ctx),
+        found.for_user_diagnostic(self.spec),
         unexpected_in
           .into()
-          .for_user_diagnostic(self.spec, &self.report.ctx),
+          .for_user_diagnostic(self.spec),
       ))
       .at(at)
       .reported_at(Location::caller());
@@ -85,7 +84,7 @@ impl Builtins<'_> {
         plural(found.chars().count()),
         unexpected_in
           .into()
-          .for_user_diagnostic(self.spec, &self.report.ctx),
+          .for_user_diagnostic(self.spec),
       ))
       .at(at)
       .remark(
@@ -109,14 +108,14 @@ impl Builtins<'_> {
     at: impl Spanned,
   ) -> Diagnostic {
     let expected = expected.into_iter().map(Into::into).collect::<Vec<_>>();
-    let alts = disjunction_to_string(self.spec, &self.report.ctx, &expected);
+    let alts = disjunction_to_string(self.spec, &expected);
     let found = found.into();
 
     let diagnostic = self
       .report
       .error(f!(
         "expected {alts}, but found {}",
-        found.for_user_diagnostic(self.spec, &self.report.ctx)
+        found.for_user_diagnostic(self.spec)
       ))
       .saying(at, f!("expected {alts}"))
       .reported_at(Location::caller());
@@ -140,7 +139,7 @@ impl Builtins<'_> {
       .report
       .error(f!(
         "unexpected closing {}",
-        found.for_user_diagnostic(self.spec, &self.report.ctx)
+        found.for_user_diagnostic(self.spec)
       ))
       .saying(at, f!("expected to be opened by `{expected}`"))
       .reported_at(Location::caller());
@@ -165,7 +164,7 @@ impl Builtins<'_> {
       .report
       .error(f!(
         "expected closing `{expected}`, but found {}",
-        found.for_user_diagnostic(self.spec, &self.report.ctx)
+        found.for_user_diagnostic(self.spec)
       ))
       .saying(at, f!("expected `{expected}` here"))
       .remark(open, "previously opened here")
@@ -189,7 +188,7 @@ impl Builtins<'_> {
         "unexpected non-ASCII characters in {}",
         expected
           .into()
-          .for_user_diagnostic(self.spec, &self.report.ctx)
+          .for_user_diagnostic(self.spec)
       ))
       .at(at)
       .reported_at(Location::caller())
@@ -263,7 +262,7 @@ impl Builtins<'_> {
       .report
       .error(f!(
         "{} out of span",
-        what.into().for_user_diagnostic(self.spec, &self.report.ctx)
+        what.into().for_user_diagnostic(self.spec)
       ))
       .at(at)
       .note(f!(
@@ -313,12 +312,11 @@ fn non_printable_note(found: Expected, diagnostic: Diagnostic) -> Diagnostic {
 
 fn disjunction_to_string<'a>(
   spec: &'a Spec,
-  ctx: &'a Context,
   lexemes: &'a [Expected],
 ) -> YarnBox<'a, str> {
   let mut names = lexemes
     .iter()
-    .map(|tok| tok.for_user_diagnostic(spec, ctx))
+    .map(|tok| tok.for_user_diagnostic(spec))
     .collect::<Vec<_>>();
   names.sort();
   names.dedup();
@@ -424,13 +422,12 @@ impl Expected<'_> {
   pub(crate) fn for_user_diagnostic<'a>(
     &'a self,
     spec: &'a Spec,
-    ctx: &Context,
   ) -> YarnBox<'a, str> {
     match self {
       Self::Literal(lit) => yarn!("`{lit}`"),
       Self::Name(name) => name.as_ref().to_box(),
       Self::Lexeme(lex) => lex.to_yarn(spec),
-      Self::Token(tok) => tok.to_yarn(ctx),
+      Self::Token(tok) => tok.to_yarn(),
     }
   }
 }

@@ -613,7 +613,7 @@ impl Digital<'_> {
         && (exp.is_none()
           || exp.is_some_and(|exp| {
             exp.radix() == 10
-              && (exp.has_prefix(ctx, "e") || exp.has_prefix(ctx, "E"))
+              && (exp.has_prefix("e") || exp.has_prefix("E"))
               && has_ordinary_sign(ctx, &exp)
           }))
         && (rule.separator.is_empty()

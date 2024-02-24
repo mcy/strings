@@ -50,6 +50,9 @@ pub trait Token<'lex>:
   /// The token this rule was parsed from.
   type Rule: rule::Rule;
 
+  /// The context that owns this token.
+  fn context(self) -> &'lex Context;
+
   /// The spec that lexed this token.
   fn spec(self) -> &'lex Spec;
 
@@ -102,6 +105,17 @@ impl<'lex> Token<'lex> for Any<'lex> {
       Self::Ident(tok) => tok.lexeme().any(),
       Self::Digital(tok) => tok.lexeme().any(),
       Self::Quoted(tok) => tok.lexeme().any(),
+    }
+  }
+
+  fn context(self) -> &'lex Context {
+    match self {
+      Self::Eof(tok) => tok.context(),
+      Self::Bracket(tok) => tok.context(),
+      Self::Keyword(tok) => tok.context(),
+      Self::Ident(tok) => tok.context(),
+      Self::Digital(tok) => tok.context(),
+      Self::Quoted(tok) => tok.context(),
     }
   }
 
@@ -223,11 +237,16 @@ impl Spanned for Any<'_> {
 #[derive(Copy, Clone)]
 pub struct Eof<'lex> {
   span: SpanId,
+  ctx: &'lex Context,
   spec: &'lex Spec,
 }
 
 impl<'lex> Token<'lex> for Eof<'lex> {
   type Rule = rule::Eof;
+
+  fn context(self) -> &'lex Context {
+    self.ctx
+  }
 
   fn spec(self) -> &'lex Spec {
     self.spec
@@ -276,6 +295,7 @@ impl Spanned for Eof<'_> {
 #[derive(Copy, Clone)]
 pub struct Keyword<'lex> {
   lexeme: Lexeme<rule::Keyword>,
+  ctx: &'lex Context,
   spec: &'lex Spec,
   span: SpanId,
   _ph: PhantomData<&'lex rt::Token>,
@@ -283,6 +303,10 @@ pub struct Keyword<'lex> {
 
 impl<'lex> Token<'lex> for Keyword<'lex> {
   type Rule = rule::Keyword;
+
+  fn context(self) -> &'lex Context {
+    self.ctx
+  }
 
   fn spec(self) -> &'lex Spec {
     self.spec
@@ -334,6 +358,7 @@ pub struct Bracket<'lex> {
   open: SpanId,
   close: SpanId,
   lexeme: Lexeme<rule::Bracket>,
+  ctx: &'lex Context,
   spec: &'lex Spec,
   contents: Cursor<'lex>,
 }
@@ -365,6 +390,10 @@ impl<'lex> Bracket<'lex> {
 
 impl<'lex> Token<'lex> for Bracket<'lex> {
   type Rule = rule::Bracket;
+
+  fn context(self) -> &'lex Context {
+    self.ctx
+  }
 
   fn spec(self) -> &'lex Spec {
     self.spec
@@ -420,6 +449,7 @@ impl Spanned for Bracket<'_> {
 #[derive(Copy, Clone)]
 pub struct Ident<'lex> {
   tok: &'lex rt::Token,
+  ctx: &'lex Context,
   spec: &'lex Spec,
 }
 
@@ -438,8 +468,8 @@ impl<'lex> Ident<'lex> {
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_prefix(&self, ctx: &Context, expected: &str) -> bool {
-    self.prefix().is_some_and(|s| s.text(ctx) == expected)
+  pub fn has_prefix(&self, expected: &str) -> bool {
+    self.prefix().is_some_and(|s| s.text(self.ctx) == expected)
   }
 
   /// Returns this token's suffix.
@@ -448,13 +478,17 @@ impl<'lex> Ident<'lex> {
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_suffix(&self, ctx: &Context, expected: &str) -> bool {
-    self.suffix().is_some_and(|s| s.text(ctx) == expected)
+  pub fn has_suffix(&self, expected: &str) -> bool {
+    self.suffix().is_some_and(|s| s.text(self.ctx) == expected)
   }
 }
 
 impl<'lex> Token<'lex> for Ident<'lex> {
   type Rule = rule::Ident;
+
+  fn context(self) -> &'lex Context {
+    self.ctx
+  }
 
   fn spec(self) -> &'lex Spec {
     self.spec
@@ -529,6 +563,7 @@ impl Spanned for Ident<'_> {
 pub struct Digital<'lex> {
   tok: &'lex rt::Token,
   idx: usize,
+  ctx: &'lex Context,
   spec: &'lex Spec,
 }
 
@@ -570,6 +605,7 @@ impl<'lex> Digital<'lex> {
   pub fn exponents(self) -> impl Iterator<Item = Digital<'lex>> {
     (self.idx..self.exponent_slice().len()).map(move |idx| Self {
       tok: self.tok,
+      ctx: self.ctx,
       idx: idx + 1,
       spec: self.spec,
     })
@@ -585,8 +621,8 @@ impl<'lex> Digital<'lex> {
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_prefix(&self, ctx: &Context, expected: &str) -> bool {
-    self.prefix().is_some_and(|s| s.text(ctx) == expected)
+  pub fn has_prefix(&self, expected: &str) -> bool {
+    self.prefix().is_some_and(|s| s.text(self.ctx) == expected)
   }
 
   /// Returns this token's suffix.
@@ -600,8 +636,8 @@ impl<'lex> Digital<'lex> {
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_suffix(&self, ctx: &Context, expected: &str) -> bool {
-    self.suffix().is_some_and(|s| s.text(ctx) == expected)
+  pub fn has_suffix(&self, expected: &str) -> bool {
+    self.suffix().is_some_and(|s| s.text(self.ctx) == expected)
   }
 
   /// Parses this token as an integer.
@@ -614,7 +650,6 @@ impl<'lex> Digital<'lex> {
   #[track_caller]
   pub fn to_int<N>(
     self,
-    ctx: &Context,
     range: impl RangeBounds<N>,
     report: &Report,
   ) -> N
@@ -635,7 +670,7 @@ impl<'lex> Digital<'lex> {
         .unexpected("exponent", self.lexeme(), extra);
     }
 
-    self.to_ints(ctx, range, report).drain(..).next().unwrap()
+    self.to_ints(range, report).drain(..).next().unwrap()
   }
 
   /// Parses the blocks of this digital literal as a sequence of integers;
@@ -646,7 +681,6 @@ impl<'lex> Digital<'lex> {
   #[track_caller]
   pub fn to_ints<N>(
     self,
-    ctx: &Context,
     range: impl RangeBounds<N>,
     report: &Report,
   ) -> Vec<N>
@@ -660,7 +694,7 @@ impl<'lex> Digital<'lex> {
     self
       .digit_blocks()
       .map(|span| {
-        let text = span.text(ctx);
+        let text = span.text(self.ctx);
         let buf;
         let text =
           if !rule.separator.is_empty() && text.contains(&*rule.separator) {
@@ -709,11 +743,10 @@ impl<'lex> Digital<'lex> {
   #[track_caller]
   pub fn to_float<Fp: fp::Parse>(
     self,
-    ctx: &Context,
     range: impl RangeBounds<Fp>,
     report: &Report,
   ) -> Result<Fp, fp::Exotic> {
-    let fp: Fp = self.parse_fp(ctx, report, false)?;
+    let fp: Fp = self.parse_fp(self.ctx, report, false)?;
 
     if !fp.__is_finite() || !range.contains(&fp) {
       report.builtins(self.spec()).literal_out_of_range(
@@ -736,11 +769,10 @@ impl<'lex> Digital<'lex> {
   #[track_caller]
   pub fn to_float_exact<Fp: fp::Parse>(
     self,
-    ctx: &Context,
     range: impl RangeBounds<Fp>,
     report: &Report,
   ) -> Result<Fp, fp::Exotic> {
-    let fp: Fp = self.parse_fp(ctx, report, true)?;
+    let fp: Fp = self.parse_fp(self.ctx, report, true)?;
 
     if !fp.__is_finite() || !range.contains(&fp) {
       report.builtins(self.spec()).literal_out_of_range(
@@ -870,6 +902,10 @@ impl_radix! {
 impl<'lex> Token<'lex> for Digital<'lex> {
   type Rule = rule::Digital;
 
+  fn context(self) -> &'lex Context {
+    self.ctx
+  }
+
   fn spec(self) -> &'lex Spec {
     self.spec
   }
@@ -934,6 +970,7 @@ impl Spanned for Digital<'_> {
 #[derive(Copy, Clone)]
 pub struct Quoted<'lex> {
   tok: &'lex rt::Token,
+  ctx: &'lex Context,
   spec: &'lex Spec,
 }
 
@@ -969,17 +1006,24 @@ impl<'lex> Quoted<'lex> {
     self.content_slice().iter().copied()
   }
 
+  /// Returns the unique single [`Content`] of this token, if it is unique.
+  pub fn unique_content(self) -> Option<Content> {
+    match self.content_slice() {
+      [unique] => Some(*unique),
+      _ => None
+    }
+  }
+
   /// Constructs a UTF-8 string in the "obvious way", using this token and a
   /// mapping function for escapes.
   pub fn to_utf8(
     self,
-    ctx: &Context,
     mut decode_esc: impl FnMut(SpanId, Option<SpanId>, &mut String),
   ) -> String {
     let total = self
       .raw_content()
       .map(|c| match c {
-        Content::Lit(sp) => sp.text(ctx).len(),
+        Content::Lit(sp) => sp.text(self.ctx).len(),
         Content::Esc(..) => 1,
       })
       .sum();
@@ -987,7 +1031,7 @@ impl<'lex> Quoted<'lex> {
     let mut buf = String::with_capacity(total);
     for chunk in self.raw_content() {
       match chunk {
-        Content::Lit(sp) => buf.push_str(sp.text(ctx)),
+        Content::Lit(sp) => buf.push_str(sp.text(self.ctx)),
         Content::Esc(sp, data) => decode_esc(sp, data, &mut buf),
       }
     }
@@ -1007,8 +1051,8 @@ impl<'lex> Quoted<'lex> {
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_prefix(self, ctx: &Context, expected: &str) -> bool {
-    self.prefix().is_some_and(|s| s.text(ctx) == expected)
+  pub fn has_prefix(self, expected: &str) -> bool {
+    self.prefix().is_some_and(|s| s.text(self.ctx) == expected)
   }
 
   /// Returns this token's suffix.
@@ -1017,8 +1061,8 @@ impl<'lex> Quoted<'lex> {
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_suffix(self, ctx: &Context, expected: &str) -> bool {
-    self.suffix().is_some_and(|s| s.text(ctx) == expected)
+  pub fn has_suffix(self, expected: &str) -> bool {
+    self.suffix().is_some_and(|s| s.text(self.ctx) == expected)
   }
 }
 
@@ -1058,6 +1102,10 @@ impl<SpanId> Content<SpanId> {
 
 impl<'lex> Token<'lex> for Quoted<'lex> {
   type Rule = rule::Quoted;
+
+  fn context(self) -> &'lex Context {
+    self.ctx
+  }
 
   fn spec(self) -> &'lex Spec {
     self.spec
@@ -1114,6 +1162,10 @@ impl Spanned for Quoted<'_> {
 impl<'lex> Token<'lex> for Never {
   type Rule = Never;
 
+  fn context(self) -> &'lex Context {
+    self.from_nothing_anything()
+  }
+
   fn spec(self) -> &'lex Spec {
     self.from_nothing_anything()
   }
@@ -1143,12 +1195,13 @@ impl From<Never> for Any<'_> {
 
 /// Converts a lexeme into a string, for printing as a diagnostic.
 impl<'lex> Any<'lex> {
-  pub(crate) fn to_yarn(self, ctx: &Context) -> YarnBox<'lex, str> {
+  pub(crate) fn to_yarn(self) -> YarnBox<'lex, str> {
     let spec = self.spec();
     if let Some(name) = spec.rule_name(self.lexeme()) {
       return name.to_box();
     }
 
+    let ctx = self.context();
     let (pre, suf, kind) = match self {
       Any::Eof(_) => return yarn!("<eof>"),
       Any::Keyword(tok) => return yarn!("`{}`", tok.text(ctx)),

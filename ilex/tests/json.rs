@@ -249,7 +249,7 @@ fn parse0(
   cursor: &mut Cursor,
 ) -> Json {
   let quote2str = |str: token::Quoted| -> String {
-    str.to_utf8(ctx, |key, data, buf| {
+    str.to_utf8(|key, data, buf| {
       let char = match key.text(ctx) {
         "\\\"" => '\"',
         r"\\" => '\\',
@@ -288,7 +288,7 @@ fn parse0(
     .case(json.true_, |_, _| Json::Bool(true))
     .case(json.string, |str: token::Quoted, _| Json::Str(quote2str(str)))
     .case(json.number, |num: token::Digital, _| {
-      Json::Num(num.to_float::<Fp64>(ctx, .., report).unwrap().to_hard())
+      Json::Num(num.to_float::<Fp64>(.., report).unwrap().to_hard())
     })
     .case(json.array, |array: token::Bracket, _| {
       let mut trailing = None;

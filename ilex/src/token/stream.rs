@@ -4,6 +4,8 @@ use std::iter;
 use std::marker::PhantomData;
 use std::mem;
 
+use crate::file::Context;
+use crate::file::File;
 use crate::file::SpanId;
 use crate::report::Report;
 use crate::rt;
@@ -13,26 +15,40 @@ use crate::spec::Lexeme;
 use crate::spec::Spec;
 use crate::token;
 
-#[cfg(doc)]
-use crate::file::File;
-
 /// A tree-like stream of tokens.
 ///
 /// This is type returned by by [`File::lex()`] when lexing succeeds.
 #[derive(Clone)]
-pub struct Stream<'spec> {
-  pub(crate) spec: &'spec Spec,
+pub struct Stream<'ctx> {
+  pub(crate) file: File<'ctx>,
+  pub(crate) spec: &'ctx Spec,
   pub(crate) toks: Vec<rt::Token>,
 }
 
-impl<'spec> Stream<'spec> {
+impl<'ctx> Stream<'ctx> {
   /// Returns a cursor over this stream.
   pub fn cursor(&self) -> Cursor {
     Cursor {
+      file: self.file,
       spec: self.spec,
       toks: &self.toks,
       cursor: 0,
     }
+  }
+
+  /// Returns the source code context this stream is associated with.
+  pub fn context(&self) -> &'ctx Context {
+    self.file.context()
+  }
+
+  /// Returns the file this stream was lexed from.
+  pub fn file(&self) -> File<'ctx> {
+    self.file
+  }
+
+  /// Returns the lexer spec this stream was lexed with.
+  pub fn spec(&self) -> &'ctx Spec {
+    self.spec
   }
 }
 
@@ -57,6 +73,7 @@ impl fmt::Debug for Stream<'_> {
 /// also be queried for more specific token kinds.
 #[derive(Copy, Clone)]
 pub struct Cursor<'lex> {
+  file: File<'lex>,
   spec: &'lex Spec,
   toks: &'lex [rt::Token],
   cursor: usize,
@@ -65,6 +82,21 @@ pub struct Cursor<'lex> {
 impl<'lex> Cursor<'lex> {
   fn end(&self) -> SpanId {
     self.toks.last().unwrap().span
+  }
+
+  /// Returns the source code context this stream is associated with.
+  pub fn context(&self) -> &'lex Context {
+    self.file.context()
+  }
+
+  /// Returns the file this stream was lexed from.
+  pub fn file(&self) -> File<'lex> {
+    self.file
+  }
+
+  /// Returns the lexer spec this stream was lexed with.
+  pub fn spec(&self) -> &'lex Spec {
+    self.spec
   }
 
   /// Returns whether this cursor has yielded all of its tokens.
@@ -187,10 +219,12 @@ impl<'lex> Cursor<'lex> {
   }
 
   pub(crate) fn fake_token(
+    file: File<'lex>,
     spec: &'lex Spec,
     tok: &'lex rt::Token,
   ) -> token::Any<'lex> {
     Self {
+      file,
       spec,
       toks: array::from_ref(tok),
       cursor: 0,
@@ -232,13 +266,18 @@ impl<'lex> Iterator for Cursor<'lex> {
     let next = match &tok.kind {
       Kind::Eof => {
         self.cursor += 1;
-        token::Any::Eof(token::Eof { span: tok.span, spec: self.spec })
+        token::Any::Eof(token::Eof {
+          span: tok.span,
+          ctx: self.context(),
+          spec: self.spec,
+        })
       }
 
       Kind::Keyword => {
         self.cursor += 1;
         token::Any::Keyword(token::Keyword {
           lexeme: tok.lexeme.cast(),
+          ctx: self.context(),
           spec: self.spec,
           span: tok.span,
           _ph: PhantomData,
@@ -256,6 +295,7 @@ impl<'lex> Iterator for Cursor<'lex> {
             open: tok.span,
             close: tok.span,
             lexeme: tok.lexeme.cast(),
+            ctx: self.context(),
             spec: self.spec,
             contents: *self,
           }));
@@ -275,8 +315,10 @@ impl<'lex> Iterator for Cursor<'lex> {
           open: tok.span,
           close: close.span,
           lexeme: tok.lexeme.cast(),
+          ctx: self.context(),
           spec: self.spec,
           contents: Cursor {
+            file: self.file,
             spec: self.spec,
             toks: &self.toks[open_idx + 1..close_idx],
             cursor: 0,
@@ -290,17 +332,30 @@ impl<'lex> Iterator for Cursor<'lex> {
 
       Kind::Ident { .. } => {
         self.cursor += 1;
-        token::Any::Ident(token::Ident { tok, spec: self.spec })
+        token::Any::Ident(token::Ident {
+          tok,
+          ctx: self.context(),
+          spec: self.spec,
+        })
       }
 
       Kind::Quoted { .. } => {
         self.cursor += 1;
-        token::Any::Quoted(token::Quoted { tok, spec: self.spec })
+        token::Any::Quoted(token::Quoted {
+          tok,
+          ctx: self.context(),
+          spec: self.spec,
+        })
       }
 
       Kind::Digital { .. } => {
         self.cursor += 1;
-        token::Any::Digital(token::Digital { tok, idx: 0, spec: self.spec })
+        token::Any::Digital(token::Digital {
+          tok,
+          ctx: self.context(),
+          idx: 0,
+          spec: self.spec,
+        })
       }
     };
 
