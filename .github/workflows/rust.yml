@@ -46,4 +46,11 @@ jobs:
       run: rustup +$NIGHTLY component add miri
 
     - name: Run tests under Miri
-      run: cargo +$NIGHTLY miri test
+      run: cargo +$NIGHTLY miri test --workspace --exclude ilex
+
+    # Most of ilex's tests are extremely slow under Miri.
+    # The LLVM syntax test alone takes 10 minutes or so on a GH runner.
+    - name: Run some `ilex` tests under Miri
+      run: |
+        cargo +$NIGHTLY miri test -p ilex --lib
+        cargo +$NIGHTLY miri test -p ilex --test greedy
