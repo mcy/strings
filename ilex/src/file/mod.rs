@@ -85,11 +85,11 @@ impl<'ctx> File<'ctx> {
   }
 
   /// Tokenizes the this file according to `spec` and generates a token stream.
-  pub fn lex<'spec>(
+  pub fn lex(
     self,
-    spec: &'spec Spec,
+    spec: &'ctx Spec,
     report: &Report,
-  ) -> Result<token::Stream<'spec>, Fatal> {
+  ) -> Result<token::Stream<'ctx>, Fatal> {
     rt::lex(self, report, spec)
   }
 }

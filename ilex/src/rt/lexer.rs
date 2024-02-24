@@ -24,9 +24,9 @@ use super::unicode::is_xid;
 
 /// The lexer state struct, that tracks everything going on during a lexing
 /// operation.
-pub struct Lexer<'a, 'spec, 'ctx> {
+pub struct Lexer<'a, 'ctx> {
   report: &'a Report,
-  spec: &'spec Spec,
+  spec: &'ctx Spec,
   file: File<'ctx>,
 
   cursor: usize,
@@ -46,9 +46,9 @@ pub struct Closer {
   close: Yarn,
 }
 
-impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
+impl<'a, 'ctx> Lexer<'a, 'ctx> {
   /// Creates a new lexer.
-  pub fn new(file: File<'ctx>, report: &'a Report, spec: &'spec Spec) -> Self {
+  pub fn new(file: File<'ctx>, report: &'a Report, spec: &'ctx Spec) -> Self {
     Lexer {
       eof: file.span(file.len()..file.len()).intern(file.context()),
       cache: Cache::new(&spec.dfa().engine),
@@ -79,7 +79,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
   }
 
   /// Returns the spec we're lexing against.
-  pub fn spec(&self) -> &'spec Spec {
+  pub fn spec(&self) -> &'ctx Spec {
     self.spec
   }
 
@@ -265,7 +265,7 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
     }
   }
 
-  pub fn finish(mut self) -> token::Stream<'spec> {
+  pub fn finish(mut self) -> token::Stream<'ctx> {
     self.add_token(rt::Token {
       kind: rt::Kind::Eof,
       span: self.eof,
@@ -281,6 +281,6 @@ impl<'a, 'spec, 'ctx> Lexer<'a, 'spec, 'ctx> {
         .unclosed(open, &close.close, Lexeme::eof(), self.eof());
     }
 
-    token::Stream { spec: self.spec, toks: self.tokens }
+    token::Stream { file: self.file, spec: self.spec, toks: self.tokens }
   }
 }

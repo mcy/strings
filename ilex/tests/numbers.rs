@@ -93,7 +93,7 @@ fn numbers() {
       let value = token::switch()
         .case(Lexeme::eof(), |_, _| Err(false))
         .cases([lex.dec, lex.bin, lex.oct, lex.hex, lex.qua], |num, _| {
-          Ok(num.to_float::<Fp64>(&ctx, .., &report).unwrap())
+          Ok(num.to_float::<Fp64>(.., &report).unwrap())
         })
         .take(cursor, &report);
       match value {

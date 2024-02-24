@@ -498,7 +498,7 @@ pub fn emit(lexer: &mut Lexer) {
           prefix,
           suffix,
         };
-        let token = Cursor::fake_token(lexer.spec(), &tok);
+        let token = Cursor::fake_token(lexer.file(), lexer.spec(), &tok);
 
         // This happens later so we have access to the full spans of
         // the digit blocks.
@@ -747,6 +747,7 @@ pub fn emit(lexer: &mut Lexer) {
   if match_.extra > 0 {
     let expected = if generated_token {
       Expected::Token(token::Cursor::fake_token(
+        lexer.file(),
         lexer.spec(),
         lexer.last_token(),
       ))
@@ -778,6 +779,7 @@ pub fn emit(lexer: &mut Lexer) {
 
       let expected = if generated_token {
         Expected::Token(token::Cursor::fake_token(
+          lexer.file(),
           lexer.spec(),
           lexer.last_token(),
         ))
