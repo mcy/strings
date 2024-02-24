@@ -6,6 +6,7 @@ use std::hash::Hasher;
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
+use std::ptr::NonNull;
 use std::slice;
 use std::str;
 use std::str::Utf8Error;
@@ -314,14 +315,22 @@ where
   ///
   /// ```
   /// # use byteyarn::*;
-  /// let boxed = yarn!("jellybeans").into_boxed_bytes();
-  /// assert_eq!(&boxed[..], b"jellybeans");
+  /// let boxed = yarn!("jellybeans").into_box();
+  /// assert_eq!(&*boxed, "jellybeans");
+  ///
+  /// # // This tickles a weird edge case that MIRI caught.
+  /// let empty = yarn!("").into_box();
+  /// assert_eq!(&*empty, "");
   /// ```
   pub fn into_box(self) -> Box<Buf> {
     if !self.raw.on_heap() {
       unsafe {
         let layout = buf_trait::layout_of(self.as_slice());
-        let ptr = std::alloc::alloc(layout);
+        let ptr = match layout.size() {
+          0 => NonNull::<Buf::Element>::dangling().as_ptr() as *mut u8,
+          _ => std::alloc::alloc(layout),
+        };
+
         if ptr.is_null() {
           std::alloc::handle_alloc_error(layout);
         }
