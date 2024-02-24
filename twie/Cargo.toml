@@ -1,6 +1,6 @@
 [package]
 name = "twie"
-version = "0.4.1"
+version = "0.5.0"
 description = "fast and compact prefix tries"
 
 edition.workspace = true
@@ -12,6 +12,6 @@ license.workspace = true
 
 [dependencies]
 buf-trait = { version = "0.4", path = "../buf-trait" }
-byteyarn = { version = "0.4", path = "../byteyarn" }
+byteyarn = { version = "0.5", path = "../byteyarn" }
 
 boxy = "0.1.0"

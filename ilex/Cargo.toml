@@ -1,6 +1,6 @@
 [package]
 name = "ilex"
-version = "0.4.1"
+version = "0.5.0"
 description = "quick and easy lexers for C-like languages"
 
 edition.workspace = true
@@ -11,10 +11,10 @@ keywords.workspace = true
 license.workspace = true
 
 [dependencies]
-byteyarn = { version = "0.4", path = "../byteyarn" }
-twie = { version = "0.4", path = "../twie" }
+byteyarn = { version = "0.5", path = "../byteyarn" }
+twie = { version = "0.5", path = "../twie" }
 
-ilex-attr = { version = "0.4.1", path = "attr" }
+ilex-attr = { version = "0.5.0", path = "attr" }
 
 annotate-snippets = "0.10.0"
 camino = "1.1.6"
