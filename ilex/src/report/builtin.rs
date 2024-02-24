@@ -43,9 +43,7 @@ impl Builtins<'_> {
       .error(f!(
         "unexpected {} in {}",
         found.for_user_diagnostic(self.spec),
-        unexpected_in
-          .into()
-          .for_user_diagnostic(self.spec),
+        unexpected_in.into().for_user_diagnostic(self.spec),
       ))
       .at(at)
       .reported_at(Location::caller());
@@ -82,9 +80,7 @@ impl Builtins<'_> {
       .error(f!(
         "extraneous character{} after {}",
         plural(found.chars().count()),
-        unexpected_in
-          .into()
-          .for_user_diagnostic(self.spec),
+        unexpected_in.into().for_user_diagnostic(self.spec),
       ))
       .at(at)
       .remark(
@@ -137,10 +133,7 @@ impl Builtins<'_> {
 
     let diagnostic = self
       .report
-      .error(f!(
-        "unexpected closing {}",
-        found.for_user_diagnostic(self.spec)
-      ))
+      .error(f!("unexpected closing {}", found.for_user_diagnostic(self.spec)))
       .saying(at, f!("expected to be opened by `{expected}`"))
       .reported_at(Location::caller());
 
@@ -186,9 +179,7 @@ impl Builtins<'_> {
       .report
       .error(f!(
         "unexpected non-ASCII characters in {}",
-        expected
-          .into()
-          .for_user_diagnostic(self.spec)
+        expected.into().for_user_diagnostic(self.spec)
       ))
       .at(at)
       .reported_at(Location::caller())
@@ -260,10 +251,7 @@ impl Builtins<'_> {
 
     self
       .report
-      .error(f!(
-        "{} out of span",
-        what.into().for_user_diagnostic(self.spec)
-      ))
+      .error(f!("{} out of span", what.into().for_user_diagnostic(self.spec)))
       .at(at)
       .note(f!(
         "expected value in the span {start}{}..{}{end}",

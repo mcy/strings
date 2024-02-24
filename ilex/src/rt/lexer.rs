@@ -281,6 +281,10 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
         .unclosed(open, &close.close, Lexeme::eof(), self.eof());
     }
 
-    token::Stream { file: self.file, spec: self.spec, toks: self.tokens }
+    token::Stream {
+      file: self.file,
+      spec: self.spec,
+      toks: self.tokens,
+    }
   }
 }

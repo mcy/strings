@@ -648,11 +648,7 @@ impl<'lex> Digital<'lex> {
   /// Parse failures become diagnostics, and an unspecified value is provided
   /// for a failed integer.
   #[track_caller]
-  pub fn to_int<N>(
-    self,
-    range: impl RangeBounds<N>,
-    report: &Report,
-  ) -> N
+  pub fn to_int<N>(self, range: impl RangeBounds<N>, report: &Report) -> N
   where
     N: Bounded + PartialOrd + FromRadix + fmt::Display,
   {
@@ -679,11 +675,7 @@ impl<'lex> Digital<'lex> {
   /// Parse failures become diagnostics, and an unspecified value is provided
   /// for a failed integer.
   #[track_caller]
-  pub fn to_ints<N>(
-    self,
-    range: impl RangeBounds<N>,
-    report: &Report,
-  ) -> Vec<N>
+  pub fn to_ints<N>(self, range: impl RangeBounds<N>, report: &Report) -> Vec<N>
   where
     N: Bounded + PartialOrd + FromRadix + fmt::Display,
   {
@@ -1010,7 +1002,7 @@ impl<'lex> Quoted<'lex> {
   pub fn unique_content(self) -> Option<Content> {
     match self.content_slice() {
       [unique] => Some(*unique),
-      _ => None
+      _ => None,
     }
   }
 
