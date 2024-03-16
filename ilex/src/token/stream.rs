@@ -399,7 +399,7 @@ pub mod switch {
     pub fn case<'lex, T, R: Rule>(
       self,
       lexeme: Lexeme<R>,
-      then: impl FnMut(R::Token<'lex>, &mut Cursor) -> T,
+      then: impl FnMut(R::Token<'lex>, &mut Cursor<'lex>) -> T,
     ) -> Switch<impl Impl<'lex, T>>
     where
       X: Impl<'lex, T>,
@@ -414,7 +414,7 @@ pub mod switch {
     pub fn cases<'lex, T, R: Rule, const LEXEMES: usize>(
       self,
       lexemes: [Lexeme<R>; LEXEMES],
-      then: impl FnMut(R::Token<'lex>, &mut Cursor) -> T,
+      then: impl FnMut(R::Token<'lex>, &mut Cursor<'lex>) -> T,
     ) -> Switch<impl Impl<'lex, T>>
     where
       X: Impl<'lex, T>,
