@@ -15,7 +15,6 @@ use std::thread;
 
 use crate::f;
 use crate::file::Context;
-use crate::report::Fatal;
 use crate::report::Report;
 
 /// Executes a "compiler main function".
@@ -65,9 +64,9 @@ pub fn handle<R, Cb>(
   report: &Report,
   options: Options,
   callback: Cb,
-) -> Result<R, Fatal>
+) -> R
 where
-  Cb: FnOnce(&mut Context) -> Result<R, Fatal>,
+  Cb: FnOnce(&mut Context) -> R,
   Cb: UnwindSafe,
 {
   static ICE: Mutex<Option<Ice>> = Mutex::new(None);
@@ -82,24 +81,18 @@ where
     *ICE.lock().unwrap() = Some(Ice::generate(panic, options2.clone()));
   }));
 
-  let result = panic::catch_unwind(AssertUnwindSafe(|| callback(ctx)));
-
-  // If we caught a panic, add the ICE to our report. There may be an ICE in the
-  // global from some other panic that didn't make it all the way out here.
-  if result.is_err() {
+  panic::catch_unwind(AssertUnwindSafe(|| callback(ctx))).unwrap_or_else(|e| {
     let ice = ICE
       .lock()
       .unwrap()
       .take()
       .unwrap_or_else(|| Ice::with_no_context(options));
     ice.report(report);
-  }
-
-  // We have to do this here, and not in, say, the panic hook, because we want
-  // the report to be silently dropped.
-  let _ignored = report.write_out(io::stderr());
-
-  result.unwrap_or_else(|e| panic::resume_unwind(e))
+    // We have to do this here, and not in, say, the panic hook, because we want
+    // the report to be silently dropped.
+    let _ignored = report.write_out(io::stderr());
+    panic::resume_unwind(e)
+  })
 }
 
 /// An internal compiler error (ICE), captured from a panic handler.
