@@ -271,7 +271,7 @@ pub use {
   crate::{
     file::Context,
     file::File,
-    file::{Span, SpanId, Spanned},
+    file::{Span, Spanned},
     report::{Fatal, Report},
     rule::Rule,
     spec::{Lexeme, Spec, SpecBuilder},

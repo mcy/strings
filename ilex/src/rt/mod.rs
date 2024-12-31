@@ -83,7 +83,7 @@ pub enum Kind {
   Keyword,
   Ident(SpanId),
   Quoted {
-    content: Vec<Content>,
+    content: Vec<Content<SpanId>>,
     open: SpanId,
     close: SpanId,
   },

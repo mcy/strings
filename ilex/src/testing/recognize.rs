@@ -83,7 +83,7 @@ impl Matcher {
         state.match_options("suffix", suffix.as_ref(), tok.suffix());
       }
       (Kind::Quoted { delims, content, prefix, suffix }, Any::Quoted(tok)) => {
-        let (open, close) = tok.delimiters();
+        let [open, close] = tok.delimiters();
         state.match_spans("open quote", &delims.0, open);
         state.match_spans("close quote", &delims.1, close);
         state.match_options("prefix", prefix.as_ref(), tok.prefix());
