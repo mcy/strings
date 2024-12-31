@@ -365,18 +365,18 @@ pub struct Bracket<'lex> {
 
 impl<'lex> Bracket<'lex> {
   /// Returns this token's open delimiter.
-  pub fn open(self) -> SpanId {
-    self.open
+  pub fn open(self) -> Span {
+    self.open.span(self.ctx)
   }
 
   /// Returns this token's close delimiter.
-  pub fn close(self) -> SpanId {
-    self.close
+  pub fn close(self) -> Span {
+    self.close.span(self.ctx)
   }
 
   /// Returns this token's quote delimiters.
-  pub fn delimiters(self) -> [SpanId; 2] {
-    [self.open, self.close]
+  pub fn delimiters(self) -> [Span; 2] {
+    [self.open(), self.close()]
   }
 
   /// Returns a cursor over this bracket's internal tokens (not including the
@@ -455,16 +455,16 @@ pub struct Ident<'lex> {
 
 impl<'lex> Ident<'lex> {
   /// Returns this token's name span.
-  pub fn name(self) -> SpanId {
+  pub fn name(self) -> Span {
     match &self.tok.kind {
-      &Kind::Ident(name) => name,
+      &Kind::Ident(name) => name.span(self.ctx),
       _ => panic!("non-lexer::Kind::Ident inside of Ident"),
     }
   }
 
   /// Returns this token's prefix.
-  pub fn prefix(self) -> Option<SpanId> {
-    self.tok.prefix
+  pub fn prefix(self) -> Option<Span> {
+    self.tok.prefix.map(|s| s.span(self.ctx))
   }
 
   /// Checks whether this identifier has a particular prefix.
@@ -473,8 +473,8 @@ impl<'lex> Ident<'lex> {
   }
 
   /// Returns this token's suffix.
-  pub fn suffix(&self) -> Option<SpanId> {
-    self.tok.suffix
+  pub fn suffix(&self) -> Option<Span> {
+    self.tok.suffix.map(|s| s.span(self.ctx))
   }
 
   /// Checks whether this identifier has a particular prefix.
@@ -589,13 +589,13 @@ impl<'lex> Digital<'lex> {
   }
 
   /// Returns the span corresponding to [`Digital::sign()`].
-  pub fn sign_span(self) -> Option<SpanId> {
-    self.rt_blocks().sign.map(|(_, sp)| sp)
+  pub fn sign_span(self) -> Option<Span> {
+    self.rt_blocks().sign.map(|(_, sp)| sp.span(self.ctx))
   }
 
   /// Returns the point-separated digit chunks of this digital literal.
-  pub fn digit_blocks(self) -> impl Iterator<Item = SpanId> + 'lex {
-    self.digit_slice().iter().copied()
+  pub fn digit_blocks(self) -> impl Iterator<Item = Span> + 'lex {
+    self.digit_slice().iter().map(|s| s.span(self.ctx))
   }
 
   /// Returns the exponents of this digital literal, if it any.
@@ -612,12 +612,12 @@ impl<'lex> Digital<'lex> {
   }
 
   /// Returns this token's prefix.
-  pub fn prefix(self) -> Option<SpanId> {
+  pub fn prefix(self) -> Option<Span> {
     if self.idx > 0 {
-      return self.rt_blocks().prefix;
+      return self.rt_blocks().prefix.map(|s| s.span(self.ctx));
     }
 
-    self.tok.prefix
+    self.tok.prefix.map(|s| s.span(self.ctx))
   }
 
   /// Checks whether this identifier has a particular prefix.
@@ -626,13 +626,13 @@ impl<'lex> Digital<'lex> {
   }
 
   /// Returns this token's suffix.
-  pub fn suffix(&self) -> Option<SpanId> {
+  pub fn suffix(&self) -> Option<Span> {
     if self.idx > 0 {
       // Exponent tokens never have a suffix.
       return None;
     }
 
-    self.tok.suffix
+    self.tok.suffix.map(|s| s.span(self.ctx))
   }
 
   /// Checks whether this identifier has a particular prefix.
@@ -968,19 +968,21 @@ pub struct Quoted<'lex> {
 
 impl<'lex> Quoted<'lex> {
   /// Returns this token's open delimiter.
-  pub fn open(self) -> SpanId {
-    self.delimiters().0
+  pub fn open(self) -> Span {
+    self.delimiters()[0]
   }
 
   /// Returns this token's close delimiter.
-  pub fn close(self) -> SpanId {
-    self.delimiters().0
+  pub fn close(self) -> Span {
+    self.delimiters()[1]
   }
 
   /// Returns this token's quote delimiters.
-  pub fn delimiters(self) -> (SpanId, SpanId) {
+  pub fn delimiters(self) -> [Span; 2] {
     match &self.tok.kind {
-      &Kind::Quoted { open, close, .. } => (open, close),
+      &Kind::Quoted { open, close, .. } => {
+        [open.span(self.ctx), close.span(self.ctx)]
+      }
       _ => panic!("non-lexer::Kind::Quoted inside of Quoted"),
     }
   }
@@ -995,22 +997,27 @@ impl<'lex> Quoted<'lex> {
   /// strings. [`Quoted::to_utf8()`] helps with the common case of doing this for
   /// UTF-8 strings.
   pub fn raw_content(self) -> impl Iterator<Item = Content> + 'lex {
-    self.content_slice().iter().copied()
+    self.content_slice().iter().map(|c| match c {
+      Content::Lit(s) => Content::Lit(s.span(self.ctx)),
+      Content::Esc(s, e) => {
+        Content::Esc(s.span(self.ctx), e.map(|e| e.span(self.ctx)))
+      }
+    })
   }
 
   /// Returns the unique single [`Content`] of this token, if it is unique.
   pub fn unique_content(self) -> Option<Content> {
-    match self.content_slice() {
-      [unique] => Some(*unique),
-      _ => None,
+    if self.content_slice().len() == 1 {
+      return self.raw_content().next();
     }
+    None
   }
 
   /// Constructs a UTF-8 string in the "obvious way", using this token and a
   /// mapping function for escapes.
   pub fn to_utf8(
     self,
-    mut decode_esc: impl FnMut(SpanId, Option<SpanId>, &mut String),
+    mut decode_esc: impl FnMut(Span, Option<Span>, &mut String),
   ) -> String {
     let total = self
       .raw_content()
@@ -1030,7 +1037,7 @@ impl<'lex> Quoted<'lex> {
     buf
   }
 
-  fn content_slice(self) -> &'lex [Content] {
+  fn content_slice(self) -> &'lex [Content<SpanId>] {
     match &self.tok.kind {
       Kind::Quoted { content, .. } => content,
       _ => panic!("non-lexer::Kind::Quoted inside of Quoted"),
@@ -1038,8 +1045,8 @@ impl<'lex> Quoted<'lex> {
   }
 
   /// Returns this token's prefix.
-  pub fn prefix(self) -> Option<SpanId> {
-    self.tok.prefix
+  pub fn prefix(self) -> Option<Span> {
+    self.tok.prefix.map(|s| s.span(self.ctx))
   }
 
   /// Checks whether this identifier has a particular prefix.
@@ -1048,8 +1055,8 @@ impl<'lex> Quoted<'lex> {
   }
 
   /// Returns this token's suffix.
-  pub fn suffix(self) -> Option<SpanId> {
-    self.tok.suffix
+  pub fn suffix(self) -> Option<Span> {
+    self.tok.suffix.map(|s| s.span(self.ctx))
   }
 
   /// Checks whether this identifier has a particular prefix.
@@ -1063,31 +1070,28 @@ impl<'lex> Quoted<'lex> {
 /// The "span type" is configurable; this type is used by multiple parts of
 /// the library.
 #[derive(Copy, Clone, Debug)]
-pub enum Content<SpanId = self::SpanId> {
+pub enum Content<Span = self::Span> {
   /// A literal chunk, i.e. UTF-8 text directly from the source file.
-  Lit(SpanId),
+  Lit(Span),
 
   /// An escape sequence, which may have associated data (e.g. the `NN` from a
   /// `\xNN`).
-  Esc(SpanId, Option<SpanId>),
+  Esc(Span, Option<Span>),
 }
 
-impl<SpanId> Content<SpanId> {
+impl<Span> Content<Span> {
   /// Literal contents.
-  pub fn lit(chunk: impl Into<SpanId>) -> Self {
+  pub fn lit(chunk: impl Into<Span>) -> Self {
     Self::Lit(chunk.into())
   }
 
   /// Escaped contents.
-  pub fn esc(chunk: impl Into<SpanId>) -> Self {
+  pub fn esc(chunk: impl Into<Span>) -> Self {
     Self::Esc(chunk.into(), None)
   }
 
   /// Escaped contents.
-  pub fn esc_with_data(
-    chunk: impl Into<SpanId>,
-    data: impl Into<SpanId>,
-  ) -> Self {
+  pub fn esc_with_data(chunk: impl Into<Span>, data: impl Into<Span>) -> Self {
     Self::Esc(chunk.into(), Some(data.into()))
   }
 }

@@ -3,7 +3,6 @@
 use std::cell::RefCell;
 use std::fmt;
 use std::fmt::Write;
-use std::iter;
 use std::ops::Bound;
 use std::ops::Index;
 use std::ops::RangeBounds;
@@ -121,7 +120,7 @@ pub struct Span {
 /// This type is just a numeric ID; in order to do anything with it, you'll
 /// need to call one of the functions in [`Spanned`].
 #[derive(Copy, Clone)]
-pub struct SpanId(u32);
+pub(crate) struct SpanId(u32);
 
 impl fmt::Debug for SpanId {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -436,12 +435,29 @@ impl<'ctx> Comments<'ctx> {
   }
 }
 
-impl<'a> IntoIterator for &'a Comments<'_> {
-  type Item = SpanId;
-  type IntoIter = iter::Copied<slice::Iter<'a, SpanId>>;
+impl<'a, 'ctx> IntoIterator for &'a Comments<'ctx> {
+  type Item = Span;
+  type IntoIter = CommentsIter<'a, 'ctx>;
 
   fn into_iter(self) -> Self::IntoIter {
-    unsafe { &*self.slice.1 }.iter().copied()
+    CommentsIter {
+      iter: unsafe { &*self.slice.1 }.iter(),
+      ctx: self.ctx,
+    }
+  }
+}
+
+// Iterator over a [`Comments`].
+pub struct CommentsIter<'a, 'ctx> {
+  iter: slice::Iter<'a, SpanId>,
+  ctx: &'ctx Context,
+}
+
+impl<'a, 'ctx> Iterator for CommentsIter<'a, 'ctx> {
+  type Item = Span;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    self.iter.next().map(|s| s.span(self.ctx))
   }
 }
 

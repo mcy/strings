@@ -11,7 +11,6 @@ use ilex::token;
 use ilex::token::Content as C;
 use ilex::token::Cursor;
 use ilex::Lexeme;
-use ilex::Spanned;
 
 #[ilex::spec]
 struct JsonSpec {
