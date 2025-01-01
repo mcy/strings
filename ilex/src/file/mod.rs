@@ -109,30 +109,6 @@ pub struct Span {
   end: u32,
 }
 
-/// An interned [`Span`].
-///
-/// Most tokens' spans will never be inspected after lexing, so it's better to
-/// make them small for memory saving reasons. This abstraction allows the
-/// library to optimize internal handling of spans over time.
-///
-/// This type is just a numeric ID; in order to do anything with it, you'll
-/// need to call one of the functions in [`Spanned`].
-#[derive(Copy, Clone)]
-pub(crate) struct SpanId(u32);
-
-impl fmt::Debug for SpanId {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    CTX_FOR_SPAN_DEBUG.with(|ctx| {
-      let ctx = ctx.borrow();
-      let Some(ctx) = &*ctx else {
-        return f.write_str("<elided>");
-      };
-
-      fmt::Debug::fmt(&Spanned::span(&self, ctx), f)
-    })
-  }
-}
-
 impl Span {
   /// Constructs a span from a file and a byte range within it.
   ///
@@ -285,19 +261,6 @@ impl Span {
 
     best.expect("attempted to join zero spans")
   }
-
-  /// Bakes this range into a span.
-  pub(crate) fn intern(self, ctx: &Context) -> SpanId {
-    ctx.new_span(self)
-  }
-
-  /// Bakes this range into a span.
-  pub(crate) fn intern_nonempty(self, ctx: &Context) -> Option<SpanId> {
-    if self.is_empty() {
-      return None;
-    }
-    Some(self.intern(ctx))
-  }
 }
 
 /// A syntax element which contains a span.
@@ -336,12 +299,6 @@ pub trait Spanned {
   /// Forwards to [`SpanId::text()`].
   fn text<'ctx>(&self, ctx: &'ctx Context) -> &'ctx str {
     self.span(ctx).text(ctx)
-  }
-}
-
-impl Spanned for SpanId {
-  fn span(&self, ctx: &Context) -> Span {
-    ctx.lookup_range(*self)
   }
 }
 

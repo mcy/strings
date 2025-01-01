@@ -7,10 +7,8 @@ use byteyarn::Yarn;
 use regex_automata::hybrid::dfa::Cache;
 
 use crate::f;
-use crate::file::Context;
 use crate::file::File;
 use crate::file::Span;
-use crate::file::SpanId;
 use crate::report::Builtins;
 use crate::report::Report;
 use crate::rt;
@@ -34,7 +32,6 @@ pub struct Lexer<'a, 'ctx> {
   closers: Vec<Closer>,
   comments: Vec<token::Id>,
 
-  eof: SpanId,
   cache: Cache,
 }
 
@@ -64,7 +61,6 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
       closers: Vec::new(),
       comments: Vec::new(),
 
-      eof: file.span(file.len()..file.len()).intern(file.context()),
       cache: Cache::new(&spec.dfa().engine),
     }
   }
@@ -112,18 +108,13 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
   }
 
   /// Returns the EOF span.
-  pub fn eof(&self) -> SpanId {
-    self.eof
+  pub fn eof(&self) -> Span {
+    self.file().span(self.file().len()..self.file().len())
   }
 
   /// Creates a new range in the current file.
   pub fn span(&self, range: impl RangeBounds<usize>) -> Span {
     self.file().span(range)
-  }
-
-  /// Creates a new range in the current file and bakes it.
-  pub fn intern(&self, range: impl RangeBounds<usize>) -> SpanId {
-    self.file().span(range).intern(self.ctx())
   }
 
   // Returns the span of the token at the given index.
@@ -134,11 +125,6 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
       .map(|p| p.end as usize)
       .unwrap_or(0);
     self.file().span(start..end)
-  }
-
-  /// Creates a new span in the current file with the given range.
-  pub fn ctx(&self) -> &'ctx Context {
-    self.file().context()
   }
 
   pub fn cache(&mut self) -> &mut Cache {

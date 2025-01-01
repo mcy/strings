@@ -17,8 +17,6 @@ use std::process;
 use std::sync::Arc;
 
 use crate::file::Context;
-#[cfg(doc)]
-use crate::file::SpanId;
 use crate::spec::Spec;
 
 mod builtin;

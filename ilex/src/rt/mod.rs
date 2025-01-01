@@ -3,7 +3,7 @@
 use std::cell::Cell;
 
 use crate::file::File;
-use crate::file::SpanId;
+use crate::file::Span;
 use crate::report::Fatal;
 use crate::report::Report;
 use crate::rule;
@@ -106,10 +106,35 @@ pub struct Digital {
 
 #[derive(Clone, Default)]
 pub struct DigitBlocks {
-  pub prefix: Option<SpanId>,
-  pub sign: Option<(Sign, SpanId)>,
-  pub blocks: Vec<SpanId>,
+  pub prefix: [u32; 2],
+  pub sign: Option<(Sign, [u32; 2])>,
+  pub blocks: Vec<[u32; 2]>,
   pub which_exp: usize,
+}
+
+impl DigitBlocks {
+  pub fn prefix(&self, file: File) -> Option<Span> {
+    if self.prefix == [0, 0] {
+      return None;
+    }
+    Some(file.span(self.prefix[0] as usize..self.prefix[1] as usize))
+  }
+
+  pub fn sign(&self, file: File) -> Option<Span> {
+    self
+      .sign
+      .map(|(_, [a, b])| file.span(a as usize..b as usize))
+  }
+
+  pub fn blocks<'a>(
+    &'a self,
+    file: File<'a>,
+  ) -> impl Iterator<Item = Span> + 'a {
+    self
+      .blocks
+      .iter()
+      .map(move |&[a, b]| file.span(a as usize..b as usize))
+  }
 }
 
 pub const WHITESPACE: Lexeme<rule::Any> = Lexeme::new(-1);
