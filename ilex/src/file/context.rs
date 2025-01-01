@@ -1,8 +1,6 @@
-use std::collections::HashMap;
 use std::fs;
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::sync::RwLockReadGuard;
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -34,7 +32,6 @@ pub struct State {
   files: Vec<(Utf8PathBuf, String)>,
 
   ranges: Vec<Span>,
-  comments: HashMap<(u32, u32), Vec<SpanId>>,
 }
 
 unsafe impl Send for Context {}
@@ -150,31 +147,6 @@ impl Context {
   pub(crate) fn lookup_range(&self, span: SpanId) -> Span {
     let state = self.state.read().unwrap();
     state.ranges[span.0 as usize]
-  }
-
-  pub(crate) fn lookup_comments(
-    &self,
-    file: File,
-    offset: usize,
-  ) -> (RwLockReadGuard<State>, *const [SpanId]) {
-    let state = self.state.read().unwrap();
-    let ptr = state
-      .comments
-      .get(&(file.idx as u32, offset as u32))
-      .map(|x| x.as_slice())
-      .unwrap_or_default() as *const [SpanId];
-    (state, ptr)
-  }
-
-  pub(crate) fn add_comment(&self, file: File, offset: usize, comment: SpanId) {
-    self
-      .state
-      .write()
-      .unwrap()
-      .comments
-      .entry((file.idx as u32, offset as u32))
-      .or_default()
-      .push(comment)
   }
 
   /// Creates a new synthetic span with the given contents.

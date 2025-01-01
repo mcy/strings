@@ -69,7 +69,7 @@ impl Dfa {
   /// length, plus potential lexical interpretations of that range.
   pub fn search(&self, lexer: &mut Lexer) -> Option<Match> {
     let dfa = &self.engine;
-    let haystack = lexer.rest();
+    let haystack = lexer.text(lexer.cursor()..);
 
     let mut state = dfa
       .start_state(lexer.cache(), &start::Config::new().anchored(Anchored::Yes))

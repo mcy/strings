@@ -1,4 +1,5 @@
 use std::mem;
+use std::num::NonZeroU32;
 use std::ops::Index;
 use std::ops::RangeBounds;
 
@@ -10,15 +11,16 @@ use crate::file::Context;
 use crate::file::File;
 use crate::file::Span;
 use crate::file::SpanId;
-use crate::file::Spanned;
 use crate::report::Builtins;
 use crate::report::Report;
 use crate::rt;
 use crate::rule;
+use crate::rule::Any;
 use crate::rule::Bracket;
 use crate::spec::Lexeme;
 use crate::spec::Spec;
 use crate::token;
+use crate::token::Stream;
 
 use super::unicode::is_xid;
 
@@ -26,13 +28,11 @@ use super::unicode::is_xid;
 /// operation.
 pub struct Lexer<'a, 'ctx> {
   report: &'a Report,
-  spec: &'ctx Spec,
-  file: File<'ctx>,
+  stream: Stream<'ctx>,
 
   cursor: usize,
-  tokens: Vec<rt::Token>,
   closers: Vec<Closer>,
-  comments: Vec<SpanId>,
+  comments: Vec<token::Id>,
 
   eof: SpanId,
   cache: Cache,
@@ -42,6 +42,7 @@ pub struct Lexer<'a, 'ctx> {
 pub struct Closer {
   lexeme: Lexeme<rule::Bracket>,
   open_idx: usize,
+  meta_idx: usize,
   original_open_idx: usize, // For diagnostics.
   close: Yarn,
 }
@@ -50,27 +51,22 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
   /// Creates a new lexer.
   pub fn new(file: File<'ctx>, report: &'a Report, spec: &'ctx Spec) -> Self {
     Lexer {
-      eof: file.span(file.len()..file.len()).intern(file.context()),
-      cache: Cache::new(&spec.dfa().engine),
-
-      file,
       report,
-      spec,
+      stream: Stream {
+        file,
+        spec,
+        toks: Vec::new(),
+        meta_idx: Vec::new(),
+        meta: Vec::new(),
+      },
 
       cursor: 0,
-      tokens: Vec::new(),
       closers: Vec::new(),
       comments: Vec::new(),
+
+      eof: file.span(file.len()..file.len()).intern(file.context()),
+      cache: Cache::new(&spec.dfa().engine),
     }
-  }
-
-  pub fn advance(&mut self, by: usize) {
-    assert!(
-      self.cursor.saturating_add(by) <= self.text(..).len(),
-      "ilex: advanced cursor beyond the end of text; this is a bug"
-    );
-
-    self.cursor += by;
   }
 
   /// Returns the report for diagnostics.
@@ -78,9 +74,18 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
     self.report
   }
 
+  /// Returns the stream this lexer is building.
+  pub fn stream(&self) -> &Stream<'ctx> {
+    &self.stream
+  }
+
+  pub(crate) fn stream_mut(&mut self) -> &mut Stream<'ctx> {
+    &mut self.stream
+  }
+
   /// Returns the spec we're lexing against.
   pub fn spec(&self) -> &'ctx Spec {
-    self.spec
+    self.stream.spec()
   }
 
   /// Returns the diagnostics builtins.
@@ -90,7 +95,7 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
 
   /// Returns the spec we're lexing against.
   pub fn file(&self) -> File<'ctx> {
-    self.file
+    self.stream.file()
   }
 
   /// Returns a slice of the current file being lexed.
@@ -98,17 +103,12 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
   where
     str: Index<R, Output = str>,
   {
-    self.file.text(range)
+    self.file().text(range)
   }
 
   /// Returns the current cursor position.
   pub fn cursor(&self) -> usize {
     self.cursor
-  }
-
-  /// Returns everything after the current cursor position.
-  pub fn rest(&self) -> &'ctx str {
-    self.text(self.cursor..)
   }
 
   /// Returns the EOF span.
@@ -118,12 +118,22 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
 
   /// Creates a new range in the current file.
   pub fn span(&self, range: impl RangeBounds<usize>) -> Span {
-    self.file.span(range)
+    self.file().span(range)
   }
 
   /// Creates a new range in the current file and bakes it.
   pub fn intern(&self, range: impl RangeBounds<usize>) -> SpanId {
-    self.file.span(range).intern(self.ctx())
+    self.file().span(range).intern(self.ctx())
+  }
+
+  // Returns the span of the token at the given index.
+  pub fn lookup_span(&self, idx: usize) -> Span {
+    let end = self.stream.toks[idx].end as usize;
+    let start = self.stream.toks[..idx]
+      .last()
+      .map(|p| p.end as usize)
+      .unwrap_or(0);
+    self.file().span(start..end)
   }
 
   /// Creates a new span in the current file with the given range.
@@ -135,26 +145,22 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
     &mut self.cache
   }
 
-  pub fn last_token(&self) -> &rt::Token {
-    self.tokens.last().unwrap()
-  }
-
   /// Pushes a closer.
   pub fn push_closer(&mut self, lexeme: Lexeme<Bracket>, close: Yarn) {
     self.closers.push(Closer {
       lexeme,
       close,
-      open_idx: self.tokens.len(),
-      original_open_idx: self.tokens.len(),
+      open_idx: self.stream.toks.len(),
+      meta_idx: self.stream.meta_idx.len(),
+      original_open_idx: self.stream.toks.len(),
     });
   }
 
   /// Pops a closer, if it is time for it.
   pub fn pop_closer(&mut self) {
-    let idx = self
-      .closers
-      .iter()
-      .rposition(|close| self.rest().starts_with(close.close.as_str()));
+    let idx = self.closers.iter().rposition(|close| {
+      self.text(self.cursor()..).starts_with(close.close.as_str())
+    });
     let Some(idx) = idx else { return };
     let len = self.closers.len();
 
@@ -167,43 +173,43 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
     }
 
     let start = self.cursor();
-    self.advance(close.close.len());
+    let mut end = start + close.close.len();
 
-    let close_idx = self.tokens.len();
-    let offset_to_open = (close_idx - close.open_idx) as u32;
+    let close_idx = self.stream.toks.len();
+    let meta_idx = self.stream.meta.len();
+    let offset = (close_idx - close.open_idx) as i32;
+    let meta_offset = (meta_idx - close.meta_idx) as i32;
 
-    match &mut self.tokens[close.open_idx].kind {
-      rt::Kind::Open { offset_to_close, .. } => {
-        *offset_to_close = offset_to_open
-      }
-      _ => {
-        panic!("ilex: lexer.closers.last().open_idx did not point to an rt::Kind::Open; this is a bug")
-      }
-    }
-    let open_sp = self.tokens[close.open_idx].span;
+    let Some(rt::Kind::Offset { cursor, meta }) =
+      &mut self.stream.meta[close.meta_idx].kind
+    else {
+      bug!("ilex: lexer.closers.last().open_idx did not point to an rt::Kind::Open")
+    };
+    *cursor += offset;
+    *meta += meta_offset;
 
-    let prev = self.rest().chars().next_back();
+    let open_sp = self.lookup_span(close.open_idx);
+
+    let rest = self.text(end..);
+    let prev = rest.chars().next_back();
     if prev.is_some_and(is_xid) {
-      let xids = self
-        .rest()
-        .find(|c| !is_xid(c))
-        .unwrap_or(self.rest().len());
+      let xids = rest.find(|c| !is_xid(c)).unwrap_or(rest.len());
       if xids > 0 {
-        let start = self.cursor();
-        self.advance(xids);
+        let start = end;
+        end += xids;
 
-        let span = self.span(start..self.cursor());
+        let span = self.span(start..end);
         self.builtins().extra_chars(
           self.spec().rule_name_or(
             close.lexeme.any(),
-            f!("{} ... {}", open_sp.text(self.file.context()), close.close),
+            f!("{} ... {}", open_sp.text(self.file().context()), close.close),
           ),
           span,
         );
       }
     }
 
-    let span = self.span(start..self.cursor).intern(self.ctx());
+    let span = self.span(start..end);
     if idx != self.closers.len() {
       // This is a so-called "mixed delimiter", and an error we need to
       // diagnose.
@@ -215,76 +221,110 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
       );
     }
 
-    let full_span =
-      self.intern(open_sp.span(self.ctx()).start()..self.cursor());
-    self.add_token(rt::Token {
-      kind: rt::Kind::Close { full_span, offset_to_open },
-      span,
-      lexeme: close.lexeme.any(),
-      prefix: None,
-      suffix: None,
-    });
+    self.add_token(
+      close.lexeme.any(),
+      end - start,
+      Some(rt::Kind::Offset { cursor: -offset, meta: -meta_offset }),
+    );
   }
 
-  /// Adds a new token, draining all of the saved-up comments.
-  pub fn add_token(&mut self, tok: rt::Token) {
-    let span = tok.span.span(self.ctx());
-    for comment in self.comments.drain(..) {
-      span.append_comment_span(self.file.context(), comment);
-    }
-
-    self.tokens.push(tok);
-  }
-
-  /// Adds a new token, draining all of the saved-up comments.
-  pub fn add_comment(&mut self, span: SpanId) {
-    self.comments.push(span);
-  }
-
-  /// Adds new unexpected tokens, starting from `start`. This may generate
-  /// multiple tokens, since it does not include whitespace in them.
-  pub fn add_unexpected(&mut self, mut start: usize, end: usize) {
-    let mut idx = start;
-    // Can't use a for loop, since that takes ownership of the iterator
-    // and that makes the self. calls below a problem.
-    while let Some(c) = self.text(idx..end).chars().next() {
-      if c.is_whitespace() {
-        if idx > start {
-          let span = self.span(start..idx);
-          self.builtins().unexpected_token(span);
-        }
-        start = idx + c.len_utf8();
+  /// Adds a new token.
+  pub fn add_token(
+    &mut self,
+    lexeme: Lexeme<rule::Any>,
+    len: usize,
+    kind: Option<rt::Kind>,
+  ) {
+    if lexeme.is_aux() {
+      if len == 0 {
+        return;
       }
 
-      idx += c.len_utf8();
+      if let Some(prev) = self.stream.toks.last_mut() {
+        if prev.lexeme == lexeme {
+          prev.end += len as u32;
+          self.cursor += len;
+          return;
+        }
+      }
     }
 
-    if idx > start {
-      let span = self.span(start..idx);
-      self.builtins().unexpected_token(span);
+    let new_len = self.cursor.saturating_add(len);
+    let total_len = self.text(..).len();
+
+    debug_assert!(
+      new_len <= total_len,
+      "ilex: advanced cursor beyond the end of text ({new_len} > {total_len}); this is a bug"
+    );
+
+    if cfg!(debug_assertions) && !lexeme.is_eof() && !lexeme.is_aux() {
+      match self.spec().rule(lexeme) {
+        Any::Bracket(_) if !matches!(kind, Some(rt::Kind::Offset { .. })) => {
+          bug!("missing rt::Metadata::Offset on bracket rule")
+        }
+        Any::Digital(_) if !matches!(kind, Some(rt::Kind::Digital(_))) => {
+          bug!("missing rt::Metadata::Digital on digital rule")
+        }
+        Any::Quoted(_) if !matches!(kind, Some(rt::Kind::Quoted(_))) => {
+          bug!("missing rt::Metadata::Quoted on quoted rule")
+        }
+        _ => {}
+      }
     }
+
+    let start = self.cursor();
+    self
+      .stream
+      .toks
+      .push(rt::Token { lexeme, end: (start + len) as u32 });
+
+    let mut meta = rt::Metadata { kind, comments: Vec::new() };
+
+    if lexeme.can_have_comments(self.spec()) {
+      meta.comments = mem::take(&mut self.comments);
+    }
+
+    if meta.kind.is_some() || !meta.comments.is_empty() {
+      self.stream.meta_idx.push(token::Id(
+        NonZeroU32::new(self.stream.toks.len() as u32).unwrap(),
+      ));
+      self.stream.meta.push(meta);
+    }
+
+    if !lexeme.is_eof()
+      && !lexeme.is_aux()
+      && matches!(self.spec().rule(lexeme), rule::Any::Comment(_))
+    {
+      self.comments.push(token::Id(
+        NonZeroU32::new(self.stream.toks.len() as u32).unwrap(),
+      ));
+    }
+
+    self.cursor += len;
+  }
+
+  pub fn skip_whitespace(&mut self) -> bool {
+    let len = self
+      .text(self.cursor()..)
+      .chars()
+      .take_while(|c| c.is_whitespace())
+      .map(char::len_utf8)
+      .sum();
+
+    self.add_token(rt::WHITESPACE, len, None);
+    len > 0
   }
 
   pub fn finish(mut self) -> token::Stream<'ctx> {
-    self.add_token(rt::Token {
-      kind: rt::Kind::Eof,
-      span: self.eof,
-      lexeme: Lexeme::eof().cast(),
-      prefix: None,
-      suffix: None,
-    });
+    self.add_token(Lexeme::eof().any(), 0, None);
 
     for close in mem::take(&mut self.closers) {
-      let open = self.tokens[close.original_open_idx].span;
+      let open = self.lookup_span(close.original_open_idx);
       self
         .builtins()
         .unclosed(open, &close.close, Lexeme::eof(), self.eof());
     }
 
-    token::Stream {
-      file: self.file,
-      spec: self.spec,
-      toks: self.tokens,
-    }
+    self.stream
   }
 }

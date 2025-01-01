@@ -68,7 +68,6 @@ impl Builtins<'_> {
   #[track_caller]
   pub(crate) fn extra_chars<'a>(
     &self,
-
     unexpected_in: impl Into<Expected<'a>>,
     at: impl Spanned,
   ) -> Diagnostic {

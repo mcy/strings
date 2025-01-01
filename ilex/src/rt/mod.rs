@@ -1,5 +1,7 @@
 //! The lexer runtime.
 
+use std::cell::Cell;
+
 use crate::file::File;
 use crate::file::SpanId;
 use crate::report::Fatal;
@@ -9,7 +11,6 @@ use crate::rule::Sign;
 use crate::spec::Lexeme;
 use crate::spec::Spec;
 use crate::token;
-use crate::token::Content;
 
 mod emit2;
 pub mod lexer;
@@ -26,41 +27,39 @@ pub fn lex<'ctx>(
 ) -> Result<token::Stream<'ctx>, Fatal> {
   let mut lexer = lexer::Lexer::new(file, report, spec);
 
-  let mut unexpected_start = None;
-  while let Some(next) = lexer.rest().chars().next() {
-    if !next.is_whitespace() {
-      let start = lexer.cursor();
+  let unexpected = Cell::new(None);
+  let diagnose_unexpected = |end: usize| {
+    let Some(start) = unexpected.take() else { return };
+    report
+      .builtins(spec)
+      .unexpected_token(file.span(start..end));
+  };
 
-      lexer.pop_closer();
-      if lexer.cursor() != start {
-        if let Some(ustart) = unexpected_start.take() {
-          lexer.add_unexpected(ustart, start);
-        }
-
-        continue;
-      }
-
-      emit2::emit(&mut lexer);
-      if lexer.cursor() != start {
-        if let Some(ustart) = unexpected_start.take() {
-          lexer.add_unexpected(ustart, start);
-        }
-
-        continue;
-      }
-
-      // We failed to make progress. Skip this character and start an
-      // "unexpected" token.
-      if unexpected_start.is_none() {
-        unexpected_start = Some(lexer.cursor());
-      }
+  loop {
+    let start = lexer.cursor();
+    if lexer.skip_whitespace() {
+      diagnose_unexpected(start);
     }
 
-    lexer.advance(next.len_utf8());
-  }
+    let start = lexer.cursor();
+    let Some(next) = lexer.text(lexer.cursor()..).chars().next() else { break };
 
-  if let Some(start) = unexpected_start {
-    lexer.add_unexpected(start, lexer.cursor());
+    lexer.pop_closer();
+    if lexer.cursor() > start {
+      diagnose_unexpected(start);
+      continue;
+    }
+
+    emit2::emit(&mut lexer);
+    if lexer.cursor() > start {
+      diagnose_unexpected(start);
+      continue;
+    }
+
+    lexer.add_token(UNEXPECTED, next.len_utf8(), None);
+    if unexpected.get().is_none() {
+      unexpected.set(Some(start))
+    }
   }
 
   report.fatal_or(lexer.finish())
@@ -69,41 +68,51 @@ pub fn lex<'ctx>(
 /// The internal representation of a token inside of a token stream.
 #[derive(Clone)]
 pub struct Token {
-  pub kind: Kind,
-  pub span: SpanId,
   pub lexeme: Lexeme<rule::Any>,
-  pub prefix: Option<SpanId>,
-  pub suffix: Option<SpanId>,
+  pub end: u32,
+}
+#[derive(Clone, Default)]
+pub struct Metadata {
+  pub kind: Option<Kind>,
+  pub comments: Vec<token::Id>,
 }
 
-/// A pared-down token kind.
 #[derive(Clone)]
 pub enum Kind {
-  Eof,
-  Keyword,
-  Ident(SpanId),
-  Quoted {
-    content: Vec<Content<SpanId>>,
-    open: SpanId,
-    close: SpanId,
-  },
-  Digital {
-    digits: DigitBlocks,
-    exponents: Vec<DigitBlocks>,
-  },
-  Open {
-    offset_to_close: u32,
-  },
-  Close {
-    offset_to_open: u32,
-    full_span: SpanId,
-  },
+  Quoted(Quoted),
+  Digital(Digital),
+  Offset { cursor: i32, meta: i32 },
 }
 
 #[derive(Clone)]
+pub struct Quoted {
+  // Offsets for the components of the string. First mark is the end of the
+  // open quote; following are alternating marks for textual and escape content.
+  // Adjacent escapes are separated by empty text content.
+  //
+  // Each text component consists of one mark, its end. Each escape consists of
+  // four marks, which refer to the end of the escape sequence prefix, the start of extra data, its end, and the
+  // end of the whole escape. This means that when we encounter \xNN, the
+  // positions of the marks are \x||NN||. When we encounter \u{NN}, the positions
+  // are \u|{|NN|}|. For \n, the positions are \n||||.
+  pub marks: Vec<u32>,
+}
+
+#[derive(Clone, Default)]
+pub struct Digital {
+  pub digits: DigitBlocks,
+  pub exponents: Vec<DigitBlocks>,
+}
+
+#[derive(Clone, Default)]
 pub struct DigitBlocks {
   pub prefix: Option<SpanId>,
   pub sign: Option<(Sign, SpanId)>,
   pub blocks: Vec<SpanId>,
   pub which_exp: usize,
 }
+
+pub const WHITESPACE: Lexeme<rule::Any> = Lexeme::new(-1);
+pub const UNEXPECTED: Lexeme<rule::Any> = Lexeme::new(-2);
+pub const PREFIX: Lexeme<rule::Any> = Lexeme::new(-3);
+pub const SUFFIX: Lexeme<rule::Any> = Lexeme::new(-4);

@@ -13,7 +13,7 @@ use crate::report::Report;
 /// almost always temporaries, e.g.
 ///
 /// ```
-/// # fn x(report: &ilex::Report, span: ilex::SpanId) {
+/// # fn x(report: &ilex::Report, span: ilex::Span) {
 /// report.error("my error message")
 ///   .saying(span, "this is bad code");
 /// # }
