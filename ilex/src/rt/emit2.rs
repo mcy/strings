@@ -8,7 +8,6 @@ use byteyarn::YarnBox;
 use crate::f;
 use crate::file::Context;
 use crate::file::Span;
-use crate::file::Spanned;
 use crate::plural;
 use crate::report::Expected;
 use crate::rt;
@@ -37,9 +36,8 @@ pub fn emit(lexer: &mut Lexer) {
 
   let start = lexer.cursor();
   let end = start + match_.len;
-  let range = lexer.span(start..end);
-  let span = range.intern(ctx);
-  let text = range.text(ctx);
+  let span = lexer.span(start..end);
+  let text = span.text(ctx);
   let end = end + match_.extra;
 
   // Now we have to decide which of `candidates` is the best one, i.e.,
@@ -67,7 +65,7 @@ pub fn emit(lexer: &mut Lexer) {
   // choices; that is independent of which token we decide to create.
   let mut best = None;
   'verify: for &c in &match_.candidates {
-    let [.., range, _] = find_affixes_partial(range, lexer.spec(), c, ctx);
+    let [.., range, _] = find_affixes_partial(span, lexer.spec(), c, ctx);
 
     // NOTE: We only need to find the first lexeme that is valid. If it's not
     // valid, we will diagnose that in the next stage.
@@ -195,8 +193,8 @@ pub fn emit(lexer: &mut Lexer) {
   }
 
   let best = best.unwrap_or(match_.candidates[0]);
-  let [sign, prefix, range, suffix] =
-    find_affixes_partial(range, lexer.spec(), best, ctx);
+  let [sign_span, prefix, range, suffix] =
+    find_affixes_partial(span, lexer.spec(), best, ctx);
   let text = range.text(ctx);
 
   let mirrored = match lexer.spec().rule(best.lexeme) {
@@ -339,27 +337,32 @@ pub fn emit(lexer: &mut Lexer) {
         lexer.add_token(rt::PREFIX, prefix.len(), None);
         lexer.add_token(
           best.lexeme,
-          sign.len() + range.len(),
+          sign_span.len() + range.len(),
           Some(rt::Kind::Digital(rt::Digital::default())),
         );
         lexer.add_token(rt::SUFFIX, suffix.len(), None);
 
-        let sign_text = sign.text(ctx);
-        let sign = sign.intern_nonempty(ctx).map(|span| {
-          for (text, value) in &rule.mant.signs {
-            if text == sign_text {
-              return (*value, span);
-            }
-          }
-          bug!("could not find appropriate sign for Digital rule")
+        let sign_text = sign_span.text(ctx);
+        let sign = (!sign_text.is_empty()).then(|| {
+          let Some((_, value)) =
+            rule.mant.signs.iter().find(|(text, _)| text == sign_text)
+          else {
+            bug!("could not find appropriate sign for Digital rule");
+          };
+
+          (*value, [sign_span.start() as u32, sign_span.end() as u32])
         });
 
         let mut chunks = vec![DigitBlocks {
-          prefix: prefix.intern_nonempty(ctx),
+          prefix: [0, 0],
           sign,
           blocks: Vec::new(),
           which_exp: !0,
         }];
+
+        if !prefix.is_empty() {
+          chunks[0].prefix = [prefix.start() as u32, prefix.end() as u32];
+        }
 
         let mut offset = 0;
         let mut text = text;
@@ -407,9 +410,10 @@ pub fn emit(lexer: &mut Lexer) {
               );
             }
 
-            chunk
-              .blocks
-              .push(range.subspan(block_start..offset).intern(ctx));
+            chunk.blocks.push([
+              (range.start() + block_start) as u32,
+              (range.start() + offset) as u32,
+            ]);
             text = rest;
             offset += rule.point.len();
             block_start = offset;
@@ -427,14 +431,13 @@ pub fn emit(lexer: &mut Lexer) {
                 );
               }
 
-              chunk
-                .blocks
-                .push(range.subspan(block_start..offset).intern(ctx));
+              chunk.blocks.push([
+                (range.start() + block_start) as u32,
+                (range.start() + offset) as u32,
+              ]);
 
-              let prefix =
-                range.subspan(offset..offset + pre.len()).intern(ctx);
+              let prefix = range.subspan(offset..offset + pre.len());
               text = rest;
-
               offset += pre.len();
 
               let sign = exp
@@ -443,19 +446,26 @@ pub fn emit(lexer: &mut Lexer) {
                 .filter(|(y, _)| rest.starts_with(y.as_str()))
                 .max_by_key(|(y, _)| y.len())
                 .map(|(y, s)| {
-                  let sign =
-                    range.subspan(offset..offset + y.len()).intern(ctx);
+                  let sign = [
+                    (range.start() + offset) as u32,
+                    (range.start() + offset + y.len()) as u32,
+                  ];
                   text = &text[y.len()..];
                   offset += y.len();
                   (*s, sign)
                 });
 
               chunks.push(DigitBlocks {
-                prefix: Some(prefix),
+                prefix: [0, 0],
                 sign,
                 blocks: Vec::new(),
                 which_exp: i,
               });
+
+              if !prefix.is_empty() {
+                chunks.last_mut().unwrap().prefix =
+                  [prefix.start() as u32, prefix.end() as u32];
+              }
 
               digits = exp;
               block_start = offset;
@@ -480,7 +490,7 @@ pub fn emit(lexer: &mut Lexer) {
           .last_mut()
           .unwrap()
           .blocks
-          .push(range.subspan(block_start..).intern(ctx));
+          .push([(range.start() + block_start) as u32, range.end() as u32]);
         let mant = chunks.remove(0);
 
         let Some(rt::Kind::Digital(meta)) = lexer
@@ -510,10 +520,9 @@ pub fn emit(lexer: &mut Lexer) {
 
           let chunk_span = Span::union(
             chunk
-              .prefix
+              .prefix(lexer.file())
               .into_iter()
-              .chain(chunk.blocks.iter().copied())
-              .map(|s| s.span(ctx)),
+              .chain(chunk.blocks(lexer.file())),
           );
 
           if (chunk.blocks.len() as u32) < digits.min_chunks {
@@ -528,12 +537,12 @@ pub fn emit(lexer: &mut Lexer) {
               .at(chunk_span);
           }
 
-          for block in &chunk.blocks {
-            let range = block.span(ctx);
+          for block in chunk.blocks(lexer.file()) {
             let mut text = block.text(ctx);
 
-            if range.is_empty() && chunk.prefix.is_some() {
-              let prefix = chunk.prefix.unwrap();
+            // FIXME: The is_some() here should not be necessary.
+            if range.is_empty() && chunk.prefix(lexer.file()).is_some() {
+              let prefix = chunk.prefix(lexer.file()).unwrap();
               lexer
                 .builtins()
                 .expected(

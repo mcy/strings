@@ -23,7 +23,6 @@ use num_traits::Bounded;
 use crate::f;
 use crate::file::Context;
 use crate::file::Span;
-use crate::file::SpanId;
 use crate::file::Spanned;
 use crate::fp;
 use crate::report::Report;
@@ -616,13 +615,13 @@ impl<'lex> Digital<'lex> {
 
   /// Returns the span corresponding to [`Digital::sign()`].
   pub fn sign_span(self) -> Option<Span> {
-    self.rt_blocks().sign.map(|(_, sp)| sp.span(self.context()))
+    self.rt_blocks().sign(self.file(self.context()))
   }
 
   /// Returns the point-separated digit chunks of this digital literal.
   pub fn digit_blocks(self) -> impl Iterator<Item = Span> + 'lex {
     let ctx = self.context();
-    self.digit_slice().iter().map(|s| s.span(ctx))
+    self.rt_blocks().blocks(self.file(ctx))
   }
 
   /// Returns the exponents of this digital literal, if it any.
@@ -641,7 +640,7 @@ impl<'lex> Digital<'lex> {
   /// Returns this token's prefix.
   pub fn prefix(self) -> Option<Span> {
     if self.idx > 0 {
-      return self.rt_blocks().prefix.map(|s| s.span(self.context()));
+      return self.rt_blocks().prefix(self.file(self.context()));
     }
 
     self.stream.lookup_prefix(self.id)
@@ -819,10 +818,6 @@ impl<'lex> Digital<'lex> {
     }
   }
 
-  fn digit_slice(self) -> &'lex [SpanId] {
-    &self.rt_blocks().blocks
-  }
-
   fn rt_blocks(&self) -> &'lex DigitBlocks {
     if self.idx == 0 {
       return &self.meta.digits;
@@ -949,7 +944,8 @@ impl fmt::Debug for Digital<'_> {
     let mut f = f.debug_struct("Digital");
     f.field("span", &self.span(self.context()))
       .field("radix", &self.radix())
-      .field("digits", &self.digit_slice());
+      // TODO: Get rid of this collect.
+      .field("digits", &self.digit_blocks().collect::<Vec<_>>());
 
     if let Some(sign) = self.sign() {
       f.field("sign", &sign);

@@ -7,13 +7,10 @@ use camino::Utf8PathBuf;
 
 use crate::f;
 use crate::file::File;
-use crate::file::SpanId;
 use crate::file::CTX_FOR_SPAN_DEBUG;
 use crate::report;
 use crate::report::Fatal;
 use crate::report::Report;
-
-use super::Span;
 
 /// A source context, which owns source code files.
 ///
@@ -30,8 +27,6 @@ pub struct State {
   // TODO(mcyoung): Be smarter about this and use something something concurrent
   // vector? We don't need to have all this stuff behind a lock I think.
   files: Vec<(Utf8PathBuf, String)>,
-
-  ranges: Vec<Span>,
 }
 
 unsafe impl Send for Context {}
@@ -141,21 +136,5 @@ impl Context {
   /// Gets the number of files currently tracked by this source context.
   pub fn file_count(&self) -> usize {
     self.state.read().unwrap().files.len()
-  }
-
-  /// Gets the byte range for the given span, if it isn't the synthetic span.
-  pub(crate) fn lookup_range(&self, span: SpanId) -> Span {
-    let state = self.state.read().unwrap();
-    state.ranges[span.0 as usize]
-  }
-
-  /// Creates a new synthetic span with the given contents.
-  pub(crate) fn new_span(&self, range: Span) -> SpanId {
-    let mut state = self.state.write().unwrap();
-    assert!(state.ranges.len() <= (u32::MAX as usize), "ran out of spans");
-
-    let span = SpanId(state.ranges.len() as u32);
-    state.ranges.push(range);
-    span
   }
 }
