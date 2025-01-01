@@ -22,9 +22,6 @@ use crate::rule::Comment;
 use crate::rule::Quoted;
 use crate::spec::Lexeme;
 use crate::spec::Spec;
-use crate::token;
-use crate::token::Content;
-use crate::token::Cursor;
 
 use super::dfa::Lexeme2;
 use super::unicode::is_xid;
@@ -39,11 +36,11 @@ pub fn emit(lexer: &mut Lexer) {
   };
 
   let start = lexer.cursor();
-  lexer.advance(match_.len);
-  let range = lexer.span(start..lexer.cursor());
+  let end = start + match_.len;
+  let range = lexer.span(start..end);
   let span = range.intern(ctx);
   let text = range.text(ctx);
-  lexer.advance(match_.extra);
+  let end = end + match_.extra;
 
   // Now we have to decide which of `candidates` is the best one, i.e.,
   // the one with no errors. The following things are explicitly *not*
@@ -198,12 +195,9 @@ pub fn emit(lexer: &mut Lexer) {
   }
 
   let best = best.unwrap_or(match_.candidates[0]);
-  let [sign, pre, range, suf] =
+  let [sign, prefix, range, suffix] =
     find_affixes_partial(range, lexer.spec(), best, ctx);
   let text = range.text(ctx);
-
-  let prefix = pre.intern_nonempty(ctx);
-  let suffix = suf.intern_nonempty(ctx);
 
   let mirrored = match lexer.spec().rule(best.lexeme) {
     Any::Bracket(bracket)
@@ -249,7 +243,7 @@ pub fn emit(lexer: &mut Lexer) {
     _ => None,
   };
 
-  let mut generated_token = true;
+  let mut emitted = true;
   if best.is_close {
     let Some(opener) = &mirrored else {
       bug!("found is_close Lexeme2 corresponding to rule without brackets")
@@ -262,19 +256,14 @@ pub fn emit(lexer: &mut Lexer) {
     };
 
     lexer.builtins().unopened(opener, found, span);
-    generated_token = false;
+    lexer.add_token(rt::UNEXPECTED, end - start, None);
+    emitted = false;
   } else {
     // Now we have repeat the process from the 'verify, but now we know what kind
     // of token we're going to create.
 
     match lexer.spec().rule(best.lexeme) {
-      Any::Keyword(..) => lexer.add_token(rt::Token {
-        kind: rt::Kind::Keyword,
-        span,
-        lexeme: best.lexeme,
-        prefix,
-        suffix,
-      }),
+      Any::Keyword(..) => lexer.add_token(best.lexeme, range.len(), None),
 
       Any::Bracket(..) => {
         // Construct the closer.
@@ -282,35 +271,35 @@ pub fn emit(lexer: &mut Lexer) {
           best.lexeme.cast(),
           mirrored.clone().unwrap().immortalize(),
         );
-        lexer.add_token(rt::Token {
-          kind: rt::Kind::Open { offset_to_close: !0 },
-          span,
-          lexeme: best.lexeme,
-          prefix,
-          suffix,
-        });
+        lexer.add_token(
+          best.lexeme,
+          range.len(),
+          Some(rt::Kind::Offset { cursor: 0, meta: 0 }),
+        );
       }
 
+      #[allow(clippy::almost_swapped)]
       Any::Comment(rule) => {
         // Comments aren't real tokens.
-        generated_token = false;
+        emitted = false;
 
+        let mut cursor = end;
         // The span we created only contains the open bracket for the comment.
         // We still need to lex the comment to the end.
         let mut depth = 1;
         let close = mirrored.clone().unwrap().immortalize();
-        while let Some(c) = lexer.rest().chars().next() {
-          if rule.can_nest && lexer.rest().starts_with(text) {
+        while let Some(c) = lexer.text(cursor..).chars().next() {
+          if rule.can_nest && lexer.text(cursor..).starts_with(text) {
             depth += 1;
-            lexer.advance(text.len());
-          } else if lexer.rest().starts_with(close.as_str()) {
+            cursor += text.len();
+          } else if lexer.text(cursor..).starts_with(close.as_str()) {
             depth -= 1;
-            lexer.advance(close.len());
+            cursor += close.len();
             if depth == 0 {
               break;
             }
           } else {
-            lexer.advance(c.len_utf8());
+            cursor += c.len_utf8();
           }
         }
 
@@ -321,8 +310,7 @@ pub fn emit(lexer: &mut Lexer) {
             .unclosed(span, &close, Lexeme::eof(), lexer.eof());
         }
 
-        let span = lexer.intern(start..lexer.cursor());
-        lexer.add_comment(span);
+        lexer.add_token(best.lexeme, cursor - lexer.cursor(), None);
       }
 
       Any::Ident(rule) => {
@@ -342,16 +330,20 @@ pub fn emit(lexer: &mut Lexer) {
           }
         }
 
-        lexer.add_token(rt::Token {
-          kind: rt::Kind::Ident(range.intern(ctx)),
-          span,
-          lexeme: best.lexeme,
-          prefix,
-          suffix,
-        });
+        lexer.add_token(rt::PREFIX, prefix.len(), None);
+        lexer.add_token(best.lexeme, range.len(), None);
+        lexer.add_token(rt::SUFFIX, suffix.len(), None);
       }
 
       Any::Digital(rule) => {
+        lexer.add_token(rt::PREFIX, prefix.len(), None);
+        lexer.add_token(
+          best.lexeme,
+          sign.len() + range.len(),
+          Some(rt::Kind::Digital(rt::Digital::default())),
+        );
+        lexer.add_token(rt::SUFFIX, suffix.len(), None);
+
         let sign_text = sign.text(ctx);
         let sign = sign.intern_nonempty(ctx).map(|span| {
           for (text, value) in &rule.mant.signs {
@@ -363,7 +355,7 @@ pub fn emit(lexer: &mut Lexer) {
         });
 
         let mut chunks = vec![DigitBlocks {
-          prefix,
+          prefix: prefix.intern_nonempty(ctx),
           sign,
           blocks: Vec::new(),
           which_exp: !0,
@@ -489,23 +481,27 @@ pub fn emit(lexer: &mut Lexer) {
           .unwrap()
           .blocks
           .push(range.subspan(block_start..).intern(ctx));
-
         let mant = chunks.remove(0);
-        let tok = rt::Token {
-          kind: rt::Kind::Digital { digits: mant, exponents: chunks },
-          span,
-          lexeme: best.lexeme,
-          prefix,
-          suffix,
+
+        let Some(rt::Kind::Digital(meta)) = lexer
+          .stream_mut()
+          .last_meta_mut()
+          .and_then(|m| m.kind.as_mut())
+        else {
+          bug!("missing rt::Digital in digital token");
         };
-        let token = Cursor::fake_token(lexer.file(), lexer.spec(), &tok);
+        meta.digits = mant;
+        meta.exponents = chunks;
+
+        let Some(rt::Kind::Digital(meta)) =
+          lexer.stream().last_meta().and_then(|m| m.kind.as_ref())
+        else {
+          bug!("missing rt::Digital in digital token");
+        };
 
         // This happens later so we have access to the full spans of
         // the digit blocks.
-        let rt::Kind::Digital { digits, exponents } = &tok.kind else {
-          unreachable!()
-        };
-        for chunk in iter::once(digits).chain(exponents) {
+        for chunk in iter::once(&meta.digits).chain(&meta.exponents) {
           let digits = rule
             .exps
             .get(chunk.which_exp)
@@ -536,7 +532,7 @@ pub fn emit(lexer: &mut Lexer) {
             let range = block.span(ctx);
             let mut text = block.text(ctx);
 
-            if range.is_empty() {
+            if range.is_empty() && chunk.prefix.is_some() {
               let prefix = chunk.prefix.unwrap();
               lexer
                 .builtins()
@@ -567,7 +563,7 @@ pub fn emit(lexer: &mut Lexer) {
               if !c.is_digit(digits.radix as u32) {
                 lexer.builtins().unexpected(
                   Expected::Literal(c.into()),
-                  token,
+                  lexer.stream().last_token(),
                   lexer.span(cursor..cursor + c.len_utf8()),
                 )
                 .remark(
@@ -581,70 +577,69 @@ pub fn emit(lexer: &mut Lexer) {
             }
           }
         }
-
-        lexer.add_token(tok);
       }
 
       Any::Quoted(rule) => {
         let close = mirrored.clone().unwrap().immortalize();
 
-        let mut chunk_start = lexer.cursor();
-        let mut content = Vec::new();
+        let mut chunk_start = end;
+        let mut cursor = end;
+        let mut marks = vec![chunk_start as u32];
         let uq_end = loop {
-          if lexer.rest().starts_with(close.as_str()) {
-            let end = lexer.cursor();
-            lexer.advance(close.len());
+          if lexer.text(cursor..).starts_with(close.as_str()) {
+            let end = cursor;
+            cursor += close.len();
             if end > chunk_start {
-              content.push(Content::Lit(lexer.intern(chunk_start..end)));
+              marks.push(end as u32);
             }
 
             break Some(end);
           }
 
-          let (esc, rule) = match rule.escapes.longest_prefix(lexer.rest()) {
+          let rest = lexer.text(cursor..);
+          let (esc, rule) = match rule.escapes.longest_prefix(rest) {
             Some(e) => e,
-            None => match lexer.rest().chars().next() {
+            None => match rest.chars().next() {
               Some(c) => {
-                lexer.advance(c.len_utf8());
+                cursor += c.len_utf8();
                 continue;
               }
               None => break None,
             },
           };
 
-          if lexer.cursor() > chunk_start {
-            content
-              .push(Content::Lit(lexer.intern(chunk_start..lexer.cursor())));
-          }
+          // Push unconditionally: this ensures that chunks of text are always
+          // between escapes, even if the literal chunks are empty.
+          marks.push(cursor as u32);
 
-          let esc_start = lexer.cursor();
-          lexer.advance(esc.len());
-          let esc = lexer.intern(esc_start..lexer.cursor());
-          let value = match rule {
+          let esc_start = cursor;
+          cursor += esc.len();
+          let esc_end = cursor;
+          let mark = match rule {
             rule::Escape::Invalid => {
               lexer.builtins().invalid_escape(
-                lexer.span(esc_start..lexer.cursor()),
+                lexer.span(esc_start..cursor),
                 "invalid escape sequence",
               );
-              None
+              [cursor; 3]
             }
 
-            rule::Escape::Basic => None,
+            rule::Escape::Basic => [cursor; 3],
 
             rule::Escape::Fixed(chars) => {
-              let arg_start = lexer.cursor();
+              let arg_start = cursor;
               let mut count = 0;
               for _ in 0..*chars {
                 // TRICKY: We have just skipped over \x. If we were to take *any*
                 // characters, we would lex `"\x" ` as being `\x` with arg `" `.
                 // So, we want to check for a closer on *every* loop iteration, and
                 // break out if we *see* it: we should not consume it.
-                if lexer.rest().starts_with(close.as_str()) {
+                if lexer.text(cursor..).starts_with(close.as_str()) {
                   break;
                 }
 
-                match lexer.rest().chars().next() {
-                  Some(c) => lexer.advance(c.len_utf8()),
+                match lexer.text(cursor..).chars().next() {
+                  Some(c) => cursor += c.len_utf8(),
                   None => break,
                 }
                 count += 1;
@@ -652,7 +647,7 @@ pub fn emit(lexer: &mut Lexer) {
 
               if count != *chars {
                 lexer.builtins().invalid_escape(
-                  lexer.span(esc_start..lexer.cursor()),
+                  lexer.span(esc_start..cursor),
                   f!(
                     "expected exactly {chars} character{} here",
                     plural(*chars)
@@ -660,80 +655,78 @@ pub fn emit(lexer: &mut Lexer) {
                 );
               }
 
-              Some(lexer.intern(arg_start..lexer.cursor()))
+              [arg_start, cursor, cursor]
             }
 
             rule::Escape::Bracketed(open, close) => 'delim: {
-              if !lexer.rest().starts_with(open.as_str()) {
+              if !lexer.text(cursor..).starts_with(open.as_str()) {
                 lexer.builtins().invalid_escape(
-                  lexer.span(esc_start..lexer.cursor()),
+                  lexer.span(esc_start..cursor),
                   f!("expected a `{open}`"),
                 );
-                break 'delim None;
+                break 'delim [cursor; 3];
               } else {
-                lexer.advance(open.len());
+                cursor += open.len()
               }
 
-              let arg_start = lexer.cursor();
-              let Some(len) = lexer.rest().find(close.as_str()) else {
+              let arg_start = cursor;
+              let Some(len) = lexer.text(..cursor).find(close.as_str()) else {
                 lexer.builtins().invalid_escape(
-                  lexer.span(esc_start..lexer.cursor()),
+                  lexer.span(esc_start..cursor),
                   f!("expected a `{close}`"),
                 );
-                break 'delim None;
+                break 'delim [arg_start, cursor, cursor];
               };
-              lexer.advance(len + close.len());
-              Some(lexer.intern(arg_start..lexer.cursor() - close.len()))
+              cursor += len + close.len();
+              [arg_start, arg_start + len, cursor]
             }
           };
 
-          content.push(Content::Esc(esc, value));
-          chunk_start = lexer.cursor();
+          marks.push(esc_end as u32);
+          marks.extend(mark.iter().map(|&x| x as u32));
+          chunk_start = cursor;
         };
 
-        let uq_end = uq_end.unwrap_or_else(|| {
+        if uq_end.is_none() {
           lexer
             .builtins()
             .unclosed(span, &close, Lexeme::eof(), lexer.eof());
-          lexer.cursor()
-        });
+        }
 
         // We have to parse the suffix ourselves explicitly!
         let suf = rule
           .affixes
           .suffixes()
           .iter()
-          .filter(|y| lexer.rest().starts_with(y.as_str()))
+          .filter(|y| lexer.text(cursor..).starts_with(y.as_str()))
           .map(|y| y.len())
           .max()
           .unwrap_or_else(|| {
+            let found = match lexer.text(cursor..).chars().next() {
+              Some(n) => Expected::Literal(n.into()),
+              None => Lexeme::eof().into(),
+            };
+
             lexer.builtins().expected(
               rule
                 .affixes
                 .suffixes()
                 .iter()
                 .map(|y| Expected::Literal(y.aliased())),
-              Expected::Literal("fixme".into()),
-              lexer.span(lexer.cursor()..lexer.cursor()),
+              found,
+              lexer.span(cursor..cursor),
             );
 
             0
           });
-        let suf_start = lexer.cursor();
-        lexer.advance(suf);
-        let suffix = lexer.span(suf_start..lexer.cursor()).intern_nonempty(ctx);
 
-        lexer.add_token(rt::Token {
-          kind: rt::Kind::Quoted {
-            content,
-            open: range.intern(ctx),
-            close: lexer.intern(uq_end..suf_start),
-          },
-          span: lexer.intern(span.span(ctx).start()..lexer.cursor()),
-          lexeme: best.lexeme,
-          prefix,
-          suffix,
-        });
+        lexer.add_token(rt::PREFIX, prefix.len(), None);
+        lexer.add_token(
+          best.lexeme,
+          cursor - lexer.cursor(),
+          Some(rt::Kind::Quoted(rt::Quoted { marks })),
+        );
+        lexer.add_token(rt::SUFFIX, suf, None);
       }
     }
   }
@@ -745,12 +738,8 @@ pub fn emit(lexer: &mut Lexer) {
   // and diagnose that.
 
   if match_.extra > 0 {
-    let expected = if generated_token {
-      Expected::Token(token::Cursor::fake_token(
-        lexer.file(),
-        lexer.spec(),
-        lexer.last_token(),
-      ))
+    let expected = if emitted {
+      Expected::Token(lexer.stream().last_token())
     } else if let Some(mirrored) = &mirrored {
       if best.is_close {
         Expected::Literal(yarn!("{mirrored} ... {text}"))
@@ -767,22 +756,16 @@ pub fn emit(lexer: &mut Lexer) {
       .extra_chars(expected, lexer.span(start..start + match_.extra));
   }
 
-  let prev = lexer.rest().chars().next_back();
+  let rest = lexer.text(lexer.cursor()..);
+  let prev = rest.chars().next_back();
   if prev.is_some_and(is_xid) {
-    let xids = lexer
-      .rest()
-      .find(|c| !is_xid(c))
-      .unwrap_or(lexer.rest().len());
+    let xids = rest.find(|c| !is_xid(c)).unwrap_or(rest.len());
     if xids > 0 {
       let start = lexer.cursor();
-      lexer.advance(xids);
+      lexer.add_token(rt::UNEXPECTED, xids, None);
 
-      let expected = if generated_token {
-        Expected::Token(token::Cursor::fake_token(
-          lexer.file(),
-          lexer.spec(),
-          lexer.last_token(),
-        ))
+      let expected = if emitted {
+        Expected::Token(lexer.stream().last_token())
       } else if let Some(mirrored) = &mirrored {
         if best.is_close {
           Expected::Literal(yarn!("{mirrored} ... {text}"))
@@ -795,7 +778,7 @@ pub fn emit(lexer: &mut Lexer) {
 
       lexer
         .builtins()
-        .extra_chars(expected, lexer.span(start..lexer.cursor()));
+        .extra_chars(expected, lexer.span(start..start + xids));
     }
   }
 }

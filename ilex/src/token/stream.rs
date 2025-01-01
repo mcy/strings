@@ -1,15 +1,15 @@
-use std::array;
 use std::fmt;
 use std::iter;
-use std::marker::PhantomData;
 use std::mem;
+use std::num::NonZeroU32;
+use std::slice;
 
 use crate::file::Context;
 use crate::file::File;
-use crate::file::SpanId;
+use crate::file::Span;
 use crate::report::Report;
 use crate::rt;
-use crate::rt::Kind;
+use crate::rule;
 use crate::rule::Rule;
 use crate::spec::Lexeme;
 use crate::spec::Spec;
@@ -22,17 +22,21 @@ use crate::token;
 pub struct Stream<'ctx> {
   pub(crate) file: File<'ctx>,
   pub(crate) spec: &'ctx Spec,
+
   pub(crate) toks: Vec<rt::Token>,
+  pub(crate) meta_idx: Vec<token::Id>,
+  pub(crate) meta: Vec<rt::Metadata>,
 }
 
 impl<'ctx> Stream<'ctx> {
   /// Returns a cursor over this stream.
   pub fn cursor(&self) -> Cursor {
     Cursor {
-      file: self.file,
-      spec: self.spec,
-      toks: &self.toks,
+      stream: self,
+      start: 0,
+      end: self.toks.len(),
       cursor: 0,
+      meta_cursor: 0,
     }
   }
 
@@ -49,6 +53,171 @@ impl<'ctx> Stream<'ctx> {
   /// Returns the lexer spec this stream was lexed with.
   pub fn spec(&self) -> &'ctx Spec {
     self.spec
+  }
+
+  /// Returns the token with the given ID.
+  ///
+  /// # Panics
+  ///
+  /// Panics if this stream does not have a token with the given ID.
+  pub fn token_at(&self, id: token::Id) -> token::Any {
+    let meta_hint = self.meta_idx.binary_search(&id).unwrap_or(0);
+    self.token_at_hint(id, meta_hint).unwrap()
+  }
+
+  /// Returns the last token pushed to this stream.
+  pub(crate) fn last_token(&self) -> token::Any {
+    let mut cursor = self.cursor();
+    cursor.cursor = cursor.end;
+    cursor.meta_cursor = self.meta_idx.len();
+    loop {
+      cursor.step_backward();
+      let tok = self.lookup_token(cursor.id());
+      if tok.lexeme.is_aux() {
+        continue;
+      }
+
+      return self.token_at_hint(cursor.id(), cursor.meta_cursor).unwrap();
+    }
+  }
+
+  pub(crate) fn token_at_hint(
+    &self,
+    id: token::Id,
+    meta_hint: usize,
+  ) -> Option<token::Any> {
+    let tok = &self.toks[id.idx()];
+    let meta = self
+      .lookup_meta_hint(id, meta_hint)
+      .and_then(|m| m.kind.as_ref());
+
+    if [rt::PREFIX, rt::SUFFIX, rt::WHITESPACE, rt::UNEXPECTED]
+      .contains(&tok.lexeme)
+    {
+      return None;
+    }
+
+    if tok.lexeme == Lexeme::eof().any() {
+      return Some(token::Eof { stream: self, id }.into());
+    }
+
+    return Some(match self.spec().rule(tok.lexeme) {
+      rule::Any::Comment(..) => return None,
+      rule::Any::Keyword(..) => token::Keyword { stream: self, id }.into(),
+      rule::Any::Ident(..) => token::Ident { stream: self, id }.into(),
+
+      rule::Any::Bracket(..) => {
+        let Some(&rt::Kind::Offset { cursor, .. }) = meta else {
+          bug!("missing rt::Metadata::Offset on bracket token")
+        };
+        let open = id;
+        let close = token::Id(
+          NonZeroU32::new(id.0.get().wrapping_add_signed(cursor)).unwrap(),
+        );
+
+        token::Bracket {
+          open,
+          close,
+          contents: Cursor {
+            stream: self,
+            start: open.idx() + 1,
+            end: close.idx(),
+            cursor: open.idx() + 1,
+            meta_cursor: meta_hint + 1,
+          },
+        }
+        .into()
+      }
+
+      crate::rule::Any::Quoted(..) => {
+        let Some(rt::Kind::Quoted(meta)) = meta else {
+          bug!("missing rt::Metadata::Quoted on quoted token")
+        };
+
+        token::Quoted { stream: self, id, meta }.into()
+      }
+
+      crate::rule::Any::Digital(..) => {
+        let Some(rt::Kind::Digital(meta)) = meta else {
+          bug!("missing rt::Metadata::Digital on digital token")
+        };
+
+        token::Digital { stream: self, id, meta, idx: 0 }.into()
+      }
+    });
+  }
+
+  pub(crate) fn lookup_meta(&self, id: token::Id) -> Option<&rt::Metadata> {
+    let idx = self.meta_idx.binary_search(&id).ok()?;
+    Some(&self.meta[idx])
+  }
+
+  pub(crate) fn lookup_meta_hint(
+    &self,
+    id: token::Id,
+    hint: usize,
+  ) -> Option<&rt::Metadata> {
+    if self.meta_idx.get(hint) != Some(&id) {
+      return None;
+    }
+
+    Some(&self.meta[hint])
+  }
+
+  pub(crate) fn lookup_token(&self, id: token::Id) -> &rt::Token {
+    &self.toks[id.idx()]
+  }
+
+  pub(crate) fn lookup_span_no_affix(&self, id: token::Id) -> Span {
+    let start = self
+      .toks
+      .get(id.idx().wrapping_sub(1))
+      .map(|t| t.end as usize)
+      .unwrap_or(0);
+    let end = self.lookup_token(id).end as usize;
+    self.file().span(start..end)
+  }
+
+  pub(crate) fn lookup_prefix(&self, id: token::Id) -> Option<Span> {
+    let prev = id.prev()?;
+    if self.lookup_token(prev).lexeme != rt::PREFIX {
+      return None;
+    }
+    Some(self.lookup_span_no_affix(prev))
+  }
+
+  pub(crate) fn lookup_suffix(&self, id: token::Id) -> Option<Span> {
+    let next = id.next()?;
+    if next.idx() == self.toks.len()
+      || self.lookup_token(next).lexeme != rt::SUFFIX
+    {
+      return None;
+    }
+    Some(self.lookup_span_no_affix(next))
+  }
+
+  pub(crate) fn lookup_span_with_affixes(&self, id: token::Id) -> Span {
+    let span = self.lookup_span_no_affix(id);
+
+    let mut start = span.start();
+    if let Some(prefix) = self.lookup_prefix(id) {
+      start = prefix.start()
+    }
+
+    let mut end = span.end();
+    if let Some(suffix) = self.lookup_suffix(id) {
+      end = suffix.end();
+    }
+
+    self.file.span(start..end)
+  }
+
+  pub(crate) fn last_meta(&self) -> Option<&rt::Metadata> {
+    self.meta.last()
+  }
+
+  pub(crate) fn last_meta_mut(&mut self) -> Option<&mut rt::Metadata> {
+    self.meta.last_mut()
   }
 }
 
@@ -73,35 +242,56 @@ impl fmt::Debug for Stream<'_> {
 /// also be queried for more specific token kinds.
 #[derive(Copy, Clone)]
 pub struct Cursor<'lex> {
-  file: File<'lex>,
-  spec: &'lex Spec,
-  toks: &'lex [rt::Token],
+  stream: &'lex Stream<'lex>,
+
+  // These are the range within `stream.toks` that we're allowed to yield.
+  start: usize,
+  end: usize,
+
+  // This is the position of the cursor in `stream.toks`.
   cursor: usize,
+
+  // This points to a value in `stream.meta_idx` whose `idx()` is greater than
+  // or equal to that of cursor; when `stream.toks[cursor]` is a token with
+  // metadata, this points to its metadata. When advancing, if
+  //
+  // ```
+  // stream.meta_idx[meta_cursor].idx() == cursor
+  // ```
+  //
+  // then we advance meta_cursor too. When backing up, we back up meta_cursor
+  // if
+  //
+  // ```
+  // stream.meta_idx[meta_cursor - 1].idx() == cursor - 1
+  // ```
+  meta_cursor: usize,
 }
 
 impl<'lex> Cursor<'lex> {
-  fn end(&self) -> SpanId {
-    self.toks.last().unwrap().span
+  /// Returns the stream this cursor runs over.
+  pub fn stream(&self) -> &'lex Stream<'lex> {
+    self.stream
   }
 
   /// Returns the source code context this stream is associated with.
   pub fn context(&self) -> &'lex Context {
-    self.file.context()
+    self.stream.context()
   }
 
   /// Returns the file this stream was lexed from.
   pub fn file(&self) -> File<'lex> {
-    self.file
+    self.stream.file()
   }
 
   /// Returns the lexer spec this stream was lexed with.
   pub fn spec(&self) -> &'lex Spec {
-    self.spec
+    self.stream.spec()
   }
 
   /// Returns whether this cursor has yielded all of its tokens.
   pub fn is_empty(&self) -> bool {
-    self.cursor >= self.toks.len()
+    self.cursor >= self.end
   }
 
   /// Returns the next token under the cursor without consuming it.
@@ -117,12 +307,7 @@ impl<'lex> Cursor<'lex> {
   /// Panics if this causes the internal cursor to underflow.
   pub fn back_up(&mut self, count: usize) {
     for _ in 0..count {
-      assert!(self.cursor > 0, "cursor underflowed");
-      self.cursor -= 1;
-
-      if let Kind::Close { offset_to_open, .. } = &self.toks[self.cursor].kind {
-        self.cursor -= *offset_to_open as usize;
-      }
+      assert!(self.step_backward(), "underflow attempting to back up cursor")
     }
   }
 
@@ -131,7 +316,7 @@ impl<'lex> Cursor<'lex> {
   pub fn expect_finished(&self, report: &Report) {
     if let Some(next) = self.peek_any() {
       report
-        .builtins(self.spec)
+        .builtins(self.spec())
         .expected([Lexeme::eof()], next, self.end());
     }
   }
@@ -218,26 +403,91 @@ impl<'lex> Cursor<'lex> {
     })
   }
 
-  pub(crate) fn fake_token(
-    file: File<'lex>,
-    spec: &'lex Spec,
-    tok: &'lex rt::Token,
-  ) -> token::Any<'lex> {
-    Self {
-      file,
-      spec,
-      toks: array::from_ref(tok),
-      cursor: 0,
+  // pub(crate) fn fake_token(
+  //   file: File<'lex>,
+  //   spec: &'lex Spec,
+  //   tok: &'lex rt::Token,
+  // ) -> token::Any<'lex> {
+  //   Self {
+  //     file,
+  //     spec,
+  //     toks: array::from_ref(tok),
+  //     cursor: 0,
+  //   }
+  //   .next()
+  //   .unwrap()
+  // }
+
+  fn id(&self) -> token::Id {
+    token::Id(NonZeroU32::new(self.cursor as u32 + 1).unwrap())
+  }
+
+  fn step_forward(&mut self) -> bool {
+    if self.cursor >= self.end {
+      return false;
     }
-    .next()
-    .unwrap()
+
+    // Step past an open token. This will result in the cursor pointing to
+    // one-past the end token.
+    if let Some(&rt::Kind::Offset { cursor, meta }) = self.kind() {
+      self.cursor = self.cursor.wrapping_add_signed(cursor as isize);
+      self.meta_cursor = self.meta_cursor.wrapping_add_signed(meta as isize);
+    }
+
+    if let Some(id) = self.stream.meta_idx.get(self.meta_cursor) {
+      if id.idx() == self.cursor {
+        self.meta_cursor += 1;
+      }
+    }
+
+    self.cursor += 1;
+    true
+  }
+
+  fn step_backward(&mut self) -> bool {
+    if self.cursor <= self.start {
+      return false;
+    }
+
+    if let Some(id) = self.stream.meta_idx.get(self.meta_cursor.wrapping_sub(1))
+    {
+      if id.idx() == self.cursor.wrapping_sub(1) {
+        self.meta_cursor -= 1;
+      }
+    }
+
+    self.cursor -= 1;
+
+    // Step back from a close token. This will result in the cursor pointing to
+    // the open token.
+    if let Some(&rt::Kind::Offset { cursor, meta }) = self.kind() {
+      self.cursor = self.cursor.wrapping_add_signed(cursor as isize);
+      self.meta_cursor = self.meta_cursor.wrapping_add_signed(meta as isize);
+    }
+
+    true
+  }
+
+  fn kind(&self) -> Option<&'lex rt::Kind> {
+    self
+      .stream
+      .lookup_meta_hint(self.id(), self.meta_cursor)
+      .and_then(|m| m.kind.as_ref())
+  }
+
+  fn end(&self) -> Span {
+    let end = self
+      .stream()
+      .lookup_token(token::Id(NonZeroU32::new(self.end as u32 + 1).unwrap()))
+      .end as usize;
+    self.file().span(end..end)
   }
 }
 
 impl fmt::Debug for Cursor<'_> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let mut copy = *self;
-    copy.cursor = 0;
+    copy.cursor = copy.start;
 
     let mut list = f.debug_list();
     for (i, tok) in copy.enumerate() {
@@ -262,104 +512,41 @@ impl fmt::Debug for Cursor<'_> {
 impl<'lex> Iterator for Cursor<'lex> {
   type Item = token::Any<'lex>;
   fn next(&mut self) -> Option<Self::Item> {
-    let tok = self.toks.get(self.cursor)?;
-    let next = match &tok.kind {
-      Kind::Eof => {
-        self.cursor += 1;
-        token::Any::Eof(token::Eof {
-          span: tok.span,
-          ctx: self.context(),
-          spec: self.spec,
-        })
+    loop {
+      if self.is_empty() {
+        return None;
       }
 
-      Kind::Keyword => {
-        self.cursor += 1;
-        token::Any::Keyword(token::Keyword {
-          lexeme: tok.lexeme.cast(),
-          ctx: self.context(),
-          spec: self.spec,
-          span: tok.span,
-          _ph: PhantomData,
-        })
+      let next = self.stream.token_at_hint(self.id(), self.meta_cursor);
+      self.step_forward();
+
+      if next.is_some() {
+        return next;
       }
+    }
+  }
+}
 
-      Kind::Open { offset_to_close } => {
-        if *offset_to_close == !0 {
-          // This was called from deep inside the lexer to generate a token
-          // name for a diagnostic, so we're just gonna give it a...
-          // stringifyable token.
+/// An iterator over the comment spans attached to a token.
+pub struct Comments<'lex> {
+  pub(super) stream: &'lex Stream<'lex>,
+  pub(super) comments: slice::Iter<'lex, token::Id>,
+}
 
-          return Some(token::Any::Bracket(token::Bracket {
-            span: tok.span,
-            open: tok.span,
-            close: tok.span,
-            lexeme: tok.lexeme.cast(),
-            ctx: self.context(),
-            spec: self.spec,
-            contents: *self,
-          }));
-        }
+impl<'lex> Comments<'lex> {
+  /// Adapts this iterator to return just the text contents of each [`SpanId`].
+  pub fn as_strings(self) -> impl Iterator<Item = &'lex str> + 'lex {
+    let ctx = self.stream.context();
+    self.map(move |s| s.text(ctx))
+  }
+}
 
-        let open_idx = self.cursor;
-        let close_idx = open_idx + (*offset_to_close as usize);
-        self.cursor = close_idx + 1;
+impl<'lex> Iterator for Comments<'lex> {
+  type Item = Span;
 
-        let close = &self.toks[close_idx];
-        let &Kind::Close { full_span, .. } = &close.kind else {
-          bug!("Kind::Open did not point to an Kind::Close");
-        };
-
-        token::Any::Bracket(token::Bracket {
-          span: full_span,
-          open: tok.span,
-          close: close.span,
-          lexeme: tok.lexeme.cast(),
-          ctx: self.context(),
-          spec: self.spec,
-          contents: Cursor {
-            file: self.file,
-            spec: self.spec,
-            toks: &self.toks[open_idx + 1..close_idx],
-            cursor: 0,
-          },
-        })
-      }
-
-      Kind::Close { .. } => {
-        bug!("stray closing delimiter {:?} in token stream", tok.span)
-      }
-
-      Kind::Ident { .. } => {
-        self.cursor += 1;
-        token::Any::Ident(token::Ident {
-          tok,
-          ctx: self.context(),
-          spec: self.spec,
-        })
-      }
-
-      Kind::Quoted { .. } => {
-        self.cursor += 1;
-        token::Any::Quoted(token::Quoted {
-          tok,
-          ctx: self.context(),
-          spec: self.spec,
-        })
-      }
-
-      Kind::Digital { .. } => {
-        self.cursor += 1;
-        token::Any::Digital(token::Digital {
-          tok,
-          ctx: self.context(),
-          idx: 0,
-          spec: self.spec,
-        })
-      }
-    };
-
-    Some(next)
+  fn next(&mut self) -> Option<Self::Item> {
+    let id = *self.comments.next()?;
+    Some(self.stream.lookup_span_no_affix(id))
   }
 }
 
@@ -436,7 +623,7 @@ pub mod switch {
       X: Impl<'lex, T>,
     {
       let Some(next) = cursor.next() else {
-        report.builtins(cursor.spec).expected(
+        report.builtins(cursor.spec()).expected(
           self.0.lexemes(0),
           Lexeme::eof(),
           cursor.end(),
@@ -450,7 +637,7 @@ pub mod switch {
       }
 
       report
-        .builtins(cursor.spec)
+        .builtins(cursor.spec())
         .expected(self.0.lexemes(0), next, next);
       None
     }

@@ -11,7 +11,8 @@
 //! value. They all implement [`Token`].
 
 use std::fmt;
-use std::marker::PhantomData;
+use std::iter;
+use std::num::NonZeroU32;
 use std::ops::RangeBounds;
 use std::panic::Location;
 
@@ -28,7 +29,6 @@ use crate::fp;
 use crate::report::Report;
 use crate::rt;
 use crate::rt::DigitBlocks;
-use crate::rt::Kind;
 use crate::rule;
 use crate::spec::Lexeme;
 use crate::spec::Spec;
@@ -39,8 +39,30 @@ mod stream;
 
 pub use stream::switch::switch;
 pub use stream::switch::Switch;
+pub use stream::Comments;
 pub use stream::Cursor;
 pub use stream::Stream;
+
+/// A token ID.
+///
+/// An [`Id`] is a lightweight handle to some token, which can be converted
+/// back into that token using the corresponding [`Stream`].
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct Id(pub(crate) NonZeroU32);
+
+impl Id {
+  fn idx(self) -> usize {
+    self.0.get() as usize - 1
+  }
+
+  fn prev(self) -> Option<Id> {
+    NonZeroU32::new(self.0.get() - 1).map(Self)
+  }
+
+  fn next(self) -> Option<Id> {
+    self.0.checked_add(1).map(Self)
+  }
+}
 
 /// A token type. All types in [`ilex::token`][crate::token] implement this
 /// trait.
@@ -50,14 +72,39 @@ pub trait Token<'lex>:
   /// The token this rule was parsed from.
   type Rule: rule::Rule;
 
+  /// The ID of this token.
+  fn id(self) -> Id;
+
+  /// The token stream that owns this token.
+  fn stream(self) -> &'lex Stream<'lex>;
+
   /// The context that owns this token.
-  fn context(self) -> &'lex Context;
+  fn context(self) -> &'lex Context {
+    self.stream().context()
+  }
 
   /// The spec that lexed this token.
-  fn spec(self) -> &'lex Spec;
+  fn spec(self) -> &'lex Spec {
+    self.stream().spec()
+  }
 
   /// Returns this token's [`Lexeme`].
-  fn lexeme(self) -> Lexeme<Self::Rule>;
+  fn lexeme(self) -> Lexeme<Self::Rule> {
+    self.stream().lookup_token(self.id()).lexeme.cast()
+  }
+
+  /// Returns an iterator over the attacked to this token.
+  fn comments(self) -> Comments<'lex> {
+    let stream = self.stream();
+    Comments {
+      stream,
+      comments: stream
+        .lookup_meta(self.id())
+        .map(|m| m.comments.as_slice())
+        .unwrap_or(&[])
+        .iter(),
+    }
+  }
 
   /// The rule inside of [`Token::spec()`] that this token refers to.
   ///
@@ -97,36 +144,25 @@ pub enum Any<'lex> {
 impl<'lex> Token<'lex> for Any<'lex> {
   type Rule = rule::Any;
 
-  fn lexeme(self) -> Lexeme<Self::Rule> {
+  fn id(self) -> Id {
     match self {
-      Self::Eof(tok) => tok.lexeme().any(),
-      Self::Bracket(tok) => tok.lexeme().any(),
-      Self::Keyword(tok) => tok.lexeme().any(),
-      Self::Ident(tok) => tok.lexeme().any(),
-      Self::Digital(tok) => tok.lexeme().any(),
-      Self::Quoted(tok) => tok.lexeme().any(),
+      Self::Eof(tok) => tok.id(),
+      Self::Bracket(tok) => tok.id(),
+      Self::Keyword(tok) => tok.id(),
+      Self::Ident(tok) => tok.id(),
+      Self::Digital(tok) => tok.id(),
+      Self::Quoted(tok) => tok.id(),
     }
   }
 
-  fn context(self) -> &'lex Context {
+  fn stream(self) -> &'lex Stream<'lex> {
     match self {
-      Self::Eof(tok) => tok.context(),
-      Self::Bracket(tok) => tok.context(),
-      Self::Keyword(tok) => tok.context(),
-      Self::Ident(tok) => tok.context(),
-      Self::Digital(tok) => tok.context(),
-      Self::Quoted(tok) => tok.context(),
-    }
-  }
-
-  fn spec(self) -> &'lex Spec {
-    match self {
-      Self::Eof(tok) => tok.spec,
-      Self::Bracket(tok) => tok.spec,
-      Self::Keyword(tok) => tok.spec,
-      Self::Ident(tok) => tok.spec,
-      Self::Digital(tok) => tok.spec,
-      Self::Quoted(tok) => tok.spec,
+      Self::Eof(tok) => tok.stream(),
+      Self::Bracket(tok) => tok.stream(),
+      Self::Keyword(tok) => tok.stream(),
+      Self::Ident(tok) => tok.stream(),
+      Self::Digital(tok) => tok.stream(),
+      Self::Quoted(tok) => tok.stream(),
     }
   }
 
@@ -236,20 +272,27 @@ impl Spanned for Any<'_> {
 /// comments within.
 #[derive(Copy, Clone)]
 pub struct Eof<'lex> {
-  span: SpanId,
-  ctx: &'lex Context,
-  spec: &'lex Spec,
+  stream: &'lex Stream<'lex>,
+  id: Id,
 }
 
 impl<'lex> Token<'lex> for Eof<'lex> {
   type Rule = rule::Eof;
 
+  fn id(self) -> Id {
+    self.id
+  }
+
+  fn stream(self) -> &'lex Stream<'lex> {
+    self.stream
+  }
+
   fn context(self) -> &'lex Context {
-    self.ctx
+    self.stream.context()
   }
 
   fn spec(self) -> &'lex Spec {
-    self.spec
+    self.stream.spec()
   }
 
   fn lexeme(self) -> Lexeme<Self::Rule> {
@@ -277,13 +320,13 @@ impl<'lex> TryFrom<Any<'lex>> for Eof<'lex> {
 
 impl fmt::Debug for Eof<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "Eof({:?})", self.span)
+    write!(f, "Eof({:?})", self.span(self.context()))
   }
 }
 
 impl Spanned for Eof<'_> {
-  fn span(&self, ctx: &Context) -> Span {
-    self.span.span(ctx)
+  fn span(&self, _: &Context) -> Span {
+    self.stream.lookup_span_no_affix(self.id)
   }
 }
 
@@ -294,26 +337,19 @@ impl Spanned for Eof<'_> {
 /// fixed string.
 #[derive(Copy, Clone)]
 pub struct Keyword<'lex> {
-  lexeme: Lexeme<rule::Keyword>,
-  ctx: &'lex Context,
-  spec: &'lex Spec,
-  span: SpanId,
-  _ph: PhantomData<&'lex rt::Token>,
+  stream: &'lex Stream<'lex>,
+  id: Id,
 }
 
 impl<'lex> Token<'lex> for Keyword<'lex> {
   type Rule = rule::Keyword;
 
-  fn context(self) -> &'lex Context {
-    self.ctx
+  fn id(self) -> Id {
+    self.id
   }
 
-  fn spec(self) -> &'lex Spec {
-    self.spec
-  }
-
-  fn lexeme(self) -> Lexeme<Self::Rule> {
-    self.lexeme
+  fn stream(self) -> &'lex Stream<'lex> {
+    self.stream
   }
 
   #[doc(hidden)]
@@ -337,13 +373,13 @@ impl<'lex> TryFrom<Any<'lex>> for Keyword<'lex> {
 
 impl fmt::Debug for Keyword<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "Keyword({:?})", self.span)
+    write!(f, "Keyword({:?})", self.span(self.stream.context()))
   }
 }
 
 impl Spanned for Keyword<'_> {
-  fn span(&self, ctx: &Context) -> Span {
-    self.span.span(ctx)
+  fn span(&self, _: &Context) -> Span {
+    self.stream.lookup_span_no_affix(self.id)
   }
 }
 
@@ -354,24 +390,20 @@ impl Spanned for Keyword<'_> {
 /// *trees*, like Rust does.
 #[derive(Copy, Clone)]
 pub struct Bracket<'lex> {
-  span: SpanId,
-  open: SpanId,
-  close: SpanId,
-  lexeme: Lexeme<rule::Bracket>,
-  ctx: &'lex Context,
-  spec: &'lex Spec,
+  open: Id,
+  close: Id,
   contents: Cursor<'lex>,
 }
 
 impl<'lex> Bracket<'lex> {
   /// Returns this token's open delimiter.
   pub fn open(self) -> Span {
-    self.open.span(self.ctx)
+    self.contents.stream().lookup_span_no_affix(self.open)
   }
 
   /// Returns this token's close delimiter.
   pub fn close(self) -> Span {
-    self.close.span(self.ctx)
+    self.contents.stream().lookup_span_no_affix(self.close)
   }
 
   /// Returns this token's quote delimiters.
@@ -391,16 +423,12 @@ impl<'lex> Bracket<'lex> {
 impl<'lex> Token<'lex> for Bracket<'lex> {
   type Rule = rule::Bracket;
 
-  fn context(self) -> &'lex Context {
-    self.ctx
+  fn id(self) -> Id {
+    self.open
   }
 
-  fn spec(self) -> &'lex Spec {
-    self.spec
-  }
-
-  fn lexeme(self) -> Lexeme<Self::Rule> {
-    self.lexeme
+  fn stream(self) -> &'lex Stream<'lex> {
+    self.contents().stream()
   }
 
   #[doc(hidden)]
@@ -433,69 +461,66 @@ impl<'lex> IntoIterator for Bracket<'lex> {
 impl fmt::Debug for Bracket<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     f.debug_struct("Bracket")
-      .field("delimiters", &f!("({:?}, {:?})", self.open, self.close))
+      .field("delimiters", &f!("({:?}, {:?})", self.open(), self.close()))
       .field("contents", &self.contents)
       .finish()
   }
 }
 
 impl Spanned for Bracket<'_> {
-  fn span(&self, ctx: &Context) -> Span {
-    self.span.span(ctx)
+  fn span(&self, _: &Context) -> Span {
+    let [a, b] = self.delimiters();
+    self.contents.stream().file().span(a.start()..b.end())
   }
 }
 
 /// A identifier, i.e., a self-delimiting word like `foo` or `黒猫`.
 #[derive(Copy, Clone)]
 pub struct Ident<'lex> {
-  tok: &'lex rt::Token,
-  ctx: &'lex Context,
-  spec: &'lex Spec,
+  stream: &'lex Stream<'lex>,
+  id: Id,
 }
 
 impl<'lex> Ident<'lex> {
   /// Returns this token's name span.
   pub fn name(self) -> Span {
-    match &self.tok.kind {
-      &Kind::Ident(name) => name.span(self.ctx),
-      _ => panic!("non-lexer::Kind::Ident inside of Ident"),
-    }
+    self.stream.lookup_span_no_affix(self.id)
   }
 
   /// Returns this token's prefix.
   pub fn prefix(self) -> Option<Span> {
-    self.tok.prefix.map(|s| s.span(self.ctx))
+    self.stream.lookup_prefix(self.id)
   }
 
   /// Checks whether this identifier has a particular prefix.
   pub fn has_prefix(&self, expected: &str) -> bool {
-    self.prefix().is_some_and(|s| s.text(self.ctx) == expected)
+    self
+      .prefix()
+      .is_some_and(|s| s.text(self.context()) == expected)
   }
 
   /// Returns this token's suffix.
   pub fn suffix(&self) -> Option<Span> {
-    self.tok.suffix.map(|s| s.span(self.ctx))
+    self.stream.lookup_suffix(self.id)
   }
 
   /// Checks whether this identifier has a particular prefix.
   pub fn has_suffix(&self, expected: &str) -> bool {
-    self.suffix().is_some_and(|s| s.text(self.ctx) == expected)
+    self
+      .suffix()
+      .is_some_and(|s| s.text(self.context()) == expected)
   }
 }
 
 impl<'lex> Token<'lex> for Ident<'lex> {
   type Rule = rule::Ident;
 
-  fn context(self) -> &'lex Context {
-    self.ctx
+  fn id(self) -> Id {
+    self.id
   }
 
-  fn spec(self) -> &'lex Spec {
-    self.spec
-  }
-
-  fn lexeme(self) -> Lexeme<Self::Rule> {
-    self.tok.lexeme.cast()
+  fn stream(self) -> &'lex Stream<'lex> {
+    self.stream
   }
 
   #[doc(hidden)]
@@ -520,11 +545,12 @@ impl<'lex> TryFrom<Any<'lex>> for Ident<'lex> {
 impl fmt::Debug for Ident<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if self.prefix().is_none() && self.suffix().is_none() {
-      return write!(f, "Ident({:?})", self.tok.span);
+      return write!(f, "Ident({:?})", self.name());
     }
 
     let mut f = f.debug_struct("Ident");
-    f.field("span", &self.tok.span).field("name", &self.name());
+    f.field("span", &self.span(self.context()))
+      .field("name", &self.name());
 
     if let Some(prefix) = self.prefix() {
       f.field("prefix", &prefix);
@@ -539,8 +565,8 @@ impl fmt::Debug for Ident<'_> {
 }
 
 impl Spanned for Ident<'_> {
-  fn span(&self, ctx: &Context) -> Span {
-    self.tok.span.span(ctx)
+  fn span(&self, _: &Context) -> Span {
+    self.stream.lookup_span_with_affixes(self.id)
   }
 }
 
@@ -561,10 +587,10 @@ impl Spanned for Ident<'_> {
 /// others).
 #[derive(Copy, Clone)]
 pub struct Digital<'lex> {
-  tok: &'lex rt::Token,
+  stream: &'lex Stream<'lex>,
+  id: Id,
+  meta: &'lex rt::Digital,
   idx: usize,
-  ctx: &'lex Context,
-  spec: &'lex Spec,
 }
 
 impl<'lex> Digital<'lex> {
@@ -590,12 +616,13 @@ impl<'lex> Digital<'lex> {
 
   /// Returns the span corresponding to [`Digital::sign()`].
   pub fn sign_span(self) -> Option<Span> {
-    self.rt_blocks().sign.map(|(_, sp)| sp.span(self.ctx))
+    self.rt_blocks().sign.map(|(_, sp)| sp.span(self.context()))
   }
 
   /// Returns the point-separated digit chunks of this digital literal.
   pub fn digit_blocks(self) -> impl Iterator<Item = Span> + 'lex {
-    self.digit_slice().iter().map(|s| s.span(self.ctx))
+    let ctx = self.context();
+    self.digit_slice().iter().map(|s| s.span(ctx))
   }
 
   /// Returns the exponents of this digital literal, if it any.
@@ -603,26 +630,28 @@ impl<'lex> Digital<'lex> {
   /// Calling `exponents()` on any of the returned tokens will yield all
   /// exponents that follow.
   pub fn exponents(self) -> impl Iterator<Item = Digital<'lex>> {
-    (self.idx..self.exponent_slice().len()).map(move |idx| Self {
-      tok: self.tok,
-      ctx: self.ctx,
+    (self.idx..self.meta.exponents.len()).map(move |idx| Self {
+      stream: self.stream,
+      id: self.id,
+      meta: self.meta,
       idx: idx + 1,
-      spec: self.spec,
     })
   }
 
   /// Returns this token's prefix.
   pub fn prefix(self) -> Option<Span> {
     if self.idx > 0 {
-      return self.rt_blocks().prefix.map(|s| s.span(self.ctx));
+      return self.rt_blocks().prefix.map(|s| s.span(self.context()));
     }
 
-    self.tok.prefix.map(|s| s.span(self.ctx))
+    self.stream.lookup_prefix(self.id)
   }
 
   /// Checks whether this identifier has a particular prefix.
   pub fn has_prefix(&self, expected: &str) -> bool {
-    self.prefix().is_some_and(|s| s.text(self.ctx) == expected)
+    self
+      .prefix()
+      .is_some_and(|s| s.text(self.context()) == expected)
   }
 
   /// Returns this token's suffix.
@@ -632,12 +661,14 @@ impl<'lex> Digital<'lex> {
       return None;
     }
 
-    self.tok.suffix.map(|s| s.span(self.ctx))
+    self.stream.lookup_suffix(self.id)
   }
 
   /// Checks whether this identifier has a particular prefix.
   pub fn has_suffix(&self, expected: &str) -> bool {
-    self.suffix().is_some_and(|s| s.text(self.ctx) == expected)
+    self
+      .suffix()
+      .is_some_and(|s| s.text(self.context()) == expected)
   }
 
   /// Parses this token as an integer.
@@ -653,7 +684,7 @@ impl<'lex> Digital<'lex> {
     N: Bounded + PartialOrd + FromRadix + fmt::Display,
   {
     for extra in self.digit_blocks().skip(1) {
-      report.builtins(self.spec).unexpected(
+      report.builtins(self.spec()).unexpected(
         "extra digits",
         self.lexeme(),
         extra,
@@ -662,7 +693,7 @@ impl<'lex> Digital<'lex> {
 
     for extra in self.exponents() {
       report
-        .builtins(self.spec)
+        .builtins(self.spec())
         .unexpected("exponent", self.lexeme(), extra);
     }
 
@@ -686,7 +717,7 @@ impl<'lex> Digital<'lex> {
     self
       .digit_blocks()
       .map(|span| {
-        let text = span.text(self.ctx);
+        let text = span.text(self.context());
         let buf;
         let text =
           if !rule.separator.is_empty() && text.contains(&*rule.separator) {
@@ -738,7 +769,7 @@ impl<'lex> Digital<'lex> {
     range: impl RangeBounds<Fp>,
     report: &Report,
   ) -> Result<Fp, fp::Exotic> {
-    let fp: Fp = self.parse_fp(self.ctx, report, false)?;
+    let fp: Fp = self.parse_fp(self.context(), report, false)?;
 
     if !fp.__is_finite() || !range.contains(&fp) {
       report.builtins(self.spec()).literal_out_of_range(
@@ -764,7 +795,7 @@ impl<'lex> Digital<'lex> {
     range: impl RangeBounds<Fp>,
     report: &Report,
   ) -> Result<Fp, fp::Exotic> {
-    let fp: Fp = self.parse_fp(self.ctx, report, true)?;
+    let fp: Fp = self.parse_fp(self.context(), report, true)?;
 
     if !fp.__is_finite() || !range.contains(&fp) {
       report.builtins(self.spec()).literal_out_of_range(
@@ -792,19 +823,11 @@ impl<'lex> Digital<'lex> {
     &self.rt_blocks().blocks
   }
 
-  fn exponent_slice(self) -> &'lex [DigitBlocks] {
-    match &self.tok.kind {
-      Kind::Digital { exponents, .. } => exponents,
-      _ => panic!("non-lexer::Kind::Digital inside of Digital"),
-    }
-  }
-
   fn rt_blocks(&self) -> &'lex DigitBlocks {
-    match &self.tok.kind {
-      Kind::Digital { digits, .. } if self.idx == 0 => digits,
-      Kind::Digital { exponents, .. } => &exponents[self.idx - 1],
-      _ => panic!("non-lexer::Kind::Digital inside of Digital"),
+    if self.idx == 0 {
+      return &self.meta.digits;
     }
+    &self.meta.exponents[self.idx - 1]
   }
 }
 
@@ -894,16 +917,12 @@ impl_radix! {
 impl<'lex> Token<'lex> for Digital<'lex> {
   type Rule = rule::Digital;
 
-  fn context(self) -> &'lex Context {
-    self.ctx
+  fn id(self) -> Id {
+    self.id
   }
 
-  fn spec(self) -> &'lex Spec {
-    self.spec
-  }
-
-  fn lexeme(self) -> Lexeme<Self::Rule> {
-    self.tok.lexeme.cast()
+  fn stream(self) -> &'lex Stream<'lex> {
+    self.stream
   }
 
   #[doc(hidden)]
@@ -928,7 +947,7 @@ impl<'lex> TryFrom<Any<'lex>> for Digital<'lex> {
 impl fmt::Debug for Digital<'_> {
   fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
     let mut f = f.debug_struct("Digital");
-    f.field("span", &self.tok.span)
+    f.field("span", &self.span(self.context()))
       .field("radix", &self.radix())
       .field("digits", &self.digit_slice());
 
@@ -953,17 +972,17 @@ impl fmt::Debug for Digital<'_> {
 }
 
 impl Spanned for Digital<'_> {
-  fn span(&self, ctx: &Context) -> Span {
-    self.tok.span.span(ctx)
+  fn span(&self, _: &Context) -> Span {
+    self.stream.lookup_span_with_affixes(self.id)
   }
 }
 
 /// A quoted literal.
 #[derive(Copy, Clone)]
 pub struct Quoted<'lex> {
-  tok: &'lex rt::Token,
-  ctx: &'lex Context,
-  spec: &'lex Spec,
+  stream: &'lex Stream<'lex>,
+  id: Id,
+  meta: &'lex rt::Quoted,
 }
 
 impl<'lex> Quoted<'lex> {
@@ -979,12 +998,17 @@ impl<'lex> Quoted<'lex> {
 
   /// Returns this token's quote delimiters.
   pub fn delimiters(self) -> [Span; 2] {
-    match &self.tok.kind {
-      &Kind::Quoted { open, close, .. } => {
-        [open.span(self.ctx), close.span(self.ctx)]
-      }
-      _ => panic!("non-lexer::Kind::Quoted inside of Quoted"),
-    }
+    let span = self.stream.lookup_span_no_affix(self.id);
+    [
+      self
+        .stream
+        .file()
+        .span(span.start()..*self.meta.marks.first().unwrap() as usize),
+      self
+        .stream
+        .file()
+        .span(*self.meta.marks.last().unwrap() as usize..span.end()),
+    ]
   }
 
   /// Returns the raw content of this token.
@@ -997,20 +1021,58 @@ impl<'lex> Quoted<'lex> {
   /// strings. [`Quoted::to_utf8()`] helps with the common case of doing this for
   /// UTF-8 strings.
   pub fn raw_content(self) -> impl Iterator<Item = Content> + 'lex {
-    self.content_slice().iter().map(|c| match c {
-      Content::Lit(s) => Content::Lit(s.span(self.ctx)),
-      Content::Esc(s, e) => {
-        Content::Esc(s.span(self.ctx), e.map(|e| e.span(self.ctx)))
-      }
+    let file = self.stream.file();
+    let mut next = self.meta.marks[0];
+    let mut is_escape = false;
+    let mut marks = &self.meta.marks[1..];
+
+    iter::from_fn(move || loop {
+      return match is_escape {
+        false => {
+          let start = next;
+          let &[end, ref rest @ ..] = marks else {
+            return None;
+          };
+
+          next = end;
+          marks = rest;
+          is_escape = true;
+
+          if start == end {
+            continue;
+          }
+
+          let span = file.span(start as usize..end as usize);
+          Some(Content::Lit(span))
+        }
+        true => {
+          let start = next;
+          let &[esc_end, data_start, data_end, end, ref rest @ ..] = marks
+          else {
+            return None;
+          };
+
+          next = end;
+          marks = rest;
+          is_escape = false;
+
+          let span = file.span(start as usize..esc_end as usize);
+          let data = (data_start != data_end)
+            .then(|| file.span(data_start as usize..data_end as usize));
+          Some(Content::Esc(span, data))
+        }
+      };
     })
   }
 
-  /// Returns the unique single [`Content`] of this token, if it is unique.
-  pub fn unique_content(self) -> Option<Content> {
-    if self.content_slice().len() == 1 {
-      return self.raw_content().next();
+  /// Returns the unique single literal content of this token, if it is unique.
+  pub fn literal(self) -> Option<Span> {
+    if self.meta.marks.len() > 2 {
+      return None;
     }
-    None
+    let start = *self.meta.marks.first().unwrap();
+    let end = *self.meta.marks.last().unwrap();
+    Some(self.stream.file().span(start as usize..end as usize))
   }
 
   /// Constructs a UTF-8 string in the "obvious way", using this token and a
@@ -1022,7 +1084,7 @@ impl<'lex> Quoted<'lex> {
     let total = self
       .raw_content()
       .map(|c| match c {
-        Content::Lit(sp) => sp.text(self.ctx).len(),
+        Content::Lit(sp) => sp.text(self.context()).len(),
         Content::Esc(..) => 1,
       })
       .sum();
@@ -1030,38 +1092,35 @@ impl<'lex> Quoted<'lex> {
     let mut buf = String::with_capacity(total);
     for chunk in self.raw_content() {
       match chunk {
-        Content::Lit(sp) => buf.push_str(sp.text(self.ctx)),
+        Content::Lit(sp) => buf.push_str(sp.text(self.context())),
         Content::Esc(sp, data) => decode_esc(sp, data, &mut buf),
       }
     }
     buf
   }
 
-  fn content_slice(self) -> &'lex [Content<SpanId>] {
-    match &self.tok.kind {
-      Kind::Quoted { content, .. } => content,
-      _ => panic!("non-lexer::Kind::Quoted inside of Quoted"),
-    }
-  }
-
   /// Returns this token's prefix.
   pub fn prefix(self) -> Option<Span> {
-    self.tok.prefix.map(|s| s.span(self.ctx))
+    self.stream.lookup_prefix(self.id)
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_prefix(self, expected: &str) -> bool {
-    self.prefix().is_some_and(|s| s.text(self.ctx) == expected)
+  pub fn has_prefix(&self, expected: &str) -> bool {
+    self
+      .prefix()
+      .is_some_and(|s| s.text(self.context()) == expected)
   }
 
   /// Returns this token's suffix.
-  pub fn suffix(self) -> Option<Span> {
-    self.tok.suffix.map(|s| s.span(self.ctx))
+  pub fn suffix(&self) -> Option<Span> {
+    self.stream.lookup_suffix(self.id)
   }
 
   /// Checks whether this identifier has a particular prefix.
-  pub fn has_suffix(self, expected: &str) -> bool {
-    self.suffix().is_some_and(|s| s.text(self.ctx) == expected)
+  pub fn has_suffix(&self, expected: &str) -> bool {
+    self
+      .suffix()
+      .is_some_and(|s| s.text(self.context()) == expected)
   }
 }
 
@@ -1099,16 +1158,12 @@ impl<Span> Content<Span> {
 impl<'lex> Token<'lex> for Quoted<'lex> {
   type Rule = rule::Quoted;
 
-  fn context(self) -> &'lex Context {
-    self.ctx
+  fn id(self) -> Id {
+    self.id
   }
 
-  fn spec(self) -> &'lex Spec {
-    self.spec
-  }
-
-  fn lexeme(self) -> Lexeme<Self::Rule> {
-    self.tok.lexeme.cast()
+  fn stream(self) -> &'lex Stream<'lex> {
+    self.stream
   }
 
   #[doc(hidden)]
@@ -1133,9 +1188,10 @@ impl<'lex> TryFrom<Any<'lex>> for Quoted<'lex> {
 impl fmt::Debug for Quoted<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut f = f.debug_struct("Quoted");
-    f.field("span", &self.tok.span)
+    f.field("span", &self.span(self.context()))
       .field("delimiters", &self.delimiters())
-      .field("content", &self.content_slice());
+      // TODO: get rid of this collect().
+      .field("content", &self.raw_content().collect::<Vec<_>>());
 
     if let Some(prefix) = self.prefix() {
       f.field("prefix", &prefix);
@@ -1150,23 +1206,19 @@ impl fmt::Debug for Quoted<'_> {
 }
 
 impl Spanned for Quoted<'_> {
-  fn span(&self, ctx: &Context) -> Span {
-    self.tok.span.span(ctx)
+  fn span(&self, _: &Context) -> Span {
+    self.stream.lookup_span_with_affixes(self.id)
   }
 }
 
 impl<'lex> Token<'lex> for Never {
   type Rule = Never;
 
-  fn context(self) -> &'lex Context {
+  fn id(self) -> Id {
     self.from_nothing_anything()
   }
 
-  fn spec(self) -> &'lex Spec {
-    self.from_nothing_anything()
-  }
-
-  fn lexeme(self) -> Lexeme<Self::Rule> {
+  fn stream(self) -> &'lex Stream<'lex> {
     self.from_nothing_anything()
   }
 

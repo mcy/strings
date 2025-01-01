@@ -16,6 +16,7 @@ use crate::testing::Text;
 use crate::token;
 use crate::token::Any;
 use crate::token::Sign;
+use crate::token::Token;
 
 pub struct Matcher {
   pub which: Option<Lexeme<rule::Any>>,
@@ -65,15 +66,9 @@ impl Matcher {
   ) {
     state.match_spans("token span", &self.span, Spanned::span(&tok, ctx));
 
-    zip_eq(
-      "comments",
-      state,
-      &self.comments,
-      &tok.comments(ctx),
-      |state, t, s| {
-        state.match_spans("comment", t, s);
-      },
-    );
+    zip_eq("comments", state, &self.comments, tok.comments(), |state, t, s| {
+      state.match_spans("comment", t, s);
+    });
 
     match (&self.kind, tok) {
       (Kind::Eof, Any::Eof(..)) | (Kind::Keyword, Any::Keyword(..)) => {}

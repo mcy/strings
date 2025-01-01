@@ -7,8 +7,6 @@ use std::ops::Bound;
 use std::ops::Index;
 use std::ops::RangeBounds;
 use std::ptr;
-use std::slice;
-use std::sync::RwLockReadGuard;
 
 use camino::Utf8Path;
 
@@ -199,19 +197,6 @@ impl Span {
     (self.end - self.start) as usize
   }
 
-  /// Gets the comment associated with this span, if any.
-  ///
-  /// # Panics
-  ///
-  /// May panic if this span is not owned by `ctx` (or it may produce an
-  /// unexpected result).
-  pub fn comments(self, ctx: &Context) -> Comments {
-    Comments {
-      slice: ctx.lookup_comments(self.file(ctx), self.start()),
-      ctx,
-    }
-  }
-
   /// Returns a subspan of this range.
   ///
   /// # Panics
@@ -250,8 +235,7 @@ impl Span {
   /// Splits this range in two at `at`.
   ///
   /// # Panics
-  ///
-  /// Panics if `at` is larger than the length of this range.
+  ///  /// Panics if `at` is larger than the length of this range.
   pub fn split_at(self, at: usize) -> (Span, Span) {
     (self.subspan(..at), self.subspan(at..))
   }
@@ -314,12 +298,6 @@ impl Span {
     }
     Some(self.intern(ctx))
   }
-
-  /// Sets the comment associated with a given span. The comment must itself
-  /// be specified as a span.
-  pub(crate) fn append_comment_span(self, ctx: &Context, comment: SpanId) {
-    ctx.add_comment(self.file(ctx), self.start(), comment)
-  }
 }
 
 /// A syntax element which contains a span.
@@ -358,11 +336,6 @@ pub trait Spanned {
   /// Forwards to [`SpanId::text()`].
   fn text<'ctx>(&self, ctx: &'ctx Context) -> &'ctx str {
     self.span(ctx).text(ctx)
-  }
-
-  /// Forwards to [`SpanId::comments()`].
-  fn comments<'ctx>(&self, ctx: &'ctx Context) -> Comments<'ctx> {
-    self.span(ctx).comments(ctx)
   }
 }
 
@@ -417,47 +390,6 @@ impl fmt::Debug for Span {
 
       write!(f, "[{}..{}]", Span::start(*self), Span::end(*self))
     })
-  }
-}
-
-/// An iterator over the comment spans attached to a [`SpanId`].
-pub struct Comments<'ctx> {
-  slice: (RwLockReadGuard<'ctx, context::State>, *const [SpanId]),
-  ctx: &'ctx Context,
-}
-
-impl<'ctx> Comments<'ctx> {
-  /// Adapts this iterator to return just the text contents of each [`SpanId`].
-  pub fn as_strings(&self) -> impl Iterator<Item = &'_ str> {
-    unsafe { &*self.slice.1 }
-      .iter()
-      .map(|span| span.text(self.ctx))
-  }
-}
-
-impl<'a, 'ctx> IntoIterator for &'a Comments<'ctx> {
-  type Item = Span;
-  type IntoIter = CommentsIter<'a, 'ctx>;
-
-  fn into_iter(self) -> Self::IntoIter {
-    CommentsIter {
-      iter: unsafe { &*self.slice.1 }.iter(),
-      ctx: self.ctx,
-    }
-  }
-}
-
-// Iterator over a [`Comments`].
-pub struct CommentsIter<'a, 'ctx> {
-  iter: slice::Iter<'a, SpanId>,
-  ctx: &'ctx Context,
-}
-
-impl<'a, 'ctx> Iterator for CommentsIter<'a, 'ctx> {
-  type Item = Span;
-
-  fn next(&mut self) -> Option<Self::Item> {
-    self.iter.next().map(|s| s.span(self.ctx))
   }
 }
 

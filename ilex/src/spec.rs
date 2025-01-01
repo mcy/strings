@@ -54,7 +54,9 @@ impl<R> Lexeme<R> {
 
   /// Returns whether this lexeme can have comments attached to it.
   pub(crate) fn can_have_comments(self, spec: &Spec) -> bool {
-    !self.is_aux() && !matches!(spec.rule(self.any()), rule::Any::Comment(_))
+    !self.is_aux()
+      && (self.is_eof()
+        || !matches!(spec.rule(self.any()), rule::Any::Comment(_)))
   }
 
   /// Converts this lexeme into an index.
@@ -68,7 +70,7 @@ impl<R> Lexeme<R> {
   }
 
   /// Creates a new lexeme.
-  pub(crate) fn new(id: i32) -> Self {
+  pub(crate) const fn new(id: i32) -> Self {
     Self { id, _ph: PhantomData }
   }
 }
