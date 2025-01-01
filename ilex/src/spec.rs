@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::Display;
 use std::hash::Hash;
+use std::i32;
 use std::marker::PhantomData;
 
 use byteyarn::yarn;
@@ -23,14 +24,14 @@ use crate::rule::Rule;
 /// be used to distinguish what rule a [`Token`][crate::token::Token] came from.
 #[repr(transparent)]
 pub struct Lexeme<Rule> {
-  id: u32,
+  id: i32,
   _ph: PhantomData<Rule>,
 }
 
 impl Lexeme<rule::Eof> {
   /// Returns the unique lexeme for the end-of-file marker.
   pub fn eof() -> Self {
-    Self::new(!0)
+    Self::new(i32::MAX)
   }
 }
 
@@ -38,6 +39,22 @@ impl<R> Lexeme<R> {
   /// Erases the type of this lexeme.
   pub fn any(self) -> Lexeme<rule::Any> {
     Lexeme::new(self.id)
+  }
+
+  /// Returns whether this is the EOF lexeme.
+  pub fn is_eof(self) -> bool {
+    self == Lexeme::eof()
+  }
+
+  /// Returns whether this is an auxiliary token that users should never
+  /// actually see.
+  pub(crate) fn is_aux(self) -> bool {
+    self.id < 0
+  }
+
+  /// Returns whether this lexeme can have comments attached to it.
+  pub(crate) fn can_have_comments(self, spec: &Spec) -> bool {
+    !self.is_aux() && !matches!(spec.rule(self.any()), rule::Any::Comment(_))
   }
 
   /// Converts this lexeme into an index.
@@ -51,13 +68,8 @@ impl<R> Lexeme<R> {
   }
 
   /// Creates a new lexeme.
-  pub(crate) fn new(id: u32) -> Self {
+  pub(crate) fn new(id: i32) -> Self {
     Self { id, _ph: PhantomData }
-  }
-
-  /// Creates a new lexeme.
-  pub fn z() -> Self {
-    Self { id: 0, _ph: PhantomData }
   }
 }
 
@@ -176,13 +188,16 @@ impl SpecBuilder {
     name: impl Into<Yarn>,
     rule: R,
   ) -> Lexeme<R> {
-    if self.rules.len() == (u32::MAX as usize) - 2 {
-      panic!("ilex: ran out of lexeme ids")
+    if self.rules.len() == (i32::MAX as usize) {
+      panic!(
+        "ilex: grammars with more than {} lexemes are unsupported",
+        i32::MAX
+      )
     }
 
     self.names.push(name.into());
     self.rules.push(rule.into());
-    Lexeme::new(self.rules.len() as u32 - 1)
+    Lexeme::new(self.rules.len() as i32 - 1)
   }
 
   #[doc(hidden)]
@@ -206,8 +221,8 @@ impl<R> Clone for Lexeme<R> {
 
 impl<R> Copy for Lexeme<R> {}
 
-impl<R> PartialEq<Lexeme<R>> for Lexeme<R> {
-  fn eq(&self, other: &Lexeme<R>) -> bool {
+impl<R, S> PartialEq<Lexeme<S>> for Lexeme<R> {
+  fn eq(&self, other: &Lexeme<S>) -> bool {
     self.id == other.id
   }
 }
@@ -225,7 +240,7 @@ impl<R> Ord for Lexeme<R> {
 
 impl<R> Hash for Lexeme<R> {
   fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-    u32::hash(&self.id, state)
+    i32::hash(&self.id, state)
   }
 }
 

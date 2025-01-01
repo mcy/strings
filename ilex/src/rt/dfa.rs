@@ -103,7 +103,7 @@ impl Dfa {
         let id = dfa.match_pattern(lexer.cache(), state, i);
         if id.as_usize() < self.non_close_rules {
           Lexeme2 {
-            lexeme: Lexeme::new(id.as_u32()),
+            lexeme: Lexeme::new(id.as_i32()),
             is_close: false,
           }
         } else {
@@ -127,7 +127,7 @@ pub fn compile(rules: &[Any]) -> Dfa {
   let mut closers = Vec::new();
 
   for (lexeme, rule) in rules.iter().enumerate() {
-    let lexeme = Lexeme::new(lexeme as u32);
+    let lexeme = Lexeme::new(lexeme as i32);
     let rule = compile_rule(rule);
     patterns.push(rule.pat);
     if let Some(close) = rule.close {
