@@ -108,17 +108,17 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
   }
 
   /// Returns the EOF span.
-  pub fn eof(&self) -> Span {
+  pub fn eof(&self) -> Span<'ctx> {
     self.file().span(self.file().len()..self.file().len())
   }
 
   /// Creates a new range in the current file.
-  pub fn span(&self, range: impl RangeBounds<usize>) -> Span {
+  pub fn span(&self, range: impl RangeBounds<usize>) -> Span<'ctx> {
     self.file().span(range)
   }
 
   // Returns the span of the token at the given index.
-  pub fn lookup_span(&self, idx: usize) -> Span {
+  pub fn lookup_span(&self, idx: usize) -> Span<'ctx> {
     let end = self.stream.toks[idx].end as usize;
     let start = self.stream.toks[..idx]
       .last()
@@ -188,7 +188,7 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
         self.builtins().extra_chars(
           self.spec().rule_name_or(
             close.lexeme.any(),
-            f!("{} ... {}", open_sp.text(self.file().context()), close.close),
+            f!("{} ... {}", open_sp, close.close),
           ),
           span,
         );

@@ -64,7 +64,7 @@ impl Matcher {
     tok: token::Any,
     ctx: &Context,
   ) {
-    state.match_spans("token span", &self.span, Spanned::span(&tok, ctx));
+    state.match_spans("token span", &self.span, Spanned::span(&tok));
 
     zip_eq("comments", state, &self.comments, tok.comments(), |state, t, s| {
       state.match_spans("comment", t, s);
@@ -267,20 +267,25 @@ impl<'a> MatchState<'a> {
     let _ = writeln!(self.errors, ": {msg}");
   }
 
-  fn match_spans(&mut self, what: &str, text: &Text, span: impl Spanned) {
-    let span = span.span(self.ctx);
+  fn match_spans<'s>(
+    &mut self,
+    what: &str,
+    text: &Text,
+    span: impl Spanned<'s>,
+  ) {
+    let span = span.span();
     if !text.recognizes(span, self.ctx) {
       self.error(f!("wrong {what}; want {:?}, got {:?}", text, span));
     }
   }
 
-  fn match_options(
+  fn match_options<'s>(
     &mut self,
     what: &str,
     text: Option<&Text>,
-    span: Option<impl Spanned>,
+    span: Option<impl Spanned<'s>>,
   ) {
-    let span = span.map(|s| s.span(self.ctx));
+    let span = span.map(|s| s.span());
     if text.is_none() && span.is_none() {
       return;
     }

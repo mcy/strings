@@ -4,6 +4,7 @@ use std::cell::Cell;
 
 use crate::file::File;
 use crate::file::Span;
+use crate::file::Span2;
 use crate::report::Fatal;
 use crate::report::Report;
 use crate::rule;
@@ -106,34 +107,29 @@ pub struct Digital {
 
 #[derive(Clone, Default)]
 pub struct DigitBlocks {
-  pub prefix: [u32; 2],
-  pub sign: Option<(Sign, [u32; 2])>,
-  pub blocks: Vec<[u32; 2]>,
+  pub prefix: Span2,
+  pub sign: Option<(Sign, Span2)>,
+  pub blocks: Vec<Span2>,
   pub which_exp: usize,
 }
 
 impl DigitBlocks {
-  pub fn prefix(&self, file: File) -> Option<Span> {
-    if self.prefix == [0, 0] {
+  pub fn prefix<'ctx>(&self, file: File<'ctx>) -> Option<Span<'ctx>> {
+    if self.prefix == Span2::default() {
       return None;
     }
-    Some(file.span(self.prefix[0] as usize..self.prefix[1] as usize))
+    Some(self.prefix.get(file))
   }
 
-  pub fn sign(&self, file: File) -> Option<Span> {
-    self
-      .sign
-      .map(|(_, [a, b])| file.span(a as usize..b as usize))
+  pub fn sign<'ctx>(&self, file: File<'ctx>) -> Option<Span<'ctx>> {
+    self.sign.map(|(_, s)| s.get(file))
   }
 
-  pub fn blocks<'a>(
+  pub fn blocks<'a, 'ctx: 'a>(
     &'a self,
-    file: File<'a>,
-  ) -> impl Iterator<Item = Span> + 'a {
-    self
-      .blocks
-      .iter()
-      .map(move |&[a, b]| file.span(a as usize..b as usize))
+    file: File<'ctx>,
+  ) -> impl Iterator<Item = Span<'ctx>> + 'a {
+    self.blocks.iter().map(move |s| s.get(file))
   }
 }
 

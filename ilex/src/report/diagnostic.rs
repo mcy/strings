@@ -2,7 +2,7 @@ use std::fmt;
 use std::mem;
 use std::panic;
 
-use crate::file::Span;
+use crate::file;
 use crate::file::Spanned;
 use crate::report::Report;
 
@@ -35,7 +35,7 @@ pub use annotate_snippets::AnnotationType as Kind;
 pub struct Info {
   pub kind: Kind,
   pub message: String,
-  pub snippets: Vec<Vec<(Span, String, Kind)>>,
+  pub snippets: Vec<Vec<(file::Span3, String, Kind)>>,
   pub notes: Vec<(String, Kind)>,
   pub reported_at: Option<&'static panic::Location<'static>>,
 }
@@ -70,24 +70,32 @@ impl Diagnostic {
   }
 
   /// Adds a new relevant snippet at the given location.
-  pub fn at(self, span: impl Spanned) -> Self {
+  pub fn at<'s>(self, span: impl Spanned<'s>) -> Self {
     self.saying(span, "")
   }
 
   /// Adds a new diagnostic location, with the given message attached to it.
-  pub fn saying(self, span: impl Spanned, message: impl fmt::Display) -> Self {
+  pub fn saying<'s>(
+    self,
+    span: impl Spanned<'s>,
+    message: impl fmt::Display,
+  ) -> Self {
     self.snippet(span, message, None)
   }
 
   /// Like `saying`, but the underline is as for a "note" rather than the
   /// overall diagnostic.
-  pub fn remark(self, span: impl Spanned, message: impl fmt::Display) -> Self {
+  pub fn remark<'s>(
+    self,
+    span: impl Spanned<'s>,
+    message: impl fmt::Display,
+  ) -> Self {
     self.snippet(span, message, Some(Kind::Help))
   }
 
-  fn snippet(
+  fn snippet<'s>(
     mut self,
-    span: impl Spanned,
+    span: impl Spanned<'s>,
     message: impl fmt::Display,
     kind: Option<Kind>,
   ) -> Self {
@@ -96,7 +104,7 @@ impl Diagnostic {
     }
 
     self.info.snippets.last_mut().unwrap().push((
-      span.span(&self.report.ctx),
+      span.span().span3(),
       message.to_string(),
       kind.unwrap_or(self.info.kind),
     ));

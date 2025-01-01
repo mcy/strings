@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::sync::RwLock;
 
 use camino::Utf8Path;
-use camino::Utf8PathBuf;
 
 use crate::f;
 use crate::file::File;
@@ -24,9 +23,12 @@ pub struct Context {
 
 #[derive(Default)]
 pub struct State {
+  // Each file is laid out as the length of the text, followed by the text data,
+  // followed by the path.
+  //
   // TODO(mcyoung): Be smarter about this and use something something concurrent
   // vector? We don't need to have all this stuff behind a lock I think.
-  files: Vec<(Utf8PathBuf, String)>,
+  files: Vec<(usize, String)>,
 }
 
 unsafe impl Send for Context {}
@@ -76,19 +78,21 @@ impl Context {
   }
 
   /// Adds a new file to this source context.
-  pub fn new_file(
+  pub fn new_file<'a>(
     &self,
-    name: impl Into<Utf8PathBuf>,
+    path: impl Into<&'a Utf8Path>,
     text: impl Into<String>,
   ) -> File {
     let mut text = text.into();
     text.push(' '); // This space only exists to be somewhere for an EOF span
                     // to point to in diagnostics; user code will never see
                     // it.
+    let len = text.len();
+    text.push_str(path.into().as_str());
 
     let idx = {
       let mut state = self.state.write().unwrap();
-      state.files.push((name.into(), text));
+      state.files.push((len, text));
       state.files.len() - 1
     };
 
@@ -97,40 +101,40 @@ impl Context {
 
   /// Adds a new file to this source context by opening `name` and reading it
   /// from the file system.
-  pub fn open_file(
+  pub fn open_file<'a>(
     &self,
-    name: impl Into<Utf8PathBuf>,
+    path: impl Into<&'a Utf8Path>,
     report: &Report,
   ) -> Result<File, Fatal> {
-    let name = name.into();
+    let path = path.into();
 
-    let bytes = match fs::read(&name) {
+    let bytes = match fs::read(path) {
       Ok(bytes) => bytes,
       Err(e) => {
-        report.error(f!("could not open input file `{name}`: {e}"));
+        report.error(f!("could not open input file `{path}`: {e}"));
         return report.fatal();
       }
     };
 
     let Ok(utf8) = String::from_utf8(bytes) else {
-      report.error(f!("input file `{name}` was not valid UTF-8"));
+      report.error(f!("input file `{path}` was not valid UTF-8"));
       return report.fatal();
     };
 
-    Ok(self.new_file(name, utf8))
+    Ok(self.new_file(path, utf8))
   }
 
   /// Gets the `idx`th file in this source context.
   pub fn file(&self, idx: usize) -> Option<File> {
     let state = self.state.read().unwrap();
-    let (path, text) = state.files.get(idx)?;
-    let (path, text) = unsafe {
+    let (len, text) = state.files.get(idx)?;
+    let text = unsafe {
       // SAFETY: The pointer to the file's text is immutable and pointer-stable,
       // so we can safely extend its lifetime here.
-      (&*(path.as_path() as *const Utf8Path), &*(text.as_str() as *const str))
+      &*(text.as_str() as *const str)
     };
 
-    Some(File { path, text, ctx: self, idx })
+    Some(File { len: *len, text, ctx: self, idx })
   }
 
   /// Gets the number of files currently tracked by this source context.

@@ -8,6 +8,7 @@ use byteyarn::YarnBox;
 use crate::f;
 use crate::file::Context;
 use crate::file::Span;
+use crate::file::Span2;
 use crate::plural;
 use crate::report::Expected;
 use crate::rt;
@@ -37,7 +38,7 @@ pub fn emit(lexer: &mut Lexer) {
   let start = lexer.cursor();
   let end = start + match_.len;
   let span = lexer.span(start..end);
-  let text = span.text(ctx);
+  let text = span.text();
   let end = end + match_.extra;
 
   // Now we have to decide which of `candidates` is the best one, i.e.,
@@ -82,12 +83,12 @@ pub fn emit(lexer: &mut Lexer) {
           };
 
           let [_, name, _] = find_affixes(range, &ident_rule.affixes, ctx);
-          if name.text(ctx).chars().count() < ident_rule.min_len {
+          if name.text().chars().count() < ident_rule.min_len {
             continue 'verify;
           }
 
           if ident_rule.ascii_only {
-            for c in name.text(ctx).chars() {
+            for c in name.text().chars() {
               if !c.is_ascii()
                 && !ident_rule.extra_continues.contains(c)
                 && !ident_rule.extra_starts.contains(c)
@@ -195,7 +196,7 @@ pub fn emit(lexer: &mut Lexer) {
   let best = best.unwrap_or(match_.candidates[0]);
   let [sign_span, prefix, range, suffix] =
     find_affixes_partial(span, lexer.spec(), best, ctx);
-  let text = range.text(ctx);
+  let text = range.text();
 
   let mirrored = match lexer.spec().rule(best.lexeme) {
     Any::Bracket(bracket)
@@ -208,7 +209,7 @@ pub fn emit(lexer: &mut Lexer) {
           if !best.is_close { (open, close) } else { (close, open) };
 
         let [_, mid, _] = range.split_around(remove.0.len(), remove.1.len());
-        Some(yarn!("{}{}{}", replace.0, mid.text(ctx), replace.1))
+        Some(yarn!("{}{}{}", replace.0, mid.text(), replace.1))
       }
       BracketKind::CxxLike { ident_rule, open, close, .. } => {
         let (remove, replace) =
@@ -217,7 +218,7 @@ pub fn emit(lexer: &mut Lexer) {
         let [_, mid, _] = range.split_around(remove.0.len(), remove.1.len());
         let [_, name, _] = find_affixes(mid, &ident_rule.affixes, ctx);
 
-        let text = name.text(ctx);
+        let text = name.text();
         let count = text.chars().count();
         if count < ident_rule.min_len {
           lexer
@@ -235,7 +236,7 @@ pub fn emit(lexer: &mut Lexer) {
           }
         }
 
-        Some(yarn!("{}{}{}", replace.0, mid.text(ctx), replace.1))
+        Some(yarn!("{}{}{}", replace.0, mid.text(), replace.1))
       }
     },
     _ => None,
@@ -342,7 +343,7 @@ pub fn emit(lexer: &mut Lexer) {
         );
         lexer.add_token(rt::SUFFIX, suffix.len(), None);
 
-        let sign_text = sign_span.text(ctx);
+        let sign_text = sign_span.text();
         let sign = (!sign_text.is_empty()).then(|| {
           let Some((_, value)) =
             rule.mant.signs.iter().find(|(text, _)| text == sign_text)
@@ -350,18 +351,18 @@ pub fn emit(lexer: &mut Lexer) {
             bug!("could not find appropriate sign for Digital rule");
           };
 
-          (*value, [sign_span.start() as u32, sign_span.end() as u32])
+          (*value, sign_span.span2())
         });
 
         let mut chunks = vec![DigitBlocks {
-          prefix: [0, 0],
+          prefix: Span2::default(),
           sign,
           blocks: Vec::new(),
           which_exp: !0,
         }];
 
         if !prefix.is_empty() {
-          chunks[0].prefix = [prefix.start() as u32, prefix.end() as u32];
+          chunks[0].prefix = prefix.span2();
         }
 
         let mut offset = 0;
@@ -410,10 +411,9 @@ pub fn emit(lexer: &mut Lexer) {
               );
             }
 
-            chunk.blocks.push([
-              (range.start() + block_start) as u32,
-              (range.start() + offset) as u32,
-            ]);
+            chunk
+              .blocks
+              .push(range.subspan(block_start..offset).span2());
             text = rest;
             offset += rule.point.len();
             block_start = offset;
@@ -431,10 +431,9 @@ pub fn emit(lexer: &mut Lexer) {
                 );
               }
 
-              chunk.blocks.push([
-                (range.start() + block_start) as u32,
-                (range.start() + offset) as u32,
-              ]);
+              chunk
+                .blocks
+                .push(range.subspan(block_start..offset).span2());
 
               let prefix = range.subspan(offset..offset + pre.len());
               text = rest;
@@ -446,25 +445,21 @@ pub fn emit(lexer: &mut Lexer) {
                 .filter(|(y, _)| rest.starts_with(y.as_str()))
                 .max_by_key(|(y, _)| y.len())
                 .map(|(y, s)| {
-                  let sign = [
-                    (range.start() + offset) as u32,
-                    (range.start() + offset + y.len()) as u32,
-                  ];
+                  let sign = range.subspan(offset..offset + y.len());
                   text = &text[y.len()..];
                   offset += y.len();
-                  (*s, sign)
+                  (*s, sign.span2())
                 });
 
               chunks.push(DigitBlocks {
-                prefix: [0, 0],
+                prefix: Span2::default(),
                 sign,
                 blocks: Vec::new(),
                 which_exp: i,
               });
 
               if !prefix.is_empty() {
-                chunks.last_mut().unwrap().prefix =
-                  [prefix.start() as u32, prefix.end() as u32];
+                chunks.last_mut().unwrap().prefix = prefix.span2();
               }
 
               digits = exp;
@@ -490,7 +485,7 @@ pub fn emit(lexer: &mut Lexer) {
           .last_mut()
           .unwrap()
           .blocks
-          .push([(range.start() + block_start) as u32, range.end() as u32]);
+          .push(range.subspan(block_start..).span2());
         let mant = chunks.remove(0);
 
         let Some(rt::Kind::Digital(meta)) = lexer
@@ -538,7 +533,7 @@ pub fn emit(lexer: &mut Lexer) {
           }
 
           for block in chunk.blocks(lexer.file()) {
-            let mut text = block.text(ctx);
+            let mut text = block.text();
 
             // FIXME: The is_some() here should not be necessary.
             if range.is_empty() && chunk.prefix(lexer.file()).is_some() {
@@ -546,10 +541,7 @@ pub fn emit(lexer: &mut Lexer) {
               lexer
                 .builtins()
                 .expected(
-                  [Expected::Name(yarn!(
-                    "digits after `{}`",
-                    prefix.text(ctx),
-                  ))],
+                  [Expected::Name(yarn!("digits after `{}`", prefix.text(),))],
                   match lexer.text(range.end()..).chars().next() {
                     Some(c) => Expected::Literal(Yarn::from(c)),
                     None => Expected::Lexeme(Lexeme::eof().any()),
@@ -793,14 +785,14 @@ pub fn emit(lexer: &mut Lexer) {
 }
 
 /// Extracts the affixes from `text`.
-fn find_affixes_partial(
-  range: Span,
+fn find_affixes_partial<'a>(
+  range: Span<'a>,
   spec: &Spec,
   best: Lexeme2,
   ctx: &Context,
-) -> [Span; 4] {
-  let text = range.text(ctx);
-  let ep = range.file(ctx).span(0..0);
+) -> [Span<'a>; 4] {
+  let text = range.text();
+  let ep = range.file().span(0..0);
   match spec.rule(best.lexeme) {
     Any::Ident(rule) => {
       let [pre, range, suf] = find_affixes(range, &rule.affixes, ctx);
@@ -833,14 +825,22 @@ fn find_affixes_partial(
 }
 
 /// Extracts the affixes from `text`.
-fn find_affixes(range: Span, affixes: &Affixes, ctx: &Context) -> [Span; 3] {
+fn find_affixes<'a>(
+  range: Span<'a>,
+  affixes: &Affixes,
+  ctx: &Context,
+) -> [Span<'a>; 3] {
   let (prefix, range) = find_prefix(range, affixes, ctx);
   let (range, suffix) = find_suffix(range, affixes, ctx);
   [prefix, range, suffix]
 }
 
-fn find_prefix(range: Span, affixes: &Affixes, ctx: &Context) -> (Span, Span) {
-  let text = range.text(ctx);
+fn find_prefix<'a>(
+  range: Span<'a>,
+  affixes: &Affixes,
+  ctx: &Context,
+) -> (Span<'a>, Span<'a>) {
+  let text = range.text();
   let prefix = affixes
     .prefixes()
     .iter()
@@ -851,8 +851,12 @@ fn find_prefix(range: Span, affixes: &Affixes, ctx: &Context) -> (Span, Span) {
   range.split_at(prefix)
 }
 
-fn find_suffix(range: Span, affixes: &Affixes, ctx: &Context) -> (Span, Span) {
-  let text = range.text(ctx);
+fn find_suffix<'a>(
+  range: Span<'a>,
+  affixes: &Affixes,
+  ctx: &Context,
+) -> (Span<'a>, Span<'a>) {
+  let text = range.text();
   let suffix = affixes
     .suffixes()
     .iter()

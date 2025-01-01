@@ -23,7 +23,7 @@ pub use context::Context;
 /// An input source file.
 #[derive(Copy, Clone)]
 pub struct File<'ctx> {
-  path: &'ctx Utf8Path,
+  len: usize,
   text: &'ctx str,
   ctx: &'ctx Context,
   idx: usize,
@@ -32,7 +32,7 @@ pub struct File<'ctx> {
 impl<'ctx> File<'ctx> {
   /// Returns the name of this file, as a path.
   pub fn path(self) -> &'ctx Utf8Path {
-    self.path
+    self.text[self.len..].into()
   }
 
   /// Returns the textual contents of this file. This function takes a range,
@@ -48,7 +48,7 @@ impl<'ctx> File<'ctx> {
     //
     // XXX: Apparently rustc forgets about other <str as Index> impls if we use
     // text[..x] here??
-    let text = &self.text.get(..self.text.len() - 1).unwrap();
+    let text = &self.text.get(..self.len - 1).unwrap();
     &text[range]
   }
 
@@ -59,7 +59,7 @@ impl<'ctx> File<'ctx> {
   }
 
   pub(crate) fn text_with_extra_space(self) -> &'ctx str {
-    self.text
+    &self.text[..self.len]
   }
 
   /// Returns the [`Context`] that owns this file.
@@ -73,7 +73,7 @@ impl<'ctx> File<'ctx> {
   ///
   /// Panics if `start > end`, or if `end` is greater than the length of the
   /// file.
-  pub fn span(self, range: impl RangeBounds<usize>) -> Span {
+  pub fn span(self, range: impl RangeBounds<usize>) -> Span<'ctx> {
     Span::new(self, range)
   }
 
@@ -103,13 +103,36 @@ impl PartialEq for File<'_> {
 /// so anything that implements [`Spanned`] is suitable for placing spanned data
 /// in diagnostics.
 #[derive(Copy, Clone)]
-pub struct Span {
-  file: u32,
+pub struct Span<'ctx> {
+  file: File<'ctx>,
   start: u32,
   end: u32,
 }
 
-impl Span {
+// A compressed version of a span that only remembers the start/end.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct Span2(u32, u32);
+
+impl Span2 {
+  pub fn get(self, file: File) -> Span {
+    file.span(self.0 as usize..self.1 as usize)
+  }
+}
+
+// A compressed version of a span that remembers the start, end, and file.
+#[derive(Clone, Copy)]
+pub struct Span3(u32, u32, u32);
+
+impl Span3 {
+  pub fn get(self, ctx: &Context) -> Span {
+    ctx
+      .file(self.0 as usize)
+      .unwrap()
+      .span(self.1 as usize..self.2 as usize)
+  }
+}
+
+impl<'ctx> Span<'ctx> {
   /// Constructs a span from a file and a byte range within it.
   ///
   /// # Panics
@@ -118,7 +141,7 @@ impl Span {
   /// file.
   #[track_caller]
   pub(crate) fn new<T: Copy + TryInto<u32> + fmt::Debug>(
-    file: File,
+    file: File<'ctx>,
     range: impl RangeBounds<T>,
   ) -> Span {
     let start = match range.start_bound() {
@@ -140,7 +163,15 @@ impl Span {
       file.text.len(),
     );
 
-    Span { file: file.idx() as u32, start, end }
+    Span { file, start, end }
+  }
+
+  pub(crate) fn span2(self) -> Span2 {
+    Span2(self.start, self.end)
+  }
+
+  pub(crate) fn span3(self) -> Span3 {
+    Span3(self.file.idx() as u32, self.start, self.end)
   }
 
   /// Gets the file for this span.
@@ -149,8 +180,8 @@ impl Span {
   ///
   /// May panic if this span is not owned by `ctx` (or it may produce an
   /// unexpected result).
-  pub fn file(self, ctx: &Context) -> File {
-    ctx.file(self.file as usize).unwrap()
+  pub fn file(self) -> File<'ctx> {
+    self.file
   }
 
   /// Returns the start (inclusive) byte offset of this span.
@@ -181,7 +212,7 @@ impl Span {
   pub fn subspan<T: Copy + TryInto<u32> + fmt::Debug>(
     self,
     range: impl RangeBounds<T>,
-  ) -> Span {
+  ) -> Self {
     let start = match range.start_bound() {
       Bound::Included(&x) => cast(x),
       Bound::Excluded(&x) => cast(x).saturating_add(1),
@@ -212,7 +243,7 @@ impl Span {
   ///
   /// # Panics
   ///  /// Panics if `at` is larger than the length of this range.
-  pub fn split_at(self, at: usize) -> (Span, Span) {
+  pub fn split_at(self, at: usize) -> (Self, Self) {
     (self.subspan(..at), self.subspan(at..))
   }
 
@@ -222,7 +253,7 @@ impl Span {
   /// # Panics
   ///
   /// Panics if `range` is smaller than `pre + suf`.
-  pub fn split_around(self, pre: usize, suf: usize) -> [Span; 3] {
+  pub fn split_around(self, pre: usize, suf: usize) -> [Self; 3] {
     let (pre, range) = self.split_at(pre);
     let (range, suf) = range.split_at(range.len() - suf);
     [pre, range, suf]
@@ -234,8 +265,8 @@ impl Span {
   ///
   /// May panic if this range is not owned by `ctx` (or it may produce an
   /// unexpected result).
-  pub fn text(self, ctx: &Context) -> &str {
-    self.file(ctx).text(self.start as usize..self.end as usize)
+  pub fn text(self) -> &'ctx str {
+    self.file().text(self.start as usize..self.end as usize)
   }
 
   /// Joins together a collection of ranges.
@@ -244,7 +275,7 @@ impl Span {
   ///
   /// May panic if not all spans are for the same file, or if the iterator
   /// is empty.
-  pub fn union(ranges: impl IntoIterator<Item = Span>) -> Span {
+  pub fn union(ranges: impl IntoIterator<Item = Self>) -> Self {
     let mut best = None;
 
     for range in ranges {
@@ -267,56 +298,56 @@ impl Span {
 ///
 /// You should implement this type for any type which naturally has a single
 /// span that describes it.
-pub trait Spanned {
+pub trait Spanned<'ctx> {
   /// Returns the span in this syntax element.
-  fn span(&self, ctx: &Context) -> Span;
+  fn span(&self) -> Span<'ctx>;
 
   /// Forwards to [`SpanId::file()`].
-  fn file<'ctx>(&self, ctx: &'ctx Context) -> File<'ctx> {
-    self.span(ctx).file(ctx)
+  fn file(&self) -> File<'ctx> {
+    self.span().file()
   }
 
   /// Forwards to [`Span::start()`].
-  fn start(&self, ctx: &Context) -> usize {
-    self.span(ctx).start()
+  fn start(&self) -> usize {
+    self.span().start()
   }
 
   /// Forwards to [`Span::end()`].
-  fn end(&self, ctx: &Context) -> usize {
-    self.span(ctx).end()
+  fn end(&self) -> usize {
+    self.span().end()
   }
 
   /// Forwards to [`Span::is_empty()`].
-  fn is_empty(&self, ctx: &Context) -> bool {
-    self.span(ctx).is_empty()
+  fn is_empty(&self) -> bool {
+    self.span().is_empty()
   }
 
   /// Forwards to [`Span::len()`].
-  fn len(&self, ctx: &Context) -> usize {
-    self.span(ctx).len()
+  fn len(&self) -> usize {
+    self.span().len()
   }
 
   /// Forwards to [`SpanId::text()`].
-  fn text<'ctx>(&self, ctx: &'ctx Context) -> &'ctx str {
-    self.span(ctx).text(ctx)
+  fn text(&self) -> &'ctx str {
+    self.span().text()
   }
 }
 
 // Spans are spanned by their own spans.
-impl Spanned for Span {
-  fn span(&self, _ctx: &Context) -> Span {
+impl<'ctx> Spanned<'ctx> for Span<'ctx> {
+  fn span(&self) -> Span<'ctx> {
     *self
   }
 }
 
-impl<S: Spanned> Spanned for &S {
-  fn span(&self, ctx: &Context) -> Span {
-    S::span(self, ctx)
+impl<'ctx, S: Spanned<'ctx>> Spanned<'ctx> for &S {
+  fn span(&self) -> Span<'ctx> {
+    S::span(self)
   }
 }
 
-impl Spanned for Never {
-  fn span(&self, _ctx: &Context) -> Span {
+impl<'ctx> Spanned<'ctx> for Never {
+  fn span(&self) -> Span<'ctx> {
     self.from_nothing_anything()
   }
 }
@@ -325,28 +356,33 @@ thread_local! {
   static CTX_FOR_SPAN_DEBUG: RefCell<Option<Context>> = RefCell::new(None);
 }
 
-impl fmt::Debug for Span {
+impl fmt::Debug for File<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    CTX_FOR_SPAN_DEBUG.with(|ctx| {
-      if let Some(ctx) = &*ctx.borrow() {
-        let text = self.text(ctx);
-        write!(f, "`")?;
-        for c in text.chars() {
-          if ('\x20'..'\x7e').contains(&c) {
-            f.write_char(c)?;
-          } else if c < '\x20' {
-            write!(f, "{}", c.escape_debug())?
-          } else {
-            write!(f, "<U+{:04X}>", c as u32)?;
-          }
-        }
-        write!(f, "` @ {}", self.file(ctx).path())?;
-      } else {
-        write!(f, "<#{}>", self.file)?;
-      }
+    write!(f, "File({})", self.path())
+  }
+}
 
-      write!(f, "[{}..{}]", Span::start(*self), Span::end(*self))
-    })
+impl fmt::Debug for Span<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "`")?;
+    for c in self.text().chars() {
+      if ('\x20'..'\x7e').contains(&c) {
+        f.write_char(c)?;
+      } else if c < '\x20' {
+        write!(f, "{}", c.escape_debug())?
+      } else {
+        write!(f, "<U+{:04X}>", c as u32)?;
+      }
+    }
+    write!(f, "` @ {}", self.file.path())?;
+
+    write!(f, "[{}..{}]", Span::start(*self), Span::end(*self))
+  }
+}
+
+impl fmt::Display for Span<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(self.text())
   }
 }
 

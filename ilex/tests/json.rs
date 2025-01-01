@@ -249,7 +249,7 @@ fn parse0(
 ) -> Json {
   let quote2str = |str: token::Quoted| -> String {
     str.to_utf8(|key, data, buf| {
-      let char = match key.text(ctx) {
+      let char = match key.text() {
         "\\\"" => '\"',
         r"\\" => '\\',
         r"\/" => '/',
@@ -262,10 +262,10 @@ fn parse0(
         r"\u" => {
           let data = data.unwrap();
           let code =
-            u16::from_str_radix(data.text(ctx), 16).unwrap_or_else(|_| {
+            u16::from_str_radix(data.text(), 16).unwrap_or_else(|_| {
               report.builtins(json.spec()).expected(
                 [Expected::Name("hex-encoded u16".into())],
-                data.text(ctx),
+                data.text(),
                 data,
               );
               0

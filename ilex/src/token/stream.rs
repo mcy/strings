@@ -536,13 +536,12 @@ pub struct Comments<'lex> {
 impl<'lex> Comments<'lex> {
   /// Adapts this iterator to return just the text contents of each [`SpanId`].
   pub fn as_strings(self) -> impl Iterator<Item = &'lex str> + 'lex {
-    let ctx = self.stream.context();
-    self.map(move |s| s.text(ctx))
+    self.map(Span::text)
   }
 }
 
 impl<'lex> Iterator for Comments<'lex> {
-  type Item = Span;
+  type Item = Span<'lex>;
 
   fn next(&mut self) -> Option<Self::Item> {
     let id = *self.comments.next()?;
