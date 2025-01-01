@@ -66,7 +66,7 @@ impl Id {
 /// A token type. All types in [`ilex::token`][crate::token] implement this
 /// trait.
 pub trait Token<'lex>:
-  Copy + Spanned + fmt::Debug + TryFrom<Any<'lex>> + Into<Any<'lex>>
+  Copy + Spanned<'lex> + fmt::Debug + TryFrom<Any<'lex>> + Into<Any<'lex>>
 {
   /// The token this rule was parsed from.
   type Rule: rule::Rule;
@@ -250,15 +250,15 @@ impl fmt::Debug for Any<'_> {
   }
 }
 
-impl Spanned for Any<'_> {
-  fn span(&self, ctx: &Context) -> Span {
+impl<'lex> Spanned<'lex> for Any<'lex> {
+  fn span(&self) -> Span<'lex> {
     match self {
-      Self::Eof(tok) => tok.span(ctx),
-      Self::Keyword(tok) => tok.span(ctx),
-      Self::Bracket(tok) => tok.span(ctx),
-      Self::Ident(tok) => tok.span(ctx),
-      Self::Quoted(tok) => tok.span(ctx),
-      Self::Digital(tok) => tok.span(ctx),
+      Self::Eof(tok) => tok.span(),
+      Self::Keyword(tok) => tok.span(),
+      Self::Bracket(tok) => tok.span(),
+      Self::Ident(tok) => tok.span(),
+      Self::Quoted(tok) => tok.span(),
+      Self::Digital(tok) => tok.span(),
     }
   }
 }
@@ -319,12 +319,12 @@ impl<'lex> TryFrom<Any<'lex>> for Eof<'lex> {
 
 impl fmt::Debug for Eof<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "Eof({:?})", self.span(self.context()))
+    write!(f, "Eof({:?})", self.span())
   }
 }
 
-impl Spanned for Eof<'_> {
-  fn span(&self, _: &Context) -> Span {
+impl<'lex> Spanned<'lex> for Eof<'lex> {
+  fn span(&self) -> Span<'lex> {
     self.stream.lookup_span_no_affix(self.id)
   }
 }
@@ -372,12 +372,12 @@ impl<'lex> TryFrom<Any<'lex>> for Keyword<'lex> {
 
 impl fmt::Debug for Keyword<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "Keyword({:?})", self.span(self.stream.context()))
+    write!(f, "Keyword({:?})", self.span())
   }
 }
 
-impl Spanned for Keyword<'_> {
-  fn span(&self, _: &Context) -> Span {
+impl<'lex> Spanned<'lex> for Keyword<'lex> {
+  fn span(&self) -> Span<'lex> {
     self.stream.lookup_span_no_affix(self.id)
   }
 }
@@ -396,17 +396,17 @@ pub struct Bracket<'lex> {
 
 impl<'lex> Bracket<'lex> {
   /// Returns this token's open delimiter.
-  pub fn open(self) -> Span {
+  pub fn open(self) -> Span<'lex> {
     self.contents.stream().lookup_span_no_affix(self.open)
   }
 
   /// Returns this token's close delimiter.
-  pub fn close(self) -> Span {
+  pub fn close(self) -> Span<'lex> {
     self.contents.stream().lookup_span_no_affix(self.close)
   }
 
   /// Returns this token's quote delimiters.
-  pub fn delimiters(self) -> [Span; 2] {
+  pub fn delimiters(self) -> [Span<'lex>; 2] {
     [self.open(), self.close()]
   }
 
@@ -466,8 +466,8 @@ impl fmt::Debug for Bracket<'_> {
   }
 }
 
-impl Spanned for Bracket<'_> {
-  fn span(&self, _: &Context) -> Span {
+impl<'lex> Spanned<'lex> for Bracket<'lex> {
+  fn span(&self) -> Span<'lex> {
     let [a, b] = self.delimiters();
     self.contents.stream().file().span(a.start()..b.end())
   }
@@ -482,32 +482,28 @@ pub struct Ident<'lex> {
 
 impl<'lex> Ident<'lex> {
   /// Returns this token's name span.
-  pub fn name(self) -> Span {
+  pub fn name(self) -> Span<'lex> {
     self.stream.lookup_span_no_affix(self.id)
   }
 
   /// Returns this token's prefix.
-  pub fn prefix(self) -> Option<Span> {
+  pub fn prefix(self) -> Option<Span<'lex>> {
     self.stream.lookup_prefix(self.id)
   }
 
   /// Checks whether this identifier has a particular prefix.
   pub fn has_prefix(&self, expected: &str) -> bool {
-    self
-      .prefix()
-      .is_some_and(|s| s.text(self.context()) == expected)
+    self.prefix().is_some_and(|s| s.text() == expected)
   }
 
   /// Returns this token's suffix.
-  pub fn suffix(&self) -> Option<Span> {
+  pub fn suffix(&self) -> Option<Span<'lex>> {
     self.stream.lookup_suffix(self.id)
   }
 
   /// Checks whether this identifier has a particular prefix.
   pub fn has_suffix(&self, expected: &str) -> bool {
-    self
-      .suffix()
-      .is_some_and(|s| s.text(self.context()) == expected)
+    self.suffix().is_some_and(|s| s.text() == expected)
   }
 }
 
@@ -548,8 +544,7 @@ impl fmt::Debug for Ident<'_> {
     }
 
     let mut f = f.debug_struct("Ident");
-    f.field("span", &self.span(self.context()))
-      .field("name", &self.name());
+    f.field("span", &self.span()).field("name", &self.name());
 
     if let Some(prefix) = self.prefix() {
       f.field("prefix", &prefix);
@@ -563,8 +558,8 @@ impl fmt::Debug for Ident<'_> {
   }
 }
 
-impl Spanned for Ident<'_> {
-  fn span(&self, _: &Context) -> Span {
+impl<'lex> Spanned<'lex> for Ident<'lex> {
+  fn span(&self) -> Span<'lex> {
     self.stream.lookup_span_with_affixes(self.id)
   }
 }
@@ -614,14 +609,13 @@ impl<'lex> Digital<'lex> {
   }
 
   /// Returns the span corresponding to [`Digital::sign()`].
-  pub fn sign_span(self) -> Option<Span> {
-    self.rt_blocks().sign(self.file(self.context()))
+  pub fn sign_span(self) -> Option<Span<'lex>> {
+    self.rt_blocks().sign(self.file())
   }
 
   /// Returns the point-separated digit chunks of this digital literal.
-  pub fn digit_blocks(self) -> impl Iterator<Item = Span> + 'lex {
-    let ctx = self.context();
-    self.rt_blocks().blocks(self.file(ctx))
+  pub fn digit_blocks(self) -> impl Iterator<Item = Span<'lex>> + 'lex {
+    self.rt_blocks().blocks(self.file())
   }
 
   /// Returns the exponents of this digital literal, if it any.
@@ -638,9 +632,9 @@ impl<'lex> Digital<'lex> {
   }
 
   /// Returns this token's prefix.
-  pub fn prefix(self) -> Option<Span> {
+  pub fn prefix(self) -> Option<Span<'lex>> {
     if self.idx > 0 {
-      return self.rt_blocks().prefix(self.file(self.context()));
+      return self.rt_blocks().prefix(self.file());
     }
 
     self.stream.lookup_prefix(self.id)
@@ -648,13 +642,11 @@ impl<'lex> Digital<'lex> {
 
   /// Checks whether this identifier has a particular prefix.
   pub fn has_prefix(&self, expected: &str) -> bool {
-    self
-      .prefix()
-      .is_some_and(|s| s.text(self.context()) == expected)
+    self.prefix().is_some_and(|s| s.text() == expected)
   }
 
   /// Returns this token's suffix.
-  pub fn suffix(&self) -> Option<Span> {
+  pub fn suffix(&self) -> Option<Span<'lex>> {
     if self.idx > 0 {
       // Exponent tokens never have a suffix.
       return None;
@@ -665,9 +657,7 @@ impl<'lex> Digital<'lex> {
 
   /// Checks whether this identifier has a particular prefix.
   pub fn has_suffix(&self, expected: &str) -> bool {
-    self
-      .suffix()
-      .is_some_and(|s| s.text(self.context()) == expected)
+    self.suffix().is_some_and(|s| s.text() == expected)
   }
 
   /// Parses this token as an integer.
@@ -716,7 +706,7 @@ impl<'lex> Digital<'lex> {
     self
       .digit_blocks()
       .map(|span| {
-        let text = span.text(self.context());
+        let text = span.text();
         let buf;
         let text =
           if !rule.separator.is_empty() && text.contains(&*rule.separator) {
@@ -942,7 +932,7 @@ impl<'lex> TryFrom<Any<'lex>> for Digital<'lex> {
 impl fmt::Debug for Digital<'_> {
   fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
     let mut f = f.debug_struct("Digital");
-    f.field("span", &self.span(self.context()))
+    f.field("span", &self.span())
       .field("radix", &self.radix())
       // TODO: Get rid of this collect.
       .field("digits", &self.digit_blocks().collect::<Vec<_>>());
@@ -967,8 +957,8 @@ impl fmt::Debug for Digital<'_> {
   }
 }
 
-impl Spanned for Digital<'_> {
-  fn span(&self, _: &Context) -> Span {
+impl<'lex> Spanned<'lex> for Digital<'lex> {
+  fn span(&self) -> Span<'lex> {
     self.stream.lookup_span_with_affixes(self.id)
   }
 }
@@ -983,17 +973,17 @@ pub struct Quoted<'lex> {
 
 impl<'lex> Quoted<'lex> {
   /// Returns this token's open delimiter.
-  pub fn open(self) -> Span {
+  pub fn open(self) -> Span<'lex> {
     self.delimiters()[0]
   }
 
   /// Returns this token's close delimiter.
-  pub fn close(self) -> Span {
+  pub fn close(self) -> Span<'lex> {
     self.delimiters()[1]
   }
 
   /// Returns this token's quote delimiters.
-  pub fn delimiters(self) -> [Span; 2] {
+  pub fn delimiters(self) -> [Span<'lex>; 2] {
     let span = self.stream.lookup_span_no_affix(self.id);
     [
       self
@@ -1016,7 +1006,7 @@ impl<'lex> Quoted<'lex> {
   /// It is up to the user of the library to decode these two content types into
   /// strings. [`Quoted::to_utf8()`] helps with the common case of doing this for
   /// UTF-8 strings.
-  pub fn raw_content(self) -> impl Iterator<Item = Content> + 'lex {
+  pub fn raw_content(self) -> impl Iterator<Item = Content<Span<'lex>>> + 'lex {
     let file = self.stream.file();
     let mut next = self.meta.marks[0];
     let mut is_escape = false;
@@ -1062,7 +1052,7 @@ impl<'lex> Quoted<'lex> {
   }
 
   /// Returns the unique single literal content of this token, if it is unique.
-  pub fn literal(self) -> Option<Span> {
+  pub fn literal(self) -> Option<Span<'lex>> {
     if self.meta.marks.len() > 2 {
       return None;
     }
@@ -1075,12 +1065,12 @@ impl<'lex> Quoted<'lex> {
   /// mapping function for escapes.
   pub fn to_utf8(
     self,
-    mut decode_esc: impl FnMut(Span, Option<Span>, &mut String),
+    mut decode_esc: impl FnMut(Span, Option<Span<'lex>>, &mut String),
   ) -> String {
     let total = self
       .raw_content()
       .map(|c| match c {
-        Content::Lit(sp) => sp.text(self.context()).len(),
+        Content::Lit(sp) => sp.text().len(),
         Content::Esc(..) => 1,
       })
       .sum();
@@ -1088,7 +1078,7 @@ impl<'lex> Quoted<'lex> {
     let mut buf = String::with_capacity(total);
     for chunk in self.raw_content() {
       match chunk {
-        Content::Lit(sp) => buf.push_str(sp.text(self.context())),
+        Content::Lit(sp) => buf.push_str(sp.text()),
         Content::Esc(sp, data) => decode_esc(sp, data, &mut buf),
       }
     }
@@ -1096,27 +1086,23 @@ impl<'lex> Quoted<'lex> {
   }
 
   /// Returns this token's prefix.
-  pub fn prefix(self) -> Option<Span> {
+  pub fn prefix(self) -> Option<Span<'lex>> {
     self.stream.lookup_prefix(self.id)
   }
 
   /// Checks whether this identifier has a particular prefix.
   pub fn has_prefix(&self, expected: &str) -> bool {
-    self
-      .prefix()
-      .is_some_and(|s| s.text(self.context()) == expected)
+    self.prefix().is_some_and(|s| s.text() == expected)
   }
 
   /// Returns this token's suffix.
-  pub fn suffix(&self) -> Option<Span> {
+  pub fn suffix(&self) -> Option<Span<'lex>> {
     self.stream.lookup_suffix(self.id)
   }
 
   /// Checks whether this identifier has a particular prefix.
   pub fn has_suffix(&self, expected: &str) -> bool {
-    self
-      .suffix()
-      .is_some_and(|s| s.text(self.context()) == expected)
+    self.suffix().is_some_and(|s| s.text() == expected)
   }
 }
 
@@ -1125,7 +1111,7 @@ impl<'lex> Quoted<'lex> {
 /// The "span type" is configurable; this type is used by multiple parts of
 /// the library.
 #[derive(Copy, Clone, Debug)]
-pub enum Content<Span = self::Span> {
+pub enum Content<Span> {
   /// A literal chunk, i.e. UTF-8 text directly from the source file.
   Lit(Span),
 
@@ -1184,7 +1170,7 @@ impl<'lex> TryFrom<Any<'lex>> for Quoted<'lex> {
 impl fmt::Debug for Quoted<'_> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let mut f = f.debug_struct("Quoted");
-    f.field("span", &self.span(self.context()))
+    f.field("span", &self.span())
       .field("delimiters", &self.delimiters())
       // TODO: get rid of this collect().
       .field("content", &self.raw_content().collect::<Vec<_>>());
@@ -1201,8 +1187,8 @@ impl fmt::Debug for Quoted<'_> {
   }
 }
 
-impl Spanned for Quoted<'_> {
-  fn span(&self, _: &Context) -> Span {
+impl<'lex> Spanned<'lex> for Quoted<'lex> {
+  fn span(&self) -> Span<'lex> {
     self.stream.lookup_span_with_affixes(self.id)
   }
 }
@@ -1248,16 +1234,16 @@ impl<'lex> Any<'lex> {
     let ctx = self.context();
     let (pre, suf, kind) = match self {
       Any::Eof(_) => return yarn!("<eof>"),
-      Any::Keyword(tok) => return yarn!("`{}`", tok.text(ctx)),
+      Any::Keyword(tok) => return yarn!("`{}`", tok.text()),
       Any::Bracket(d) => {
-        return yarn!("`{} ... {}`", d.open().text(ctx), d.close().text(ctx));
+        return yarn!("`{} ... {}`", d.open().text(), d.close().text());
       }
 
       Any::Quoted(tok) => {
-        let pre = tok.prefix().map(|s| s.text(ctx)).unwrap_or("");
-        let suf = tok.suffix().map(|s| s.text(ctx)).unwrap_or("");
-        let open = tok.open().text(ctx);
-        let close = tok.close().text(ctx);
+        let pre = tok.prefix().map(|s| s.text()).unwrap_or("");
+        let suf = tok.suffix().map(|s| s.text()).unwrap_or("");
+        let open = tok.open().text();
+        let close = tok.close().text();
         return yarn!("`{pre}{open}...{close}{suf}`");
       }
 
@@ -1265,7 +1251,7 @@ impl<'lex> Any<'lex> {
       Any::Digital(tok) => (tok.prefix(), tok.suffix(), "number"),
     };
 
-    match (pre.map(|s| s.text(ctx)), suf.map(|s| s.text(ctx))) {
+    match (pre.map(|s| s.text()), suf.map(|s| s.text())) {
       (Some(pre), Some(suf)) => {
         yarn!("`{pre}`-prefixed, `{suf}`-suffixed {kind}")
       }

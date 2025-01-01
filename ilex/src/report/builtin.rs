@@ -29,12 +29,11 @@ pub struct Builtins<'a> {
 impl Builtins<'_> {
   /// Generates an "unexpected" diagnostic.
   #[track_caller]
-  pub fn unexpected<'a, 'b>(
+  pub fn unexpected<'a, 'b, 's>(
     &self,
-
     found: impl Into<Expected<'a>>,
     unexpected_in: impl Into<Expected<'b>>,
-    at: impl Spanned,
+    at: impl Spanned<'s>,
   ) -> Diagnostic {
     let found = found.into();
 
@@ -52,9 +51,12 @@ impl Builtins<'_> {
   }
 
   #[track_caller]
-  pub(crate) fn unexpected_token(&self, at: impl Spanned) -> Diagnostic {
-    let at = at.span(&self.report.ctx);
-    let found = at.text(&self.report.ctx);
+  pub(crate) fn unexpected_token<'s>(
+    &self,
+    at: impl Spanned<'s>,
+  ) -> Diagnostic {
+    let at = at.span();
+    let found = at.text();
 
     let diagnostic = self
       .report
@@ -66,13 +68,13 @@ impl Builtins<'_> {
   }
 
   #[track_caller]
-  pub(crate) fn extra_chars<'a>(
+  pub(crate) fn extra_chars<'a, 's>(
     &self,
     unexpected_in: impl Into<Expected<'a>>,
-    at: impl Spanned,
+    at: impl Spanned<'s>,
   ) -> Diagnostic {
-    let at = at.span(&self.report.ctx);
-    let found = at.text(&self.report.ctx);
+    let at = at.span();
+    let found = at.text();
 
     let diagnostic = self
       .report
@@ -83,7 +85,7 @@ impl Builtins<'_> {
       ))
       .at(at)
       .remark(
-        at.file(&self.report.ctx)
+        at.file()
           .span(at.start().saturating_sub(1)..at.start().saturating_add(1)),
         "maybe you meant to include a space here",
       )
@@ -95,12 +97,12 @@ impl Builtins<'_> {
   /// Generates an "expected one of these tokens but got something else"
   /// diagnostic.
   #[track_caller]
-  pub fn expected<'a, 'b, E: Into<Expected<'b>>>(
+  pub fn expected<'a, 'b, 's, E: Into<Expected<'b>>>(
     &self,
 
     expected: impl IntoIterator<Item = E>,
     found: impl Into<Expected<'b>>,
-    at: impl Spanned,
+    at: impl Spanned<'s>,
   ) -> Diagnostic {
     let expected = expected.into_iter().map(Into::into).collect::<Vec<_>>();
     let alts = disjunction_to_string(self.spec, &expected);
@@ -121,12 +123,11 @@ impl Builtins<'_> {
   /// Generates an "unopened delimiter" diagnostic, for when a delimiter is
   /// not opened before expected.
   #[track_caller]
-  pub(crate) fn unopened<'a>(
+  pub(crate) fn unopened<'a, 's>(
     &self,
-
     expected: &str,
     found: impl Into<Expected<'a>>,
-    at: impl Spanned,
+    at: impl Spanned<'s>,
   ) -> Diagnostic {
     let found = found.into();
 
@@ -142,13 +143,13 @@ impl Builtins<'_> {
   /// Generates an "unclosed delimiter" diagnostic, for when a delimiter is
   /// not closed before expected.
   #[track_caller]
-  pub(crate) fn unclosed<'a>(
+  pub(crate) fn unclosed<'a, 's1, 's2>(
     &self,
 
-    open: impl Spanned,
+    open: impl Spanned<'s1>,
     expected: &str,
     found: impl Into<Expected<'a>>,
-    at: impl Spanned,
+    at: impl Spanned<'s2>,
   ) -> Diagnostic {
     let found = found.into();
 
@@ -168,11 +169,10 @@ impl Builtins<'_> {
   /// Generates an "unclosed delimiter" diagnostic, for when a delimiter is
   /// not closed before expected.
   #[track_caller]
-  pub(crate) fn non_ascii_in_ident<'a>(
+  pub(crate) fn non_ascii_in_ident<'a, 's>(
     &self,
-
     expected: impl Into<Expected<'a>>,
-    at: impl Spanned,
+    at: impl Spanned<'s>,
   ) -> Diagnostic {
     self
       .report
@@ -185,11 +185,11 @@ impl Builtins<'_> {
   }
 
   #[track_caller]
-  pub(crate) fn ident_too_small(
+  pub(crate) fn ident_too_small<'s>(
     &self,
     min_len: usize,
     actual: usize,
-    at: impl Spanned,
+    at: impl Spanned<'s>,
   ) -> Diagnostic {
     let diagnostic = self
       .report
@@ -210,27 +210,25 @@ impl Builtins<'_> {
 
   /// Generates an "invalid escape sequence" diagnostic.
   #[track_caller]
-  pub fn invalid_escape(
+  pub fn invalid_escape<'s>(
     &self,
-    at: impl Spanned,
+    at: impl Spanned<'s>,
     why: impl fmt::Display,
   ) -> Diagnostic {
-    let at = at.span(&self.report.ctx);
-    let seq = at.text(&self.report.ctx);
+    let at = at.span();
     self
       .report
-      .error(f!("found an invalid escape sequence: `{seq}`"))
+      .error(f!("found an invalid escape sequence: `{at}`"))
       .saying(at, why)
       .reported_at(Location::caller())
   }
 
   /// Generates a "numeric literal overflowed" diagnostic.
   #[track_caller]
-  pub fn literal_out_of_range<'a, N: fmt::Display>(
+  pub fn literal_out_of_range<'a, 's, N: fmt::Display>(
     &self,
-
     what: impl Into<Expected<'a>>,
-    at: impl Spanned,
+    at: impl Spanned<'s>,
     span: &impl RangeBounds<N>,
     min: &dyn fmt::Display,
     max: &dyn fmt::Display,

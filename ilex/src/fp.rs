@@ -521,7 +521,7 @@ impl Digital<'_> {
       let mut int_digits = 0i64;
       let mut frac_digits = 0i64;
       for (span, digits) in [(int, &mut int_digits), (frac, &mut frac_digits)] {
-        let Some(mut text) = span.map(|s| s.text(ctx)) else {
+        let Some(mut text) = span.map(|s| s.text()) else {
           continue;
         };
         while let Some(c) = text.chars().next() {
@@ -554,7 +554,7 @@ impl Digital<'_> {
       }
 
       if let Some(exp) = exp {
-        let mut text = exp.digit_blocks().next().unwrap().text(ctx);
+        let mut text = exp.digit_blocks().next().unwrap().text();
         while let Some(c) = text.chars().next() {
           if let Some(suf) = text.strip_prefix(rule.separator.as_str()) {
             text = suf;
@@ -599,7 +599,7 @@ impl Digital<'_> {
         tok.sign().is_none()
           || tok.sign().is_some_and(|s| {
             matches!(
-              (tok.sign_span().unwrap().text(ctx), s),
+              (tok.sign_span().unwrap().text(), s),
               ("+", Sign::Pos) | ("-", Sign::Neg)
             )
           })
@@ -617,13 +617,12 @@ impl Digital<'_> {
               && has_ordinary_sign(ctx, &exp)
           }))
         && (rule.separator.is_empty()
-          || !self.text(ctx).contains(rule.separator.as_str()))
+          || !self.text().contains(rule.separator.as_str()))
       {
-        let text = self.text(ctx);
+        let text = self.text();
         Fp::__parse(
-          &text[self.prefix().map(|s| s.text(ctx).len()).unwrap_or(0)
-            ..text.len()
-              - self.suffix().map(|s| s.text(ctx).len()).unwrap_or(0)],
+          &text[self.prefix().map(|s| s.text().len()).unwrap_or(0)
+            ..text.len() - self.suffix().map(|s| s.text().len()).unwrap_or(0)],
         )
       } else {
         // Since the fast paths have failed us, we need to construct a suitable
@@ -632,7 +631,7 @@ impl Digital<'_> {
         let buf = (|| {
           use std::fmt::Write;
 
-          let mut buf = String::with_capacity(self.text(ctx).len());
+          let mut buf = String::with_capacity(self.text().len());
           if self.is_negative() {
             buf.push('-');
           }
@@ -640,12 +639,12 @@ impl Digital<'_> {
           let _ = write!(
             buf,
             "{}",
-            u64::from_radix(int.unwrap().text(ctx), 10, &rule.separator)?
+            u64::from_radix(int.unwrap().text(), 10, &rule.separator)?
           );
 
           if let Some(frac) = frac {
             let sep = rule.separator.as_str();
-            let mut frac = frac.text(ctx);
+            let mut frac = frac.text();
             let mut lz = 0;
             loop {
               let start_len = frac.len();
@@ -688,7 +687,7 @@ impl Digital<'_> {
                 _ => '+',
               },
               u64::from_radix(
-                exp.digit_blocks().next().unwrap().text(ctx),
+                exp.digit_blocks().next().unwrap().text(),
                 exp.radix(),
                 &rule.separator
               )?,

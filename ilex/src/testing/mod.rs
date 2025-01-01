@@ -333,12 +333,9 @@ impl Text {
 
   /// Returns whether this span recognizes a particular span.
   fn recognizes(&self, span: Span, ctx: &Context) -> bool {
-    !self
-      .text
-      .as_ref()
-      .is_some_and(|text| text != span.text(ctx))
+    !self.text.as_ref().is_some_and(|text| text != span.text())
       && !self.range.as_ref().is_some_and(|range| {
-        let r = span.span(ctx);
+        let r = span.span();
         range != &(r.start()..r.end())
       })
   }

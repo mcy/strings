@@ -134,8 +134,9 @@ pub fn render_fmt(
       let mut cur_file = None;
       let mut cur_slice = None::<Slice>;
       let mut has_eof = false;
-      for (range, text, kind) in snips {
-        let file = range.file(&report.ctx);
+      for (span, text, kind) in snips {
+        let span = span.get(&report.ctx);
+        let file = span.file();
         if cur_file != Some(file) {
           cur_file = Some(file);
           if let Some(mut slice) = cur_slice.take() {
@@ -155,8 +156,8 @@ pub fn render_fmt(
         }
 
         let slice = cur_slice.as_mut().unwrap();
-        let mut start = range.start();
-        let mut end = range.end();
+        let mut start = span.start();
+        let mut end = span.end();
 
         // Ensure that all ranges have length at least one, and try to get them
         // to point just after non-whitespace.
