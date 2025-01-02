@@ -48,5 +48,5 @@ fn greedy() {
     .then2(array, ("[", "]"), Matcher::new().then1(ident, "xyz"))
     .then2(cpp_like, ("R\"cc(", ")cc\""), ["some c++)\" "])
     .eof()
-    .assert_matches(&ctx, &tokens);
+    .assert_matches(&tokens);
 }

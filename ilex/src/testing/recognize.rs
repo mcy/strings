@@ -8,7 +8,6 @@ use std::fmt::DebugStruct;
 use std::fmt::Display;
 
 use crate::f;
-use crate::file::Context;
 use crate::file::Spanned;
 use crate::rule;
 use crate::spec::Lexeme;
@@ -58,12 +57,7 @@ pub struct DigitalMatcher {
 }
 
 impl Matcher {
-  pub fn recognizes(
-    &self,
-    state: &mut MatchState,
-    tok: token::Any,
-    ctx: &Context,
-  ) {
+  pub fn recognizes(&self, state: &mut MatchState, tok: token::Any) {
     state.match_spans("token span", &self.span, Spanned::span(&tok));
 
     zip_eq("comments", state, &self.comments, tok.comments(), |state, t, s| {
@@ -157,7 +151,7 @@ impl Matcher {
           state,
           tokens,
           tok.contents(),
-          |state, ours, theirs| ours.recognizes(state, theirs, ctx),
+          |state, ours, theirs| ours.recognizes(state, theirs),
         );
       }
       _ => state.error("mismatched token types"),
@@ -235,17 +229,15 @@ impl fmt::Debug for Matcher {
   }
 }
 
-pub struct MatchState<'a> {
-  ctx: &'a Context,
+pub struct MatchState {
   errors: String,
   stack: Vec<usize>,
   error_count: usize,
 }
 
-impl<'a> MatchState<'a> {
-  pub fn new(ctx: &'a Context) -> Self {
+impl MatchState {
+  pub fn new() -> Self {
     Self {
-      ctx,
       errors: String::new(),
       stack: Vec::new(),
       error_count: 0,
@@ -274,7 +266,7 @@ impl<'a> MatchState<'a> {
     span: impl Spanned<'s>,
   ) {
     let span = span.span();
-    if !text.recognizes(span, self.ctx) {
+    if !text.recognizes(span) {
       self.error(f!("wrong {what}; want {:?}, got {:?}", text, span));
     }
   }
@@ -290,10 +282,7 @@ impl<'a> MatchState<'a> {
       return;
     }
 
-    if !text
-      .zip(span)
-      .is_some_and(|(t, s)| t.recognizes(s, self.ctx))
-    {
+    if !text.zip(span).is_some_and(|(t, s)| t.recognizes(s)) {
       self.error(f!("wrong {what}; want {:?}, got {:?}", text, span));
     }
   }

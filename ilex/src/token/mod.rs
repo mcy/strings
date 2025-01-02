@@ -758,7 +758,7 @@ impl<'lex> Digital<'lex> {
     range: impl RangeBounds<Fp>,
     report: &Report,
   ) -> Result<Fp, fp::Exotic> {
-    let fp: Fp = self.parse_fp(self.context(), report, false)?;
+    let fp: Fp = self.parse_fp(report, false)?;
 
     if !fp.__is_finite() || !range.contains(&fp) {
       report.builtins(self.spec()).literal_out_of_range(
@@ -784,7 +784,7 @@ impl<'lex> Digital<'lex> {
     range: impl RangeBounds<Fp>,
     report: &Report,
   ) -> Result<Fp, fp::Exotic> {
-    let fp: Fp = self.parse_fp(self.context(), report, true)?;
+    let fp: Fp = self.parse_fp(report, true)?;
 
     if !fp.__is_finite() || !range.contains(&fp) {
       report.builtins(self.spec()).literal_out_of_range(
@@ -1231,7 +1231,6 @@ impl<'lex> Any<'lex> {
       return name.to_box();
     }
 
-    let ctx = self.context();
     let (pre, suf, kind) = match self {
       Any::Eof(_) => return yarn!("<eof>"),
       Any::Keyword(tok) => return yarn!("`{}`", tok.text()),

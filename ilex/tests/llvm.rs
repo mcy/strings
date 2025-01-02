@@ -280,5 +280,5 @@ fn llvm() {
         .then1(llvm.void, "void"),
     )
     .eof()
-    .assert_matches(&ctx, &tokens)
+    .assert_matches(&tokens)
 }

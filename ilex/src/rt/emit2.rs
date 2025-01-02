@@ -6,7 +6,6 @@ use byteyarn::Yarn;
 use byteyarn::YarnBox;
 
 use crate::f;
-use crate::file::Context;
 use crate::file::Span;
 use crate::file::Span2;
 use crate::plural;
@@ -27,8 +26,6 @@ use super::dfa::Lexeme2;
 use super::unicode::is_xid;
 
 pub fn emit(lexer: &mut Lexer) {
-  let ctx = lexer.file().context();
-
   // Start by searching for the longest matches using the DFA.
   let dfa = lexer.spec().dfa();
   let Some(mut match_) = dfa.search(lexer) else {
@@ -66,7 +63,7 @@ pub fn emit(lexer: &mut Lexer) {
   // choices; that is independent of which token we decide to create.
   let mut best = None;
   'verify: for &c in &match_.candidates {
-    let [.., range, _] = find_affixes_partial(span, lexer.spec(), c, ctx);
+    let [.., range, _] = find_affixes_partial(span, lexer.spec(), c);
 
     // NOTE: We only need to find the first lexeme that is valid. If it's not
     // valid, we will diagnose that in the next stage.
@@ -82,7 +79,7 @@ pub fn emit(lexer: &mut Lexer) {
             range.split_around(close.0.len(), close.1.len())
           };
 
-          let [_, name, _] = find_affixes(range, &ident_rule.affixes, ctx);
+          let [_, name, _] = find_affixes(range, &ident_rule.affixes);
           if name.text().chars().count() < ident_rule.min_len {
             continue 'verify;
           }
@@ -195,7 +192,7 @@ pub fn emit(lexer: &mut Lexer) {
 
   let best = best.unwrap_or(match_.candidates[0]);
   let [sign_span, prefix, range, suffix] =
-    find_affixes_partial(span, lexer.spec(), best, ctx);
+    find_affixes_partial(span, lexer.spec(), best);
   let text = range.text();
 
   let mirrored = match lexer.spec().rule(best.lexeme) {
@@ -216,7 +213,7 @@ pub fn emit(lexer: &mut Lexer) {
           if !best.is_close { (open, close) } else { (close, open) };
 
         let [_, mid, _] = range.split_around(remove.0.len(), remove.1.len());
-        let [_, name, _] = find_affixes(mid, &ident_rule.affixes, ctx);
+        let [_, name, _] = find_affixes(mid, &ident_rule.affixes);
 
         let text = name.text();
         let count = text.chars().count();
@@ -789,13 +786,12 @@ fn find_affixes_partial<'a>(
   range: Span<'a>,
   spec: &Spec,
   best: Lexeme2,
-  ctx: &Context,
 ) -> [Span<'a>; 4] {
   let text = range.text();
   let ep = range.file().span(0..0);
   match spec.rule(best.lexeme) {
     Any::Ident(rule) => {
-      let [pre, range, suf] = find_affixes(range, &rule.affixes, ctx);
+      let [pre, range, suf] = find_affixes(range, &rule.affixes);
       [ep, pre, range, suf]
     }
     Any::Digital(rule) => {
@@ -809,15 +805,15 @@ fn find_affixes_partial<'a>(
         .unwrap_or(0);
       let (sign, range) = range.split_at(sign);
 
-      let [pre, range, suf] = find_affixes(range, &rule.affixes, ctx);
+      let [pre, range, suf] = find_affixes(range, &rule.affixes);
       [sign, pre, range, suf]
     }
     Any::Quoted(rule) if !best.is_close => {
-      let (pre, range) = find_prefix(range, &rule.affixes, ctx);
+      let (pre, range) = find_prefix(range, &rule.affixes);
       [ep, pre, range, ep]
     }
     Any::Quoted(rule) => {
-      let (range, suf) = find_suffix(range, &rule.affixes, ctx);
+      let (range, suf) = find_suffix(range, &rule.affixes);
       [ep, ep, range, suf]
     }
     _ => [ep, ep, range, ep],
@@ -825,21 +821,13 @@ fn find_affixes_partial<'a>(
 }
 
 /// Extracts the affixes from `text`.
-fn find_affixes<'a>(
-  range: Span<'a>,
-  affixes: &Affixes,
-  ctx: &Context,
-) -> [Span<'a>; 3] {
-  let (prefix, range) = find_prefix(range, affixes, ctx);
-  let (range, suffix) = find_suffix(range, affixes, ctx);
+fn find_affixes<'a>(range: Span<'a>, affixes: &Affixes) -> [Span<'a>; 3] {
+  let (prefix, range) = find_prefix(range, affixes);
+  let (range, suffix) = find_suffix(range, affixes);
   [prefix, range, suffix]
 }
 
-fn find_prefix<'a>(
-  range: Span<'a>,
-  affixes: &Affixes,
-  ctx: &Context,
-) -> (Span<'a>, Span<'a>) {
+fn find_prefix<'a>(range: Span<'a>, affixes: &Affixes) -> (Span<'a>, Span<'a>) {
   let text = range.text();
   let prefix = affixes
     .prefixes()
@@ -851,11 +839,7 @@ fn find_prefix<'a>(
   range.split_at(prefix)
 }
 
-fn find_suffix<'a>(
-  range: Span<'a>,
-  affixes: &Affixes,
-  ctx: &Context,
-) -> (Span<'a>, Span<'a>) {
+fn find_suffix<'a>(range: Span<'a>, affixes: &Affixes) -> (Span<'a>, Span<'a>) {
   let text = range.text();
   let suffix = affixes
     .suffixes()

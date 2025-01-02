@@ -17,7 +17,6 @@ use rustc_apfloat::Round;
 use rustc_apfloat::Status;
 use rustc_apfloat::StatusAnd;
 
-use crate::file::Context;
 use crate::file::Spanned;
 use crate::report::Report;
 use crate::token::Digital;
@@ -464,7 +463,6 @@ impl Digital<'_> {
   #[track_caller]
   pub(crate) fn parse_fp<Fp: Parse>(
     self,
-    ctx: &Context,
     report: &Report,
     exact: bool,
   ) -> Result<Fp, Exotic> {
@@ -595,7 +593,7 @@ impl Digital<'_> {
         value
       }
     } else {
-      fn has_ordinary_sign(ctx: &Context, tok: &Digital) -> bool {
+      fn has_ordinary_sign(tok: &Digital) -> bool {
         tok.sign().is_none()
           || tok.sign().is_some_and(|s| {
             matches!(
@@ -609,12 +607,12 @@ impl Digital<'_> {
       // underlying string. This is such a common format that we special case
       // it.
       if rule.point == "."
-        && has_ordinary_sign(ctx, &self)
+        && has_ordinary_sign(&self)
         && (exp.is_none()
           || exp.is_some_and(|exp| {
             exp.radix() == 10
               && (exp.has_prefix("e") || exp.has_prefix("E"))
-              && has_ordinary_sign(ctx, &exp)
+              && has_ordinary_sign(&exp)
           }))
         && (rule.separator.is_empty()
           || !self.text().contains(rule.separator.as_str()))
