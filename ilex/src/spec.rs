@@ -4,7 +4,6 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::fmt::Display;
 use std::hash::Hash;
-use std::i32;
 use std::marker::PhantomData;
 
 use byteyarn::yarn;

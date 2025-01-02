@@ -8,7 +8,7 @@ use std::backtrace::BacktraceStatus;
 use std::io;
 use std::panic;
 use std::panic::AssertUnwindSafe;
-use std::panic::PanicInfo;
+use std::panic::PanicHookInfo;
 use std::panic::UnwindSafe;
 use std::sync::Mutex;
 use std::thread;
@@ -148,7 +148,7 @@ impl Ice {
   ///
   /// The results are "best effort". The Rust backtrace API is incomplete, so we
   /// make do with some... cleverness around parsing the backtrace itself.
-  pub fn generate(panic: &PanicInfo, options: Options) -> Self {
+  pub fn generate(panic: &PanicHookInfo, options: Options) -> Self {
     let msg = panic.payload();
     let msg = Option::or(
       msg.downcast_ref::<&str>().copied().map(str::to_string),

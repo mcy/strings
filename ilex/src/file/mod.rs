@@ -143,7 +143,7 @@ impl<'ctx> Span<'ctx> {
   pub(crate) fn new<T: Copy + TryInto<u32> + fmt::Debug>(
     file: File<'ctx>,
     range: impl RangeBounds<T>,
-  ) -> Span {
+  ) -> Self {
     let start = match range.start_bound() {
       Bound::Included(&x) => cast(x),
       Bound::Excluded(&x) => cast(x).saturating_add(1),
@@ -353,7 +353,7 @@ impl<'ctx> Spanned<'ctx> for Never {
 }
 
 thread_local! {
-  static CTX_FOR_SPAN_DEBUG: RefCell<Option<Context>> = RefCell::new(None);
+  static CTX_FOR_SPAN_DEBUG: RefCell<Option<Context>> = const { RefCell::new(None) };
 }
 
 impl fmt::Debug for File<'_> {

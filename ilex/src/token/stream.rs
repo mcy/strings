@@ -101,7 +101,7 @@ impl<'ctx> Stream<'ctx> {
       return Some(token::Eof { stream: self, id }.into());
     }
 
-    return Some(match self.spec().rule(tok.lexeme) {
+    Some(match self.spec().rule(tok.lexeme) {
       rule::Any::Comment(..) => return None,
       rule::Any::Keyword(..) => token::Keyword { stream: self, id }.into(),
       rule::Any::Ident(..) => token::Ident { stream: self, id }.into(),
@@ -144,7 +144,7 @@ impl<'ctx> Stream<'ctx> {
 
         token::Digital { stream: self, id, meta, idx: 0 }.into()
       }
-    });
+    })
   }
 
   pub(crate) fn lookup_meta(&self, id: token::Id) -> Option<&rt::Metadata> {
@@ -374,7 +374,7 @@ impl<'lex> Cursor<'lex> {
     &'a mut self,
     delim: Lexeme<R>,
     mut cb: impl FnMut(&mut Self) -> Option<T> + 'a,
-  ) -> impl Iterator<Item = (T, Option<R::Token<'lex>>)> + '_ {
+  ) -> impl Iterator<Item = (T, Option<R::Token<'lex>>)> + 'a {
     let mut sep = switch::switch().case(delim, |x, _| x);
     let mut done = false;
     let mut prev = self.cursor;
