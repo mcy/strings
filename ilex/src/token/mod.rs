@@ -1000,7 +1000,7 @@ impl<'lex> Quoted<'lex> {
   /// Returns the raw content of this token.
   ///
   /// There are two kinds of content: either a literal span of Unicode scalars
-  /// (represented as a [`SpanId`] pointing to those characters) or a single
+  /// (represented as a [`Span`] pointing to those characters) or a single
   /// escape, potentially with some side data.
   ///
   /// It is up to the user of the library to decode these two content types into

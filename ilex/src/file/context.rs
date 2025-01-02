@@ -11,11 +11,13 @@ use crate::report;
 use crate::report::Fatal;
 use crate::report::Report;
 
+#[cfg(doc)]
+use crate::Span;
+
 /// A source context, which owns source code files.
 ///
 /// A `Context` contains the full text of all the loaded source files, which
-/// [`SpanId`]s ultimately refer to. Most [`SpanId`] operations need their
-/// corresponding `Context` available.
+/// [`Span`]s ultimately refer to.
 #[derive(Default)]
 pub struct Context {
   state: Arc<RwLock<State>>,
