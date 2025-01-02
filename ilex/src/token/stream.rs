@@ -534,7 +534,7 @@ pub struct Comments<'lex> {
 }
 
 impl<'lex> Comments<'lex> {
-  /// Adapts this iterator to return just the text contents of each [`SpanId`].
+  /// Adapts this iterator to return just the text contents of each [`Span`].
   pub fn as_strings(self) -> impl Iterator<Item = &'lex str> + 'lex {
     self.map(Span::text)
   }

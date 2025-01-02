@@ -302,7 +302,7 @@ pub trait Spanned<'ctx> {
   /// Returns the span in this syntax element.
   fn span(&self) -> Span<'ctx>;
 
-  /// Forwards to [`SpanId::file()`].
+  /// Forwards to [`Span::file()`].
   fn file(&self) -> File<'ctx> {
     self.span().file()
   }
@@ -327,7 +327,7 @@ pub trait Spanned<'ctx> {
     self.span().len()
   }
 
-  /// Forwards to [`SpanId::text()`].
+  /// Forwards to [`Span::text()`].
   fn text(&self) -> &'ctx str {
     self.span().text()
   }

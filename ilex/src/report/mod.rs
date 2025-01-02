@@ -2,7 +2,7 @@
 //!
 //! This module contains types for generating an *error report*: a collection of
 //! diagnostics that describe why an operation failed in detail. Diagnostics
-//! are basically fancy compiler errors: they use [`SpanId`]s to present faulty
+//! are basically fancy compiler errors: they use [`Span`]s to present faulty
 //! input in context.
 //!
 //! The [`Report`] type is a reference-counted list of diagnostics, which is
@@ -28,10 +28,13 @@ pub use builtin::Expected;
 pub use diagnostic::Diagnostic;
 use diagnostic::Kind;
 
+#[cfg(doc)]
+use crate::Span;
+
 /// A collection of errors can may built up over the course of an operation.
 ///
 /// To construct a report, see [`Context::new_report()`]. The context that
-/// constructs a report is the only one whose [`SpanId`]s should be passed into
+/// constructs a report is the only one whose [`Span`]s should be passed into
 /// it; doing otherwise will result in unspecified output (or probably a panic).
 pub struct Report {
   ctx: Context,

@@ -1060,7 +1060,7 @@ impl TryFrom<Any> for Digital {
 ///
 /// Comments do not generate tokens, unlike most rules. Instead, they are
 /// attached to the span of a token, and can be inspected through
-/// [`Span::comments()`][crate::Span::comments].
+/// [`Token::comments()`][crate::Token::comments].
 #[derive(Debug)]
 pub struct Comment {
   pub(crate) bracket: Bracket,
