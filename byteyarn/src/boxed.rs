@@ -587,7 +587,7 @@ impl<'a> YarnBox<'a, [u8]> {
   }
 }
 
-impl<'a, T> YarnBox<'a, [T]>
+impl<T> YarnBox<'_, [T]>
 where
   [T]: crate::Buf,
 {

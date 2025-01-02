@@ -330,7 +330,7 @@ impl Text {
 
   /// Returns whether this span recognizes a particular span.
   fn recognizes(&self, span: Span) -> bool {
-    !self.text.as_ref().is_some_and(|text| text != span.text())
+    self.text.as_ref().is_none_or(|text| text == span.text())
       && !self.range.as_ref().is_some_and(|range| {
         let r = span.span();
         range != &(r.start()..r.end())

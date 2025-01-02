@@ -293,7 +293,7 @@ impl<'a> YarnRef<'a, [u8]> {
   }
 }
 
-impl<'a> YarnRef<'a, str> {
+impl YarnRef<'_, str> {
   /// Converts this yarn into a string slice.
   pub fn as_str(&self) -> &str {
     self.as_slice()

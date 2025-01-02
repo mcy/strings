@@ -68,7 +68,7 @@ impl Report {
   /// Returns a wrapper for accessing commonly-used, built-in message types.
   ///
   /// See [`Builtins`].
-  pub fn builtins<'a>(&'a self, spec: &'a Spec) -> Builtins {
+  pub fn builtins<'a>(&'a self, spec: &'a Spec) -> Builtins<'a> {
     Builtins { report: self, spec }
   }
 

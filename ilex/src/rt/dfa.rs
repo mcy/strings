@@ -95,9 +95,7 @@ impl Dfa {
       }
     }
 
-    let Some((last_match, state)) = last_match else {
-      return None;
-    };
+    let (last_match, state) = last_match?;
     let candidates = (0..dfa.match_len(lexer.cache(), state))
       .map(|i| {
         let id = dfa.match_pattern(lexer.cache(), state, i);
