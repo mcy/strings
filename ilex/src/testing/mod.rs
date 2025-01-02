@@ -13,7 +13,6 @@ use std::fs;
 use std::ops::Range;
 use std::path::Path;
 
-use crate::file::Context;
 use crate::file::Span;
 use crate::file::Spanned;
 use crate::report::Report;
@@ -185,10 +184,9 @@ impl Matcher {
   #[track_caller]
   pub fn assert_matches<'lex>(
     &self,
-    ctx: &Context,
     that: impl IntoIterator<Item = token::Any<'lex>>,
   ) {
-    self.matches(ctx, that).unwrap()
+    self.matches(that).unwrap()
   }
 
   /// Sets an expectation for the overall span of the most recently added
@@ -226,7 +224,6 @@ impl Matcher {
   /// If matching fails, returns an error describing why.
   pub fn matches<'lex>(
     &self,
-    ctx: &Context,
     that: impl IntoIterator<Item = token::Any<'lex>>,
   ) -> Result<(), impl fmt::Debug> {
     struct DebugBy(String);
@@ -236,13 +233,13 @@ impl Matcher {
       }
     }
 
-    let mut state = recognize::MatchState::new(ctx);
+    let mut state = recognize::MatchState::new();
     recognize::zip_eq(
       "token streams",
       &mut state,
       &self.stream,
       that,
-      |state, ours, theirs| ours.recognizes(state, theirs, ctx),
+      |state, ours, theirs| ours.recognizes(state, theirs),
     );
     state.finish().map_err(DebugBy)
   }
@@ -332,7 +329,7 @@ impl Text {
   }
 
   /// Returns whether this span recognizes a particular span.
-  fn recognizes(&self, span: Span, ctx: &Context) -> bool {
+  fn recognizes(&self, span: Span) -> bool {
     !self.text.as_ref().is_some_and(|text| text != span.text())
       && !self.range.as_ref().is_some_and(|range| {
         let r = span.span();

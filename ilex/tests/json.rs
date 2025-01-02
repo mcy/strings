@@ -167,7 +167,7 @@ fn check_tokens() {
         ),
     )
     .eof()
-    .assert_matches(&ctx, &tokens);
+    .assert_matches(&tokens);
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -236,17 +236,12 @@ fn parse(data: &str) -> Result<Json, impl fmt::Debug> {
     .new_file("<i>", data)
     .lex(json.spec(), &report)
     .map_err(|e| Error(e.to_string()))?;
-  let value = parse0(&ctx, &report, json, &mut stream.cursor());
+  let value = parse0(&report, json, &mut stream.cursor());
 
   report.fatal_or(value).map_err(|e| Error(e.to_string()))
 }
 
-fn parse0(
-  ctx: &ilex::Context,
-  report: &Report,
-  json: &JsonSpec,
-  cursor: &mut Cursor,
-) -> Json {
+fn parse0(report: &Report, json: &JsonSpec, cursor: &mut Cursor) -> Json {
   let quote2str = |str: token::Quoted| -> String {
     str.to_utf8(|key, data, buf| {
       let char = match key.text() {
@@ -293,7 +288,7 @@ fn parse0(
       let mut trailing = None;
       let vec = array
         .contents()
-        .delimited(json.comma, |c| Some(parse0(ctx, report, json, c)))
+        .delimited(json.comma, |c| Some(parse0(report, json, c)))
         .map(|(e, c)| {
           trailing = c;
           e
@@ -318,7 +313,7 @@ fn parse0(
             .map(|q| quote2str(q))
             .unwrap_or("😢".into());
           c.take(json.colon, report);
-          let value = parse0(ctx, report, json, c);
+          let value = parse0(report, json, c);
           Some((key, value))
         })
         .map(|(e, c)| {
