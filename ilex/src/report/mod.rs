@@ -141,21 +141,6 @@ impl Report {
     render::finish(self, sink)
   }
 
-  pub(crate) fn write_out_for_test(&self) -> String {
-    eprintln!("{}", self.fatal::<()>().unwrap_err());
-    let mut sink = String::new();
-    render::render_fmt(
-      self,
-      &Options {
-        color: false,
-        show_report_locations: false,
-      },
-      &mut sink,
-    )
-    .unwrap();
-    sink
-  }
-
   pub(crate) fn new(ctx: &Context, opts: Options) -> Self {
     Self {
       ctx: ctx.copy(),
