@@ -57,32 +57,26 @@ struct Numbers {
 }
 
 #[gilded::test("tests/numbers/*.txt")]
-fn numbers(test: &mut gilded::Test) {
+fn numbers(test: &gilded::Test) {
   let ctx = Context::new();
   let report = ctx.new_report();
   let file = ctx
     .new_file_from_bytes(test.path(), test.text(), &report)
     .unwrap();
 
+  let [tokens, fp64, stderr] =
+    test.outputs(["tokens.yaml", "fp64.txt", "stderr"]);
+
   match file.lex(Numbers::get().spec(), &report) {
     Ok(stream) => {
-      test.output("tokens.yaml", stream.summary());
+      tokens(stream.summary());
       match parse(Numbers::get(), stream.cursor(), &report) {
-        Ok(v) => {
-          test.output("fp64.txt", format!("{v:#?}"));
-          test.output("stderr", "".into())
-        }
-        Err(fatal) => {
-          test.output("fp64.txt", "".into());
-          test.output("stderr", format!("{fatal:?}"));
-        }
+        Ok(v) => fp64(format!("{v:#?}")),
+        Err(fatal) => stderr(fatal.to_string()),
       }
     }
-    Err(fatal) => {
-      test.output("tokens.yaml", "".into());
-      test.output("stderr", format!("{fatal:?}"));
-      test.output("fp64.txt", "".into());
-    }
+
+    Err(fatal) => stderr(fatal.to_string()),
   }
 }
 

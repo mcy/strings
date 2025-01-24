@@ -3,7 +3,7 @@ use ilex::Context;
 use ilex::Lexeme;
 
 #[gilded::test("tests/greedy/*.txt")]
-fn greedy(test: &mut gilded::Test) {
+fn greedy(test: &gilded::Test) {
   // This test verifies that lexing is greedy in *most* cases.
 
   #[ilex::spec]
@@ -37,14 +37,9 @@ fn greedy(test: &mut gilded::Test) {
     .new_file_from_bytes(test.path(), test.text(), &report)
     .unwrap();
 
+  let [tokens, stderr] = test.outputs(["tokens.yaml", "stderr"]);
   match file.lex(Greedy::get().spec(), &report) {
-    Ok(stream) => {
-      test.output("tokens.yaml", stream.summary());
-      test.output("stderr", "".into());
-    }
-    Err(fatal) => {
-      test.output("tokens.yaml", "".into());
-      test.output("stderr", format!("{fatal:?}"));
-    }
+    Ok(stream) => tokens(stream.summary()),
+    Err(fatal) => stderr(fatal.to_string()),
   }
 }

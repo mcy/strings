@@ -93,21 +93,16 @@ struct Llvm {
 }
 
 #[gilded::test("tests/llvm/*.ll")]
-fn llvm(test: &mut gilded::Test) {
+fn llvm(test: &gilded::Test) {
   let ctx = Context::new();
   let report = ctx.new_report();
   let file = ctx
     .new_file_from_bytes(test.path(), test.text(), &report)
     .unwrap();
 
+  let [tokens, stderr] = test.outputs(["tokens.yaml", "stderr"]);
   match file.lex(Llvm::get().spec(), &report) {
-    Ok(stream) => {
-      test.output("tokens.yaml", stream.summary());
-      test.output("stderr", "".into());
-    }
-    Err(fatal) => {
-      test.output("tokens.yaml", "".into());
-      test.output("stderr", format!("{fatal:?}"));
-    }
+    Ok(stream) => tokens(stream.summary()),
+    Err(fatal) => stderr(fatal.to_string()),
   }
 }

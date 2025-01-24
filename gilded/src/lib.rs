@@ -31,7 +31,7 @@
 //! the crate root) which matches the glob passed to the attribute. The input
 //! file's path and contents can be accessed through the [`Test`] accessors.
 //!
-//! To specify a test output, use [`Test::output()`]. This specifies the
+//! To specify golden outputs, use [`Test::outputs()`]. This specifies the
 //! file extension for the golden, and its computed contents. The extension is
 //! used to construct the path of the result. If the input is `foo/bar.txt`, and
 //! the extension for this output is `csv`, the output will be read/written to
@@ -47,10 +47,21 @@
 //!
 //! To regenerate a specific test, simply pass its name as a filter to the test.
 //! See `cargo test -- --help` for available flags.`
+//!
+//! Regenerating goldens will cause a `GILDED_CHANGED` file to be crated at the
+//! crate root, which will cause all `gilded` tests in the crate to fail until
+//! it is deleted. Deleting it forces the user to acknowledge that goldens have
+//! been regenerated, to avoid blindly committing them.
+//!
+//! # Known Issues
+//!
+//! Golden tests can run under MIRI but have extremely large overhead. For the
+//! time being, they are `#[cfg]`'d out in MIRI mode.
 
+use std::cell::RefCell;
+use std::cell::RefMut;
 use std::env;
 use std::fs;
-use std::fs::File;
 use std::path::Path;
 use std::str;
 
@@ -71,7 +82,7 @@ pub struct Suite {
   name: &'static str,
   crate_root: &'static Path,
   test_root: &'static Utf8Path,
-  run: fn(&mut Test),
+  run: fn(&Test),
 }
 
 impl Suite {
@@ -86,7 +97,7 @@ impl Suite {
   pub fn new(
     name: &'static str,
     crate_root: &'static str,
-    run: fn(&mut Test),
+    run: fn(&Test),
     paths: &[&'static str],
   ) -> Suite {
     let crate_root = Path::new(crate_root);
@@ -135,22 +146,21 @@ impl Suite {
   #[doc(hidden)]
   #[track_caller]
   pub fn run(&'static self, path: &'static str, text: &'static [u8]) {
-    let root = self.crate_root.join(self.test_root);
     let path = Utf8Path::new(path);
     let file = self.crate_root.join(path);
-    let lock = root.join("GILDED_CHANGED");
-    let lock_name = self.test_root.join("GILDED_CHANGED");
+    let lock = self.crate_root.join("GILDED_CHANGED");
+    let lock_name = "GILDED_CHANGED";
 
     // TODO: make sure this is normalized to being a Unix path on Windows.
     let name = path.strip_prefix(self.test_root).unwrap();
 
-    let mut test = Test {
+    let test = Test {
       suite: self,
       path: name,
       text,
-      outputs: Vec::new(),
+      outputs: Default::default(),
     };
-    (self.run)(&mut test);
+    (self.run)(&test);
 
     let regen = env::var_os(REGENERATE).is_some();
     assert!(
@@ -159,11 +169,17 @@ impl Suite {
     );
     if regen {
       eprintln!("{}", lock.display());
-      File::create(lock).unwrap();
+      fs::write(lock, "delete this file to confirm changes to golden tests\n")
+        .unwrap()
     }
 
+    let outputs = test.outputs.borrow();
+    let outputs = outputs
+      .as_ref()
+      .expect("test function failed to call Test::outputs()");
+
     let mut failed = false;
-    for (extn, text) in &test.outputs {
+    for (extn, text) in outputs {
       let file = file.with_extension(extn);
       let name = name.with_extension(extn);
 
@@ -206,11 +222,11 @@ impl Suite {
 /// A handle for a single golden test case.
 pub struct Test<'t> {
   suite: &'t Suite,
-
   path: &'t Utf8Path,
   text: &'t [u8],
 
-  outputs: Vec<(String, String)>,
+  #[allow(clippy::type_complexity)]
+  outputs: RefCell<Option<Box<[(String, String)]>>>,
 }
 
 impl<'t> Test<'t> {
@@ -233,14 +249,48 @@ impl<'t> Test<'t> {
     self.text
   }
 
-  /// Outputs a result for this test.
+  /// Declares the outputs for this test.
   ///
   /// A test may have many results, each of which has the same path as the input
   /// with an extra extension. For example, for a `foo.txt` input, the output
   /// might be `foo.txt.stderr`, in which case `extension` would be `stderr`.
-  pub fn output(&mut self, extension: &str, result: String) {
-    self.outputs.push((extension.into(), result));
+  ///
+  /// Returns output functions for test, one for each output. They should be
+  /// called with the result of the test.
+  ///
+  /// # Panics
+  ///
+  /// The test must call this function exactly; calling it more than once or not
+  /// at all will cause the test to panic.
+  pub fn outputs<'a, const N: usize>(
+    &'a self,
+    extensions: [&str; N],
+  ) -> [impl FnOnce(String) + 'a; N] {
+    let outputs: RefMut<Option<_>> = self
+      .outputs
+      .try_borrow_mut()
+      .expect("called Test::outputs() more than once");
+    assert!(outputs.is_none(), "called Test::outputs() more than once");
+
+    let outputs: RefMut<[_; N]> = RefMut::map(outputs, |o| {
+      o.insert(extensions.map(|extn| (extn.into(), String::new())).into())
+        .as_mut()
+        .try_into()
+        .unwrap()
+    });
+
+    split(outputs).map(|mut slot| move |value| slot.1 = value)
   }
+}
+
+fn split<T, const N: usize>(orig: RefMut<[T; N]>) -> [RefMut<T>; N] {
+  let mut orig: Option<RefMut<[T]>> = Some(orig);
+  [(); N].map(|_| {
+    let (elem, rest) =
+      RefMut::map_split(orig.take().unwrap(), |s| s.split_first_mut().unwrap());
+    orig = Some(rest);
+    elem
+  })
 }
 
 /// Implementation macro for `#[gilded::test]`.
@@ -289,6 +339,7 @@ macro_rules! __test__ {
   ) => {
     $(#[$attr])*
     #[::std::prelude::rust_2021::test]
+    #[cfg_attr(miri, ignore)]
     fn $test() { __SUITE__.run($path, $text) }
     $crate::__test__! { @tests $(#[$attr])* $($tt)* }
   };
