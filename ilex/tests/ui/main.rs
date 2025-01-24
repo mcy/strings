@@ -4,7 +4,7 @@ use ilex::Context;
 use ilex::Lexeme;
 
 #[gilded::test("tests/ui/ambiguous/*.txt")]
-fn ambiguous(test: &mut gilded::Test) {
+fn ambiguous(test: &gilded::Test) {
   #[ilex::spec]
   struct Spec {
     #[rule("null")]
@@ -59,20 +59,15 @@ fn ambiguous(test: &mut gilded::Test) {
     .new_file_from_bytes(test.path(), test.text(), &report)
     .unwrap();
 
+  let [tokens, stderr] = test.outputs(["tokens.yaml", "stderr"]);
   match file.lex(Spec::get().spec(), &report) {
-    Ok(stream) => {
-      test.output("tokens.yaml", stream.summary());
-      test.output("stderr", "".into());
-    }
-    Err(fatal) => {
-      test.output("tokens.yaml", "".into());
-      test.output("stderr", format!("{fatal:?}"));
-    }
+    Ok(stream) => tokens(stream.summary()),
+    Err(fatal) => stderr(fatal.to_string()),
   }
 }
 
 #[gilded::test("tests/ui/digital/*.txt")]
-fn digital(test: &mut gilded::Test) {
+fn digital(test: &gilded::Test) {
   #[ilex::spec]
   struct Spec {
     #[rule(Digital::new(16).prefix("0x"))]
@@ -161,20 +156,15 @@ fn digital(test: &mut gilded::Test) {
     .new_file_from_bytes(test.path(), test.text(), &report)
     .unwrap();
 
+  let [tokens, stderr] = test.outputs(["tokens.yaml", "stderr"]);
   match file.lex(Spec::get().spec(), &report) {
-    Ok(stream) => {
-      test.output("tokens.yaml", stream.summary());
-      test.output("stderr", "".into());
-    }
-    Err(fatal) => {
-      test.output("tokens.yaml", "".into());
-      test.output("stderr", format!("{fatal:?}"));
-    }
+    Ok(stream) => tokens(stream.summary()),
+    Err(fatal) => stderr(fatal.to_string()),
   }
 }
 
 #[gilded::test("tests/ui/eof/*.txt")]
-fn eof(test: &mut gilded::Test) {
+fn eof(test: &gilded::Test) {
   #[ilex::spec]
   struct Spec {
     #[rule("/*", "*/")]
@@ -197,20 +187,15 @@ fn eof(test: &mut gilded::Test) {
     .new_file_from_bytes(test.path(), test.text(), &report)
     .unwrap();
 
+  let [tokens, stderr] = test.outputs(["tokens.yaml", "stderr"]);
   match file.lex(Spec::get().spec(), &report) {
-    Ok(stream) => {
-      test.output("tokens.yaml", stream.summary());
-      test.output("stderr", "".into());
-    }
-    Err(fatal) => {
-      test.output("tokens.yaml", "".into());
-      test.output("stderr", format!("{fatal:?}"));
-    }
+    Ok(stream) => tokens(stream.summary()),
+    Err(fatal) => stderr(fatal.to_string()),
   }
 }
 
 #[gilded::test("tests/ui/too_small/*.txt")]
-fn too_small(test: &mut gilded::Test) {
+fn too_small(test: &gilded::Test) {
   #[ilex::spec]
   struct Spec {
     #[rule(Ident::new().prefix("%"))]
@@ -236,20 +221,15 @@ fn too_small(test: &mut gilded::Test) {
     .new_file_from_bytes(test.path(), test.text(), &report)
     .unwrap();
 
+  let [tokens, stderr] = test.outputs(["tokens.yaml", "stderr"]);
   match file.lex(Spec::get().spec(), &report) {
-    Ok(stream) => {
-      test.output("tokens.yaml", stream.summary());
-      test.output("stderr", "".into());
-    }
-    Err(fatal) => {
-      test.output("tokens.yaml", "".into());
-      test.output("stderr", format!("{fatal:?}"));
-    }
+    Ok(stream) => tokens(stream.summary()),
+    Err(fatal) => stderr(fatal.to_string()),
   }
 }
 
 #[gilded::test("tests/ui/unrecognized/*.txt")]
-fn unrecognized(test: &mut gilded::Test) {
+fn unrecognized(test: &gilded::Test) {
   #[ilex::spec]
   struct Spec {
     null: Lexeme<Keyword>,
@@ -265,14 +245,9 @@ fn unrecognized(test: &mut gilded::Test) {
     .new_file_from_bytes(test.path(), test.text(), &report)
     .unwrap();
 
+  let [tokens, stderr] = test.outputs(["tokens.yaml", "stderr"]);
   match file.lex(Spec::get().spec(), &report) {
-    Ok(stream) => {
-      test.output("tokens.yaml", stream.summary());
-      test.output("stderr", "".into());
-    }
-    Err(fatal) => {
-      test.output("tokens.yaml", "".into());
-      test.output("stderr", format!("{fatal:?}"));
-    }
+    Ok(stream) => tokens(stream.summary()),
+    Err(fatal) => stderr(fatal.to_string()),
   }
 }

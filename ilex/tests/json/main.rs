@@ -51,34 +51,32 @@ struct JsonSpec {
 }
 
 #[gilded::test("tests/json/*.json")]
-fn check_tokens(test: &mut gilded::Test) {
+fn check_tokens(test: &gilded::Test) {
   let ctx = Context::new();
   let report = ctx.new_report();
   let file = ctx
     .new_file_from_bytes(test.path(), test.text(), &report)
     .unwrap();
 
+  let [tokens, ast, stderr] =
+    test.outputs(["tokens.yaml", "ast.txt", "stderr"]);
+
   let stream = match file.lex(JsonSpec::get().spec(), &report) {
     Ok(stream) => stream,
     Err(fatal) => {
-      test.output("tokens.yaml", "".into());
-      test.output("ast.txt", "".into());
-      test.output("stderr", format!("{fatal:?}"));
+      stderr(fatal.to_string());
       return;
     }
   };
 
-  test.output("tokens.yaml", stream.summary());
+  tokens(stream.summary());
 
   let json = parse(&report, JsonSpec::get(), &mut stream.cursor());
-  if let Err(fatal) = report.fatal_or(()) {
-    test.output("ast.txt", "".into());
-    test.output("stderr", format!("{fatal:?}"));
-    return;
-  }
+  ast(format!("{json:#?}"));
 
-  test.output("ast.txt", format!("{json:#?}"));
-  test.output("stderr", "".into());
+  if let Err(fatal) = report.fatal_or(()) {
+    stderr(fatal.to_string());
+  }
 }
 
 #[derive(Clone, Debug, PartialEq)]
