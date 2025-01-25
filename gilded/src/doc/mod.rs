@@ -1,3 +1,5 @@
+//! Readable test output generating from tree-structured data.
+
 use std::io;
 use std::io::Write;
 
@@ -11,26 +13,28 @@ mod yaml;
 /// Golden tests that output tree-shaped data can use `Doc` to generate
 /// diff-friendly, readable output.
 pub struct Doc<'a> {
-  entries: Vec<(Option<YarnBox<'a, str>>, Value<'a>)>,
+  entries: Vec<(Option<YarnBox<'a, str>>, Elem<'a>)>,
 }
 
-// The format output to use when rendering a document.
+/// The format output to use when rendering a document.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DocFormat {
+pub enum Format {
+  /// Output as YAML.
   Yaml,
+  /// Output as JSON.
   Json,
 }
 
-impl Default for DocFormat {
+impl Default for Format {
   fn default() -> Self {
     Self::Yaml
   }
 }
 
 /// Options for rendering a [`Doc`] as a string.
-pub struct DocOptions {
+pub struct Options {
   // The format to output in; defaults to YAML.
-  pub format: DocFormat,
+  pub format: Format,
   // The number of spaces to use for indentation.
   pub tab_width: usize,
 
@@ -42,10 +46,10 @@ pub struct DocOptions {
   pub max_object_width: usize,
 }
 
-impl Default for DocOptions {
+impl Default for Options {
   fn default() -> Self {
     Self {
-      format: DocFormat::default(),
+      format: Format::default(),
       tab_width: 2,
       max_columns: 80,
       max_array_width: 50,
@@ -59,7 +63,7 @@ impl Default for DocOptions {
 /// All of the primitive number types and types which convert to `YarnBox<[u8]>`
 /// can be used as `Doc` values. `Option<T>` for `T: DocValue` can also be
 /// used, and will only be inserted if it is `Some`.
-pub trait DocValue<'a> {
+pub trait Value<'a> {
   fn append_to(self, doc: &mut Doc<'a>);
 }
 
@@ -72,16 +76,13 @@ impl<'a> Doc<'a> {
   /// Returns a new `Doc` with a single entry.
   pub fn single(
     name: impl Into<YarnBox<'a, str>>,
-    value: impl DocValue<'a>,
+    value: impl Value<'a>,
   ) -> Self {
     Self::new().entry(name, value)
   }
 
   /// Appends a sequence of values to this document.
-  pub fn push(
-    mut self,
-    elements: impl IntoIterator<Item: DocValue<'a>>,
-  ) -> Self {
+  pub fn push(mut self, elements: impl IntoIterator<Item: Value<'a>>) -> Self {
     for e in elements {
       e.append_to(&mut self);
     }
@@ -92,7 +93,7 @@ impl<'a> Doc<'a> {
   pub fn entry(
     mut self,
     name: impl Into<YarnBox<'a, str>>,
-    value: impl DocValue<'a>,
+    value: impl Value<'a>,
   ) -> Self {
     let prev = self.entries.len();
     value.append_to(&mut self);
@@ -106,13 +107,13 @@ impl<'a> Doc<'a> {
   pub fn array(
     self,
     name: impl Into<YarnBox<'a, str>>,
-    elements: impl IntoIterator<Item: DocValue<'a>>,
+    elements: impl IntoIterator<Item: Value<'a>>,
   ) -> Self {
     self.entry(name, Self::new().push(elements))
   }
 
   // Converts this document into a string, using the given options.
-  pub fn to_string(&self, options: &DocOptions) -> String {
+  pub fn to_string(&self, options: &Options) -> String {
     let mut out = Vec::new();
     let _ = self.render(&mut out, options);
     String::from_utf8(out).unwrap()
@@ -123,17 +124,17 @@ impl<'a> Doc<'a> {
   pub fn render(
     &self,
     out: &mut dyn Write,
-    options: &DocOptions,
+    options: &Options,
   ) -> io::Result<()> {
     let mut doc = allman::Doc::new();
 
     match options.format {
-      DocFormat::Yaml => yaml::build(
+      Format::Yaml => yaml::build(
         yaml::Args { options, root: true, in_list: false },
         self,
         &mut doc,
       ),
-      DocFormat::Json => json::build(options, self, &mut doc),
+      Format::Json => json::build(options, self, &mut doc),
     }
 
     doc.render(out, &allman::Options { max_columns: options.max_columns })
@@ -146,7 +147,7 @@ impl Default for Doc<'_> {
   }
 }
 
-enum Value<'a> {
+enum Elem<'a> {
   Bool(bool),
   Int(i128),
   UInt(u128),
@@ -155,24 +156,24 @@ enum Value<'a> {
   Doc(Doc<'a>),
 }
 
-impl<'a, T: DocValue<'a>> DocValue<'a> for Option<T> {
+impl<'a, T: Value<'a>> Value<'a> for Option<T> {
   fn append_to(self, doc: &mut Doc<'a>) {
     if let Some(v) = self {
       v.append_to(doc)
     }
   }
 }
-impl<'a> DocValue<'a> for Doc<'a> {
+impl<'a> Value<'a> for Doc<'a> {
   fn append_to(self, doc: &mut Doc<'a>) {
-    doc.entries.push((None, Value::Doc(self)))
+    doc.entries.push((None, Elem::Doc(self)))
   }
 }
 
 macro_rules! impl_from {
   ($({$($T:ty),*} => $V:ident,)*) => {$($(
-    impl<'a> DocValue<'a> for $T {
+    impl<'a> Value<'a> for $T {
       fn append_to(self, doc: &mut Doc<'a>) {
-        doc.entries.push((None, Value::$V(self as _)))
+        doc.entries.push((None, Elem::$V(self as _)))
       }
     }
   )*)*}
@@ -187,9 +188,9 @@ impl_from! {
 
 macro_rules! impl_from_yarn {
   ($(for<$lt:lifetime> $($T:ty),* => $U:ty,)*) => {$($(
-    impl<$lt> DocValue<$lt> for $T {
+    impl<$lt> Value<$lt> for $T {
       fn append_to(self, doc: &mut Doc<$lt>) {
-        doc.entries.push((None, Value::String(<$U>::from(self).into_bytes())))
+        doc.entries.push((None, Elem::String(<$U>::from(self).into_bytes())))
       }
     }
   )*)*}

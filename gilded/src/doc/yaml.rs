@@ -7,13 +7,13 @@ use allman::Tag;
 use byteyarn::YarnRef;
 
 use crate::doc::Doc;
-use crate::doc::DocOptions;
-use crate::doc::Value;
+use crate::doc::Elem;
+use crate::doc::Options;
 
 pub struct Args<'a> {
   pub root: bool,
   pub in_list: bool,
-  pub options: &'a DocOptions,
+  pub options: &'a Options,
 }
 
 pub fn build<'t>(args: Args, doc: &'t Doc<'t>, out: &mut allman::Doc<'t>) {
@@ -62,7 +62,7 @@ pub fn build<'t>(args: Args, doc: &'t Doc<'t>, out: &mut allman::Doc<'t>) {
               out.tag(ident.to_box());
 
               let mut entry = entry;
-              while let Value::Doc(d) = entry {
+              while let Elem::Doc(d) = entry {
                 let [(Some(k), v)] = d.entries.as_slice() else { break };
                 let Some(ident) = is_ident(k.as_bytes()) else { break };
 
@@ -83,21 +83,21 @@ pub fn build<'t>(args: Args, doc: &'t Doc<'t>, out: &mut allman::Doc<'t>) {
   }
 }
 
-fn value<'t>(args: Args, v: &'t Value<'t>, out: &mut allman::Doc<'t>) {
+fn value<'t>(args: Args, v: &'t Elem<'t>, out: &mut allman::Doc<'t>) {
   match v {
-    Value::Bool(v) => {
+    Elem::Bool(v) => {
       out.tag(v.to_string());
     }
-    Value::Int(v) => {
+    Elem::Int(v) => {
       out.tag(v.to_string());
     }
-    Value::UInt(v) => {
+    Elem::UInt(v) => {
       out.tag(v.to_string());
     }
-    Value::Fp(v) => {
+    Elem::Fp(v) => {
       out.tag(v.to_string());
     }
-    Value::String(v) => {
+    Elem::String(v) => {
       if is_raw_string(v.as_ref()) {
         out.tag("|").tag(Tag::Break(1)).tag_with(
           Tag::Indent(args.options.tab_width as isize),
@@ -109,7 +109,7 @@ fn value<'t>(args: Args, v: &'t Value<'t>, out: &mut allman::Doc<'t>) {
       }
       out.tag(Escape(v).to_string());
     }
-    Value::Doc(v) => build(args, v, out),
+    Elem::Doc(v) => build(args, v, out),
   }
 }
 

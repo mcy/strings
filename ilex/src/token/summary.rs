@@ -1,6 +1,6 @@
 //! Implementation of `Stream::summary()`.
 
-use gilded::Doc;
+use gilded::doc::Doc;
 
 use crate::file::Span;
 use crate::file::Spanned;

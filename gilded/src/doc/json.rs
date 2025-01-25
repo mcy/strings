@@ -7,14 +7,10 @@ use allman::Tag;
 use byteyarn::YarnRef;
 
 use crate::doc::Doc;
-use crate::doc::DocOptions;
-use crate::doc::Value;
+use crate::doc::Elem;
+use crate::doc::Options;
 
-pub fn build<'t>(
-  options: &DocOptions,
-  doc: &Doc<'t>,
-  out: &mut allman::Doc<'t>,
-) {
+pub fn build<'t>(options: &Options, doc: &Doc<'t>, out: &mut allman::Doc<'t>) {
   let is_array = doc.entries.iter().all(|(k, _)| k.is_none());
   if is_array {
     out.tag_with(Tag::Group(options.max_array_width), |out| {
@@ -60,24 +56,24 @@ pub fn build<'t>(
   }
 }
 
-fn value<'t>(options: &DocOptions, v: &Value<'t>, out: &mut allman::Doc<'t>) {
+fn value<'t>(options: &Options, v: &Elem<'t>, out: &mut allman::Doc<'t>) {
   match v {
-    Value::Bool(v) => {
+    Elem::Bool(v) => {
       out.tag(v.to_string());
     }
-    Value::Int(v) => {
+    Elem::Int(v) => {
       out.tag(v.to_string());
     }
-    Value::UInt(v) => {
+    Elem::UInt(v) => {
       out.tag(v.to_string());
     }
-    Value::Fp(v) => {
+    Elem::Fp(v) => {
       out.tag(v.to_string());
     }
-    Value::String(v) => {
+    Elem::String(v) => {
       out.tag(Escape(v).to_string());
     }
-    Value::Doc(v) => build(options, v, out),
+    Elem::Doc(v) => build(options, v, out),
   }
 }
 
