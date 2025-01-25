@@ -62,8 +62,13 @@ use std::cell::RefCell;
 use std::cell::RefMut;
 use std::env;
 use std::fs;
+use std::fs::File;
+use std::io;
+use std::io::Write;
+use std::panic::Location;
 use std::path::Path;
 use std::str;
+use std::time::SystemTime;
 
 use camino::Utf8Path;
 
@@ -80,9 +85,12 @@ pub const REGENERATE: &str = "GILDED_REGENERATE";
 /// [`#[gilded::test]`][test] macro.
 pub struct Suite {
   name: &'static str,
+  glob: &'static str,
   crate_root: &'static Path,
   test_root: &'static Utf8Path,
+  location: &'static Location<'static>,
   run: fn(&Test),
+  poisoned: bool,
 }
 
 impl Suite {
@@ -96,47 +104,77 @@ impl Suite {
   #[doc(hidden)]
   pub fn new(
     name: &'static str,
+    glob: &'static str,
     crate_root: &'static str,
+    location: &'static Location<'static>,
     run: fn(&Test),
     paths: &[&'static str],
   ) -> Suite {
     let crate_root = Path::new(crate_root);
 
-    let Some(mut common_prefix) = paths.first().copied() else {
-      return Suite {
-        name,
-        crate_root,
-        run,
-        test_root: Utf8Path::new(""),
-      };
+    let common_prefix = paths.first().copied().map(|mut common_prefix| {
+      common_prefix = Utf8Path::new(common_prefix)
+        .parent()
+        .map(Utf8Path::as_str)
+        .unwrap_or("");
+
+      let sep = std::path::MAIN_SEPARATOR;
+      for path in &paths[1..] {
+        let common = common_prefix.split_inclusive(sep);
+        let chunks = path.split_inclusive(sep);
+
+        let len = common
+          .zip(chunks)
+          .take_while(|(a, b)| a == b)
+          .map(|(a, _)| a.len())
+          .sum();
+
+        common_prefix = &common_prefix[..len];
+      }
+
+      common_prefix = common_prefix.trim_end_matches(sep);
+      common_prefix
+    });
+
+    let mut suite = Suite {
+      name,
+      glob,
+      crate_root,
+      location,
+      run,
+      test_root: Utf8Path::new(common_prefix.unwrap_or_default()),
+      poisoned: false,
     };
 
-    common_prefix = Utf8Path::new(common_prefix)
-      .parent()
-      .map(Utf8Path::as_str)
-      .unwrap_or("");
+    if suite.inputs_have_changed() {
+      // Poke the mtime of the file that contains the #[gilded::test], and then
+      // fail it.
+      //
+      // Alas, finding this file may be non-trivial, since the Location path
+      // will be rooted at the Cargo workspace, but the cwd will be the manifest
+      // dir of the crate we are testing.
+      let mut cwd = env::current_dir().unwrap();
+      let mut test_file = cwd.join(suite.location.file());
+      while !test_file.exists() {
+        cwd.pop();
+        test_file = cwd.join(suite.location.file());
+      }
 
-    let sep = std::path::MAIN_SEPARATOR;
-    for path in &paths[1..] {
-      let common = common_prefix.split_inclusive(sep);
-      let chunks = path.split_inclusive(sep);
+      // Bump the mtime.
+      File::open(test_file)
+        .unwrap()
+        .set_modified(SystemTime::now())
+        .unwrap();
 
-      let len = common
-        .zip(chunks)
-        .take_while(|(a, b)| a == b)
-        .map(|(a, _)| a.len())
-        .sum();
-
-      common_prefix = &common_prefix[..len];
+      let _ = write!(
+        io::stderr(), // Dodge stderr capture.
+        "\nerror: #[gilded::test] inputs for `{}` are out of date; rerun the test to pick up updated inputs\n\n",
+        suite.name,
+      );
+      suite.poisoned = true;
     }
 
-    common_prefix = common_prefix.trim_end_matches(sep);
-    Suite {
-      name,
-      crate_root,
-      run,
-      test_root: Utf8Path::new(common_prefix),
-    }
+    suite
   }
 
   /// Executes a test in this test suite with the given data. Panics to signal
@@ -146,6 +184,10 @@ impl Suite {
   #[doc(hidden)]
   #[track_caller]
   pub fn run(&'static self, path: &'static str, text: &'static [u8]) {
+    if self.poisoned {
+      std::process::exit(128);
+    }
+
     let path = Utf8Path::new(path);
     let file = self.crate_root.join(path);
     let lock = self.crate_root.join("GILDED_CHANGED");
@@ -216,6 +258,21 @@ impl Suite {
       !regen,
       "golden files have changed: verify changes and then delete {lock_name}",
     )
+  }
+
+  /// Checks for files that ostensibly belong to this suite which have changed,
+  /// by comparing the mtime of the files with the mtime of the executable.
+  fn inputs_have_changed(&self) -> bool {
+    let this = env::current_exe().expect("argv[0] missing for test binary");
+    let built_at = this.metadata().unwrap().modified().unwrap();
+
+    nu_glob::glob(self.glob)
+      .unwrap()
+      .filter_map(Result::ok)
+      .any(|path| {
+        let mtime = path.metadata().unwrap().modified().unwrap();
+        mtime > built_at
+      })
   }
 }
 
@@ -298,7 +355,7 @@ fn split<T, const N: usize>(orig: RefMut<[T; N]>) -> [RefMut<T>; N] {
 #[macro_export]
 macro_rules! __test__ {
   (
-    #[test($($_:tt)*)]
+    #[test($glob:literal)]
     $(#[$attr:meta])*
     fn $name:ident($($args:tt)*) { $($body:tt)* }
     $($tt:tt)*
@@ -309,7 +366,9 @@ macro_rules! __test__ {
       pub static __SUITE__: ::std::sync::LazyLock<$crate::Suite> =
         ::std::sync::LazyLock::new(|| $crate::Suite::new(
           stringify!($name),
+          $glob,
           env!("CARGO_MANIFEST_DIR"),
+          ::std::panic::Location::caller(),
           |$($args)*| -> () { $($body)* },
           &$crate::__test__!(@paths[] $($tt)*),
         ));
