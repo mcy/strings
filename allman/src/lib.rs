@@ -1,4 +1,4 @@
-//! `allman` 🗒️🖋️ - A code formatting and line reflowing toolkit.
+//! `allman` - A code formatting and line reflowing toolkit. 🗒️🖋️
 //!
 //! [`allman::Doc`][Doc] is a DOM-like structure that specifies how indentation,
 //! like breaking, and reflowing should be handled. It is a tree of [`Tag`]s

@@ -1,6 +1,8 @@
 [package]
 name = "proc2decl"
 version = "0.1.0"
+description = "Write less frickin' proc macro code"
+
 edition.workspace = true
 authors.workspace = true
 homepage.workspace = true

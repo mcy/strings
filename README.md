@@ -19,6 +19,15 @@ depend on each other.
 - ⛩️ [`ilex`](https://github.com/mcy/strings/tree/main/ilex) - The last lexer I
   ever want to write.
 
+- 🗒️ [`allman`](https://github.com/mcy/strings/tree/main/allman) - A DOM for
+  code formatters.
+
+- 👑 [`gilded`](https://github.com/mcy/strings/tree/main/gilded) - How I learned
+  to stop worrying and love golden testing.
+
+- 💢 [`proc2decl`](https://github.com/mcy/strings/tree/main/proc2decl) - Proc
+  macros suck!
+
 ---
 
 All libraries are Apache-2.0 licensed.
