@@ -12,6 +12,7 @@ mod yaml;
 ///
 /// Golden tests that output tree-shaped data can use `Doc` to generate
 /// diff-friendly, readable output.
+#[derive(Clone)]
 pub struct Doc<'a> {
   entries: Vec<(Option<YarnBox<'a, str>>, Elem<'a>)>,
 }
@@ -147,6 +148,7 @@ impl Default for Doc<'_> {
   }
 }
 
+#[derive(Clone)]
 enum Elem<'a> {
   Bool(bool),
   Int(i128),
