@@ -59,9 +59,9 @@
 //! can. This will make it easier for you to just pin a version and avoid
 //! thinking about this problem.
 //!
-//! Diagnostics are completely unstable. Don't try to parse them, don't write
-//! golden tests against them. If you must, use [`testing::check_report()`] so
-//! that you can regenerate them.
+//! Diagnostics are completely unstable. Don't try to parse them, and if you
+//! need to test them, using something like [`gilded`](https://docs.rs/gilded)
+//! to make it easy to regenerate when the output changes.
 //!
 //! # Quick Start
 //!
