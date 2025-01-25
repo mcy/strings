@@ -16,6 +16,9 @@
 //! changes can quickly regenerate the test output by using the output of the
 //! test itself. Diffs can be examined in code review directly.
 //!
+//! This crate also provides the [`doc::Doc`] type, enabling quick-and-dirty
+//! construction of highly readable structured tree data for golden outputs.
+//!
 //! # Defining a Test
 //!
 //! A `gilded` test is defined like so:
@@ -74,8 +77,7 @@ use camino::Utf8Path;
 
 pub use gilded_attr::test;
 
-mod doc;
-pub use doc::*;
+pub mod doc;
 
 /// The environment variable that is checked to decide whether or not to
 /// regenerate goldens.
