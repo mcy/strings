@@ -24,3 +24,4 @@ regex-syntax = "0.8.2"
 regex-automata = "0.4.3"  # Bless Andrew for his patience.
 rustc_apfloat = "0.2.0"  # By eddyb's recommendation.
 unicode-xid = "0.2.4"
+bitvec = "1.0.1"

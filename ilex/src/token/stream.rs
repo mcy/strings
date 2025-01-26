@@ -4,6 +4,8 @@ use std::mem;
 use std::num::NonZeroU32;
 use std::slice;
 
+use bitvec::vec::BitVec;
+
 use crate::file::Context;
 use crate::file::File;
 use crate::file::Span;
@@ -14,6 +16,8 @@ use crate::rule::Rule;
 use crate::spec::Lexeme;
 use crate::spec::Spec;
 use crate::token;
+
+use super::Token;
 
 /// A tree-like stream of tokens.
 ///
@@ -26,6 +30,8 @@ pub struct Stream<'ctx> {
   pub(crate) toks: Vec<rt::Token>,
   pub(crate) meta_idx: Vec<token::Id>,
   pub(crate) meta: Vec<rt::Metadata>,
+
+  pub(crate) silent: BitVec, // Set of lexemes that have been silenced.
 }
 
 impl<'ctx> Stream<'ctx> {
@@ -63,6 +69,28 @@ impl<'ctx> Stream<'ctx> {
   pub fn token_at(&self, id: token::Id) -> token::Any {
     let meta_hint = self.meta_idx.binary_search(&id).unwrap_or(0);
     self.token_at_hint(id, meta_hint).unwrap()
+  }
+
+  /// Returns whether the given lexeme has been slienced.
+  pub fn is_silenced<R>(&self, lexeme: Lexeme<R>) -> bool {
+    self.silent.get(lexeme.index()).is_some_and(|p| *p)
+  }
+
+  /// Silences the given lexeme in this stream.
+  ///
+  /// This means that all tokens with this lexeme will be skipped when yielded
+  /// from [`Cursor::next()`]. Use [`Cursor::noisy()`] to yield all tokens,
+  /// including silenced ones.
+  ///
+  /// This is useful for tokens that can appear anywhere in the stream, but
+  /// which should be ignored unless they are being explicitly searched for.
+  /// This is useful, for example, for [`rule::LineEnd`] tokens.
+  pub fn silence<R>(&mut self, lexeme: Lexeme<R>) {
+    let idx = lexeme.index();
+    if self.silent.len() <= idx {
+      self.silent.resize(idx + 1, false);
+    }
+    self.silent.set(idx, true);
   }
 
   /// Returns the last token pushed to this stream.
@@ -296,6 +324,22 @@ impl<'lex> Cursor<'lex> {
     self.cursor >= self.end
   }
 
+  /// Returns an iterator that yields all of the values in this cursor,
+  /// including silenced ones.
+  pub fn noisy(&mut self) -> impl Iterator<Item = token::Any<'lex>> + '_ {
+    iter::from_fn(move || loop {
+      if self.is_empty() {
+        return None;
+      }
+
+      let next = self.stream.token_at_hint(self.id(), self.meta_cursor);
+      self.step_forward();
+      if next.is_some() {
+        return next;
+      }
+    })
+  }
+
   /// Returns the next token under the cursor without consuming it.
   pub fn peek_any(&self) -> Option<token::Any<'lex>> {
     let mut copy = *self;
@@ -514,18 +558,8 @@ impl fmt::Debug for Cursor<'_> {
 impl<'lex> Iterator for Cursor<'lex> {
   type Item = token::Any<'lex>;
   fn next(&mut self) -> Option<Self::Item> {
-    loop {
-      if self.is_empty() {
-        return None;
-      }
-
-      let next = self.stream.token_at_hint(self.id(), self.meta_cursor);
-      self.step_forward();
-
-      if next.is_some() {
-        return next;
-      }
-    }
+    let stream = self.stream;
+    self.noisy().find(|next| !stream.is_silenced(next.lexeme()))
   }
 }
 
@@ -623,24 +657,30 @@ pub mod switch {
     where
       X: Impl<'lex, T>,
     {
-      let Some(next) = cursor.next() else {
-        report.builtins(cursor.spec()).expected(
-          self.0.lexemes(0),
-          Lexeme::eof(),
-          cursor.end(),
-        );
+      loop {
+        let Some(next) = cursor.noisy().next() else {
+          report.builtins(cursor.spec()).expected(
+            self.0.lexemes(0),
+            Lexeme::eof(),
+            cursor.end(),
+          );
 
+          return None;
+        };
+
+        if let Some(found) = self.0.apply(next, cursor) {
+          return Some(found);
+        }
+
+        if cursor.stream.is_silenced(next.lexeme()) {
+          continue;
+        }
+
+        report
+          .builtins(cursor.spec())
+          .expected(self.0.lexemes(0), next, next);
         return None;
-      };
-
-      if let Some(found) = self.0.apply(next, cursor) {
-        return Some(found);
       }
-
-      report
-        .builtins(cursor.spec())
-        .expected(self.0.lexemes(0), next, next);
-      None
     }
 
     /// Takes the next token from `cursor` and matches it against this switch.
