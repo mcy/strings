@@ -3,6 +3,7 @@ use std::num::NonZeroU32;
 use std::ops::Index;
 use std::ops::RangeBounds;
 
+use bitvec::vec::BitVec;
 use byteyarn::Yarn;
 use regex_automata::hybrid::dfa::Cache;
 
@@ -57,6 +58,7 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
         toks: Vec::new(),
         meta_idx: Vec::new(),
         meta: Vec::new(),
+        silent: BitVec::new(),
       },
 
       cursor: 0,
