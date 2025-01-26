@@ -1,10 +1,22 @@
 - keyword:
     lexeme: 3
     span: {span: [0, 6], text: "poison"}
+- keyword:
+    lexeme: 5
+    span:
+      span: [6, 7]
+      text: |
+
 - ident:
     lexeme: 4
     span: {span: [7, 16], text: "poisonous"}
     name: {span: [7, 16], text: "poisonous"}
+- keyword:
+    lexeme: 5
+    span:
+      span: [16, 17]
+      text: |
+
 - quoted:
     lexeme: 0
     span:
@@ -14,6 +26,12 @@
     - {span: [17, 27], text: "poisonous["}
     - {span: [30, 32], text: "]>"}
     contents: [{text: {span: [27, 30], text: "xyz"}}]
+- keyword:
+    lexeme: 5
+    span:
+      span: [32, 33]
+      text: |
+
 - quoted:
     lexeme: 0
     span:
@@ -23,6 +41,12 @@
     - {span: [33, 47], text: "poisonous#%#%["}
     - {span: [50, 56], text: "]#%#%>"}
     contents: [{text: {span: [47, 50], text: "xyz"}}]
+- keyword:
+    lexeme: 5
+    span:
+      span: [56, 57]
+      text: |
+
 - ident:
     lexeme: 4
     span: {span: [57, 66], text: "poisonous"}
@@ -38,6 +62,12 @@
         lexeme: 4
         span: {span: [68, 71], text: "xyz"}
         name: {span: [68, 71], text: "xyz"}
+- keyword:
+    lexeme: 5
+    span:
+      span: [72, 73]
+      text: |
+
 - quoted:
     lexeme: 1
     span:

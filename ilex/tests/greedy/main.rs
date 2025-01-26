@@ -29,6 +29,12 @@ fn greedy(test: &gilded::Test) {
 
     #[rule(Ident::new())]
     ident: Lexeme<Ident>,
+
+    #[rule(LineEnd::cancellable("\\"))]
+    nl: Lexeme<LineEnd>,
+
+    #[rule(Comment::line("//"))]
+    comment: Lexeme<Comment>,
   }
 
   let ctx = Context::new();

@@ -103,7 +103,9 @@ impl<'ctx> Stream<'ctx> {
 
     Some(match self.spec().rule(tok.lexeme) {
       rule::Any::Comment(..) => return None,
-      rule::Any::Keyword(..) => token::Keyword { stream: self, id }.into(),
+      rule::Any::Keyword(..) | rule::Any::LineEnd(..) => {
+        token::Keyword { stream: self, id }.into()
+      }
       rule::Any::Ident(..) => token::Ident { stream: self, id }.into(),
 
       rule::Any::Bracket(..) => {

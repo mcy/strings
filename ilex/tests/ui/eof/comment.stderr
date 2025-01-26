@@ -5,6 +5,6 @@ error: expected closing `*/`, but found <eof>
   |                                      ^ expected `*/` here
   |                       -- help: previously opened here
   |
-  = note: reported at: ilex/src/rt/emit2.rs:306:14
+  = note: reported at: ilex/src/rt/emit2.rs:331:14
 
 error: aborting due to previous error

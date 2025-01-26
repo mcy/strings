@@ -5,7 +5,7 @@ error: unexpected `b` in `/`-suffixed number
   |      ^
   |      --- help: because this value is decimal (base 10), digits should be within '0'..='9'
   |
-  = note: reported at: ilex/src/rt/emit2.rs:562:34
+  = note: reported at: ilex/src/rt/emit2.rs:593:34
 
 error: unexpected `a` in `/`-suffixed number
  --> ambiguous/idents.txt:1:7
@@ -14,7 +14,7 @@ error: unexpected `a` in `/`-suffixed number
   |       ^
   |      --- help: because this value is decimal (base 10), digits should be within '0'..='9'
   |
-  = note: reported at: ilex/src/rt/emit2.rs:562:34
+  = note: reported at: ilex/src/rt/emit2.rs:593:34
 
 error: unexpected `r` in `/`-suffixed number
  --> ambiguous/idents.txt:1:8
@@ -23,6 +23,6 @@ error: unexpected `r` in `/`-suffixed number
   |        ^
   |      --- help: because this value is decimal (base 10), digits should be within '0'..='9'
   |
-  = note: reported at: ilex/src/rt/emit2.rs:562:34
+  = note: reported at: ilex/src/rt/emit2.rs:593:34
 
 error: aborting due to 3 errors

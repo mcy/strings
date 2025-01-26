@@ -165,6 +165,12 @@ fn compile_rule(rule: &Any) -> Rule {
   let (pat, close) = match rule {
     Any::Keyword(rule) => (lit(&rule.value), None),
 
+    Any::LineEnd(rule) if rule.cancel.is_empty() => (lit(&"\n".into()), None),
+
+    Any::LineEnd(rule) => {
+      (Hir::alternation(vec![lit(&rule.cancel), lit(&"\n".into())]), None)
+    }
+
     Any::Comment(rule) => {
       // We can just throw the bracket in, regardless of whether it's a line
       // comment. Because of how the outer lexer loop works, we will run the DFA
