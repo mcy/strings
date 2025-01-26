@@ -20,8 +20,6 @@ ilex-attr = { version = "0.5.0", path = "attr" }
 annotate-snippets = "0.10.0"
 camino = "1.1.6"
 num-traits = "0.2.17"
-ptree = "0.5.2"
-similar-asserts = "1.5.0"
 regex-syntax = "0.8.2"
 regex-automata = "0.4.3"  # Bless Andrew for his patience.
 rustc_apfloat = "0.2.0"  # By eddyb's recommendation.
