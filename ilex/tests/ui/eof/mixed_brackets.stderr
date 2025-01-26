@@ -13,7 +13,7 @@ error: expected closing `)`, but found `]`
   |           ^ expected `)` here
   |          - help: previously opened here
   |
-  = note: reported at: ilex/src/rt/lexer.rs:202:23
+  = note: reported at: ilex/src/rt/lexer.rs:207:23
 
 error: expected closing `)`, but found `]`
  --> eof/mixed_brackets.txt:1:15
@@ -22,7 +22,7 @@ error: expected closing `)`, but found `]`
   |               ^ expected `)` here
   |              - help: previously opened here
   |
-  = note: reported at: ilex/src/rt/lexer.rs:202:23
+  = note: reported at: ilex/src/rt/lexer.rs:207:23
 
 error: expected closing `)`, but found <eof>
  --> eof/mixed_brackets.txt:1:17
@@ -31,6 +31,6 @@ error: expected closing `)`, but found <eof>
   |                 ^ expected `)` here
   |          - help: previously opened here
   |
-  = note: reported at: ilex/src/rt/lexer.rs:311:10
+  = note: reported at: ilex/src/rt/lexer.rs:323:10
 
 error: aborting due to 4 errors

@@ -1,9 +1,10 @@
-error: unexpected closing `ua`
+error: extraneous characters after `/`-prefixed, `%q`-suffixed identifier
  --> ambiguous/no_xid_after_id.txt:1:22
   |
 1 | /foo%q /null%q /foo%qua
-  |                      ^^ expected to be opened by `--ua`
+  |                      ^^
+  |                     -- help: maybe you meant to include a space here
   |
-  = note: reported at: ilex/src/rt/emit2.rs:254:22
+  = note: reported at: ilex/src/rt/emit2.rs:810:10
 
 error: aborting due to previous error

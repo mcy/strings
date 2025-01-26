@@ -9,6 +9,7 @@ use regex_automata::hybrid::dfa::Cache;
 use crate::f;
 use crate::file::File;
 use crate::file::Span;
+use crate::file::Span2;
 use crate::report::Builtins;
 use crate::report::Report;
 use crate::rt;
@@ -31,6 +32,7 @@ pub struct Lexer<'a, 'ctx> {
   cursor: usize,
   closers: Vec<Closer>,
   comments: Vec<token::Id>,
+  pub line_end_cancel: Option<Span2>,
 
   cache: Cache,
 }
@@ -60,6 +62,7 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
       cursor: 0,
       closers: Vec::new(),
       comments: Vec::new(),
+      line_end_cancel: None,
 
       cache: Cache::new(&spec.dfa().engine),
     }
@@ -290,10 +293,17 @@ impl<'a, 'ctx> Lexer<'a, 'ctx> {
   }
 
   pub fn skip_whitespace(&mut self) -> bool {
+    let have_line_end = self.spec().builder.line_end.is_some();
     let len = self
       .text(self.cursor()..)
       .chars()
-      .take_while(|c| c.is_whitespace())
+      .take_while(|&c| {
+        if c == '\n' && have_line_end {
+          return self.line_end_cancel.take().is_some();
+        }
+
+        c.is_whitespace()
+      })
       .map(char::len_utf8)
       .sum();
 

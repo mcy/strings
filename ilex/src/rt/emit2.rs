@@ -258,8 +258,33 @@ pub fn emit(lexer: &mut Lexer) {
     // Now we have repeat the process from the 'verify, but now we know what kind
     // of token we're going to create.
 
-    match lexer.spec().rule(best.lexeme) {
+    let rule = lexer.spec().rule(best.lexeme);
+    if !matches!(rule, Any::Comment(..)) {
+      // Diagnose a \ that is not followed by only spaces and comments.
+      if let Some(cancel) = lexer.line_end_cancel.take() {
+        let cancel = cancel.get(lexer.file());
+        lexer
+          .report()
+          .builtins(lexer.spec())
+          .unexpected(cancel.text(), best.lexeme, cancel)
+          .note(f!(
+            "expected `{}` to be followed by a new line",
+            cancel.text()
+          ));
+      }
+    }
+
+    match rule {
       Any::Keyword(..) => lexer.add_token(best.lexeme, range.len(), None),
+
+      Any::LineEnd(..) if text == "\n" => {
+        lexer.add_token(best.lexeme, range.len(), None)
+      }
+      Any::LineEnd(..) => {
+        // The cancel is always inserted as whitespace.
+        lexer.add_token(rt::WHITESPACE, range.len(), None);
+        lexer.line_end_cancel = Some(range.span2())
+      }
 
       Any::Bracket(..) => {
         // Construct the closer.
@@ -304,6 +329,12 @@ pub fn emit(lexer: &mut Lexer) {
           lexer
             .builtins()
             .unclosed(span, &close, Lexeme::eof(), lexer.eof());
+        }
+
+        // Crop off an ending \n so that it can get turned into whitespace or
+        // a line end token, as appropriate.
+        if close == "\n" && depth == 0 {
+          cursor -= 1;
         }
 
         lexer.add_token(best.lexeme, cursor - lexer.cursor(), None);
@@ -755,7 +786,7 @@ pub fn emit(lexer: &mut Lexer) {
   }
 
   let rest = lexer.text(lexer.cursor()..);
-  let prev = rest.chars().next_back();
+  let prev = lexer.text(..lexer.cursor()).chars().next_back();
   if prev.is_some_and(is_xid) {
     let xids = rest.find(|c| !is_xid(c)).unwrap_or(rest.len());
     if xids > 0 {

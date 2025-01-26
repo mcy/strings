@@ -5,6 +5,6 @@ error: extraneous characters after `%'...'q`
   |                ^^
   |               -- help: maybe you meant to include a space here
   |
-  = note: reported at: ilex/src/rt/emit2.rs:779:10
+  = note: reported at: ilex/src/rt/emit2.rs:810:10
 
 error: aborting due to previous error

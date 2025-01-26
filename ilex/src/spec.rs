@@ -15,6 +15,7 @@ use crate::report::Expected;
 use crate::rt;
 use crate::rule;
 use crate::rule::Comment;
+use crate::rule::LineEnd;
 use crate::rule::Rule;
 
 /// An ID for a lexeme that a [`Spec`][crate::Spec] can capture.
@@ -85,7 +86,7 @@ impl<R> fmt::Debug for Lexeme<R> {
 /// This is a compiled, immutable object that describes how to lex a particular
 /// language. The [`Spec::builder()`] function returns a builder for
 pub struct Spec {
-  builder: SpecBuilder,
+  pub(crate) builder: SpecBuilder,
   dfa: rt::Dfa,
 }
 
@@ -139,6 +140,7 @@ impl Spec {
 pub struct SpecBuilder {
   pub(crate) rules: Vec<rule::Any>,
   pub(crate) names: Vec<Yarn>,
+  pub(crate) line_end: Option<Lexeme<LineEnd>>,
 }
 
 impl SpecBuilder {
@@ -198,7 +200,11 @@ impl SpecBuilder {
 
     self.names.push(name.into());
     self.rules.push(rule.into());
-    Lexeme::new(self.rules.len() as i32 - 1)
+    let lex = Lexeme::new(self.rules.len() as i32 - 1);
+    if let rule::Any::LineEnd(_) = self.rules.last().unwrap() {
+      self.line_end = Some(lex.cast());
+    }
+    lex
   }
 
   #[doc(hidden)]
@@ -258,6 +264,7 @@ impl Lexeme<rule::Any> {
 
     match spec.rule(self) {
       rule::Any::Keyword(rule) => yarn!("`{}`", rule.value),
+      rule::Any::LineEnd(_) => "line ending".into(),
       rule::Any::Bracket(d)
       | rule::Any::Comment(Comment { bracket: d, .. }) => match &d.kind {
         rule::BracketKind::Paired(open, close) => {

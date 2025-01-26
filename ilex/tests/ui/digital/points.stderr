@@ -4,7 +4,7 @@ error: expected at least 2 `/`s
 2 | 1/2/3/4e4/5
   |       ^
   |
-  = note: reported at: ilex/src/rt/emit2.rs:523:16
+  = note: reported at: ilex/src/rt/emit2.rs:554:16
 
 error: unrecognized character
  --> digital/points.txt:2:6
@@ -20,7 +20,7 @@ error: expected at least 2 `/`s
 3 | 1/2e4/5
   | ^^^
   |
-  = note: reported at: ilex/src/rt/emit2.rs:523:16
+  = note: reported at: ilex/src/rt/emit2.rs:554:16
 
 error: expected at least 2 `/`s
  --> digital/points.txt:4:11
@@ -28,7 +28,7 @@ error: expected at least 2 `/`s
 4 | 1/2/3e4/5/6
   |           ^
   |
-  = note: reported at: ilex/src/rt/emit2.rs:523:16
+  = note: reported at: ilex/src/rt/emit2.rs:554:16
 
 error: unrecognized character
  --> digital/points.txt:4:10
@@ -44,6 +44,6 @@ error: expected at least 1 `/`
 5 | 1/2/3e4
   |      ^^
   |
-  = note: reported at: ilex/src/rt/emit2.rs:523:16
+  = note: reported at: ilex/src/rt/emit2.rs:554:16
 
 error: aborting due to 6 errors

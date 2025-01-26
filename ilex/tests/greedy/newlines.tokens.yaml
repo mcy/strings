@@ -1,0 +1,30 @@
+- keyword:
+    lexeme: 3
+    span: {span: [0, 6], text: "poison"}
+- keyword:
+    lexeme: 5
+    span:
+      span: [6, 7]
+      text: |
+
+- keyword:
+    lexeme: 3
+    span: {span: [7, 13], text: "poison"}
+- keyword:
+    lexeme: 3
+    span: {span: [16, 22], text: "poison"}
+- keyword:
+    lexeme: 3
+    span: {span: [36, 42], text: "poison"}
+- keyword:
+    lexeme: 5
+    span:
+      span: [53, 54]
+      text: |
+
+- keyword:
+    lexeme: 3
+    span: {span: [54, 60], text: "poison"}
+- eof:
+    lexeme: 2147483647
+    span: {span: [60, 60], text: ""}

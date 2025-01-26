@@ -5,6 +5,6 @@ error: expected digits after `0x`, but found ` `
   |   ^ expected digits after `0x`
   | ^^ because of this prefix
   |
-  = note: reported at: ilex/src/rt/emit2.rs:540:18
+  = note: reported at: ilex/src/rt/emit2.rs:571:18
 
 error: aborting due to previous error

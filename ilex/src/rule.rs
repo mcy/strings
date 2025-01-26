@@ -32,6 +32,7 @@ pub use crate::token::Sign;
 #[allow(missing_docs)]
 pub enum Any {
   Keyword(Keyword),
+  LineEnd(LineEnd),
   Bracket(Bracket),
   Ident(Ident),
   Quoted(Quoted),
@@ -44,6 +45,7 @@ impl Any {
   pub(crate) fn debug_name(&self) -> &'static str {
     match self {
       Any::Keyword(_) => "Keyword",
+      Any::LineEnd(_) => "LineEnd",
       Any::Bracket(_) => "Bracket",
       Any::Ident(_) => "Ident",
       Any::Digital(_) => "Digital",
@@ -137,6 +139,67 @@ impl TryFrom<Any> for Keyword {
     match value {
       Any::Keyword(rule) => Ok(rule),
       _ => Err(WrongKind { want: "Keyword", got: value.debug_name() }),
+    }
+  }
+}
+
+/// A line ending.
+///
+/// Line ends are like [`Keyword`]s with the value `"\n"`, but which have two
+/// extra features:
+///
+/// 1. They can specify a "cancel" string for escaping a newline. This is
+///    valuable for situations where a line end is syntactically meaningful, but
+///    users need to break a line without it affecting lexing. For example, \
+///    takes this role in C, since C uses a line-end token for `#define`s.
+///
+///    The cancel string, followed by whitespace and then a newline, will cause
+///    that newline to become whitespace, rather than a token.
+///
+/// 2. They play nice with line comments. A line comment's ending newline will
+///    be turned into a `LineEnd`, unless the comment was prefixed with the
+///    cancel string.
+#[derive(Default, Debug)]
+pub struct LineEnd {
+  pub(crate) cancel: Yarn,
+}
+
+impl LineEnd {
+  /// Constructs a new line end rule with no cancel.
+  pub fn new() -> Self {
+    Self::default()
+  }
+
+  /// COnstructs a new line end rule with the given cancel prefix.
+  pub fn cancellable(cancel: impl Into<Yarn>) -> Self {
+    Self { cancel: cancel.into() }
+  }
+}
+
+impl Rule for LineEnd {
+  type Token<'lex> = token::Keyword<'lex>;
+
+  fn try_from_ref(value: &Any) -> Result<&Self, WrongKind> {
+    match value {
+      Any::LineEnd(rule) => Ok(rule),
+      _ => Err(WrongKind { want: "LineEnd", got: value.debug_name() }),
+    }
+  }
+}
+
+impl From<LineEnd> for Any {
+  fn from(value: LineEnd) -> Self {
+    Any::LineEnd(value)
+  }
+}
+
+impl TryFrom<Any> for LineEnd {
+  type Error = WrongKind;
+
+  fn try_from(value: Any) -> Result<Self, Self::Error> {
+    match value {
+      Any::LineEnd(rule) => Ok(rule),
+      _ => Err(WrongKind { want: "LineEnd", got: value.debug_name() }),
     }
   }
 }
